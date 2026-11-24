@@ -1,6 +1,6 @@
 import { get } from 'svelte/store';
 import { midiRouter } from '../midi/midiRouter';
-import { normalizeControlPath, validateControlPath, CONTROL_PATH_EXAMPLES } from '../control/controlPaths';
+import { normalizeControlPath, validateControlPath, controlPathExamples } from '../control/controlPaths';
 import { readControlPath } from '../osc/oscFeedback';
 import { vjClipLauncher, vjClipLauncherNow } from '../stores/vjClipLauncher';
 import { project } from '../stores/layers';
@@ -57,7 +57,7 @@ function controlVocabulary(): Record<string, unknown> {
       'map:layer:opacity': '0..1 on the selected mapping layer',
       'map:media:position': '0..1 playhead on the selected media',
     },
-    examples: CONTROL_PATH_EXAMPLES,
+    examples: controlPathExamples(),
   };
 }
 

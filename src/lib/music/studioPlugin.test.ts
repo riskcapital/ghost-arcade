@@ -14,7 +14,6 @@ import {
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { getPlugin } from '../plugins/registry';
-import { MUSIC_STUDIO } from '../features';
 
 const inputs: StudioRenderInputs = {
   code: (file) => (file === 'VX-Missing.fs' ? undefined : `/*{}*/ void main(){} // ${file}`),
@@ -33,13 +32,10 @@ function studioLayer(id: string, voices = defaultStudioSource().musicVoices, mus
 }
 
 describe('Music Studio plugin', () => {
-  // A release build leaves the Studio out (VITE_MUSIC_STUDIO=off): then it is not offered at all.
-  it('is offered as a plugin that starts with a scene, only when the Studio is in the build', () => {
+  // Always offered; a paid add-on, so its card is locked until a licence or trial (addons/addonAccess.ts).
+  it('is offered as a plugin that starts with a scene, marked as the Audio Lab add-on', () => {
     const plugin = getPlugin('musicstudio');
-    if (!MUSIC_STUDIO) {
-      expect(plugin).toBeUndefined();
-      return;
-    }
+    expect(plugin?.addon).toBe('addon.audio-lab');
     expect(plugin?.effectType).toBe('music-studio');
     expect(plugin?.defaultSourceParams.musicVoices.length).toBeGreaterThan(0);
     // Every default voice is a shader the studio ships.

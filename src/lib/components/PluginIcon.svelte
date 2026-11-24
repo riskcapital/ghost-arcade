@@ -19,7 +19,7 @@
   export let size: number = 32;
 
   // Resolve pluginId from effectType if needed
-  // The add-ons keep their icons on a saved layer in a build without them (unregistered there).
+  // The add-ons keep their icons on a saved layer, locked or not.
   const ADDON_PLUGIN_IDS: Partial<Record<string, string>> = { 'music-studio': 'musicstudio', videosynth: 'analog-synth' };
   $: resolvedId = pluginId ?? (effectType ? (getPluginByEffectType(effectType)?.id ?? ADDON_PLUGIN_IDS[effectType] ?? null) : null);
   // Fallback unicode glyph if we have no custom SVG for this id

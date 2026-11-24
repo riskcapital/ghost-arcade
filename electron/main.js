@@ -116,6 +116,26 @@ ipcMain.on('show_startup_session', (event) => {
 ipcMain.handle('show_startup_get', () => showStartup.get());
 ipcMain.handle('show_startup_set', (_, patch) => showStartup.set(patch));
 
+// Add-on licences (electron/addons/entitlement.cjs). The editor reads the
+// launch status synchronously so an add-on's layers draw from the first
+// frame; later looks happen when a project opens.
+const { createAddonEntitlements } = require('./addons/entitlement.cjs');
+const addonEntitlements = createAddonEntitlements({ userDataDir: app.getPath('userData'), isPackaged: app.isPackaged });
+ipcMain.on('addons_launch_status', (event, args) => {
+  try {
+    event.returnValue = args?.editor ? addonEntitlements.checkpoint() : addonEntitlements.status();
+  } catch (err) {
+    console.warn('[Add-ons] status failed:', err?.message ?? err);
+    event.returnValue = null;
+  }
+});
+ipcMain.handle('addons_status', (_, args) => (args?.checkpoint ? addonEntitlements.checkpoint() : addonEntitlements.status()));
+ipcMain.handle('addons_activate', (_, args) => addonEntitlements.activate(args?.licenceKey));
+ipcMain.handle('addons_free_seat', (_, args) => addonEntitlements.freeSeatAndActivate(args?.licenceKey, args?.machineRecordId));
+ipcMain.handle('addons_refresh', () => addonEntitlements.refresh());
+ipcMain.handle('addons_deactivate', () => addonEntitlements.deactivate());
+ipcMain.handle('addons_extend', () => addonEntitlements.useEmergencyExtension());
+
 // Linux: what the machine offers the render core (electron/linux-gpu-setup.cjs),
 // read when the core has fallen back to software so the user can be told why.
 const { collectLinuxGpuSetup } = require('./linux-gpu-setup.cjs');

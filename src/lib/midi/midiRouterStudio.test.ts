@@ -27,6 +27,10 @@ import { midiRouter } from './midiRouter';
 import { midiInputsInUse } from './midiInputs';
 import { registerStudioControls } from '../music/studioControls';
 import type { MidiMapping } from './midiTypes';
+import { setAddonsStatusForTests } from '../addons/addonAccess';
+
+// Audio Lab is a paid add-on: these tests run it unlocked.
+setAddonsStatusForTests({ 'addon.audio-lab': true });
 
 const store = midiStore as unknown as { set: (s: { mappings: MidiMapping[] }) => void };
 

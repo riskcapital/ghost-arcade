@@ -13,12 +13,6 @@ on:
 permissions:
   contents: write
 
-# Releases ship without Audio Lab and Analog Synth, which become paid
-# add-ons (src/lib/features.ts). Dev builds keep them on.
-env:
-  VITE_MUSIC_STUDIO: 'off'
-  VITE_ANALOG_SYNTH: 'off'
-
 jobs:
   # Pre-create the empty release on the cross-repo target. softprops/
   # action-gh-release@v2 can auto-create releases ONLY on the same repo
@@ -143,7 +137,7 @@ jobs:
       - name: Build frontend
         run: npm run build
 
-      - name: Check the build leaves the add-ons out
+      - name: Check the add-ons and their licence check are in the build
         run: node scripts/check-release-content.mjs dist
 
       # Azure Trusted Signing — installs the PowerShell module that
@@ -263,7 +257,7 @@ jobs:
       - name: Build frontend
         run: npm run build
 
-      - name: Check the build leaves the add-ons out
+      - name: Check the add-ons and their licence check are in the build
         run: node scripts/check-release-content.mjs dist
 
       # ─── Native render core ────────────────────────────────────────────
@@ -421,7 +415,7 @@ jobs:
       - name: Build frontend
         run: npm run build
 
-      - name: Check the build leaves the add-ons out
+      - name: Check the add-ons and their licence check are in the build
         run: node scripts/check-release-content.mjs dist
 
       # ─── Native render core ────────────────────────────────────────────

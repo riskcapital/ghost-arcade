@@ -4,6 +4,10 @@ import { buildVideoSynthGraph, VIDEOSYNTH_MAX_SIDE, videosynthIdPrefix } from '.
 import { discoverKeyframeableParams } from '../keyframes/paramDiscovery';
 import { applyParamOverrides } from '../keyframes/applyParamOverrides';
 import type { Layer } from '../types';
+import { setAddonsStatusForTests } from '../addons/addonAccess';
+
+// Analog Synth is a paid add-on: these tests run it unlocked.
+setAddonsStatusForTests({ 'addon.analog-synth': true });
 
 describe('Analog Synth controls', () => {
   it('give every control its own slot inside the block', () => {

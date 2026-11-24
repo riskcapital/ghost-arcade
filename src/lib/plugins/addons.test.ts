@@ -1,8 +1,8 @@
 /**
- * The paid add-ons (Audio Lab, Analog Synth) in a build with them and in one
- * without (src/lib/features.ts). Without: not offered, not in the plugin
- * inventory or the param pickers, not drawn, and a saved layer keeps its
- * settings exactly. With: everything as before.
+ * The paid add-ons (Audio Lab, Analog Synth) ship in every build and are
+ * gated at run time by this computer's licence (addons/addonAccess.ts).
+ * Locked: listed with a lock, not in the param pickers, not drawn, and a
+ * saved layer keeps its settings exactly. Unlocked: everything as before.
  */
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
@@ -50,14 +50,15 @@ beforeAll(() => {
 
 afterEach(() => {
   h.batches.length = 0;
-  vi.doUnmock('../features');
 });
 
-/** A fresh module graph built as a build with (or without) the add-ons. */
+/** A fresh module graph on a computer where the add-ons are unlocked (or locked). */
 async function build(on: boolean) {
   vi.resetModules();
-  vi.doMock('../features', () => ({ MUSIC_STUDIO: on, ANALOG_SYNTH: on }));
+  const access = await import('../addons/addonAccess');
+  access.setAddonsStatusForTests({ 'addon.audio-lab': on, 'addon.analog-synth': on });
   return {
+    access,
     registry: await import('./registry'),
     addons: await import('./addons'),
     inventory: await import('../renderer/nativePluginInventory'),
@@ -101,7 +102,7 @@ const sent = () => h.batches.flat();
 const synthInstalls = () => sent().filter((c) => c.type === 'set_native_graph_layer' && c.kind === 'videosynth');
 const synthShaders = (b: Build) => b.graphs.buildNativePluginPrecompileCommands().filter((c: any) => String(c.shader_id).startsWith('videosynth/'));
 
-describe('a build with the add-ons', () => {
+describe('add-ons unlocked on this computer', () => {
   it('offers both, lists them in the plugin inventory and has no missing add-on', async () => {
     const b = await build(true);
     expect(b.registry.getPlugin('analog-synth')?.effectType).toBe('videosynth');
@@ -134,16 +135,13 @@ describe('a build with the add-ons', () => {
   });
 });
 
-describe('a build without the add-ons', () => {
-  it('offers neither and leaves them out of the plugin inventory', async () => {
+describe('add-ons locked on this computer', () => {
+  it('still lists both, marked as add-ons, so their cards can offer a trial', async () => {
     const b = await build(false);
-    expect(b.registry.getPlugin('analog-synth')).toBeUndefined();
-    expect(b.registry.getPlugin('musicstudio')).toBeUndefined();
-    expect(b.registry.getPluginByEffectType('videosynth')).toBeUndefined();
-    expect(b.registry.getAllPlugins().some((p) => p.effectType === 'videosynth' || p.effectType === 'music-studio')).toBe(false);
-    expect(b.inventory.isNativePluginId('analog-synth')).toBe(false);
-    expect(b.inventory.isNativePluginId('musicstudio')).toBe(false);
-    // Built-in plugins are still offered.
+    expect(b.registry.getPlugin('analog-synth')?.addon).toBe('addon.analog-synth');
+    expect(b.registry.getPlugin('musicstudio')?.addon).toBe('addon.audio-lab');
+    expect(b.registry.getPlugin('ghostfx')?.addon).toBeUndefined();
+    expect(b.inventory.isNativePluginId('analog-synth')).toBe(true);
     expect(b.inventory.isNativePluginId('ghostfx')).toBe(true);
   });
 
@@ -173,12 +171,45 @@ describe('a build without the add-ons', () => {
     const sync = graphSync(b);
     const layer = synthLayer(b);
     const saved = structuredClone(layer);
-    expect(b.inventory.nativePluginUnavailableReason(layer.source.effectSource)).toBe('addon:videosynth:not-installed');
-    expect(b.sync.nativeUnsupportedSourceReason(layer, false)).toBe('addon:videosynth:not-installed');
+    expect(b.inventory.nativePluginUnavailableReason(layer.source.effectSource)).toBe('addon:videosynth:locked');
+    expect(b.sync.nativeUnsupportedSourceReason(layer, false)).toBe('addon:videosynth:locked');
     await sync.flush(1920, 1080, [layer]);
     await sync.flush(1920, 1080, [layer]);
     expect(synthInstalls()).toHaveLength(0);
     expect(sent().some((c) => JSON.stringify(c).includes('native-graph://videosynth'))).toBe(false);
     expect(layer).toEqual(saved);
+  });
+});
+
+describe('access within one run', () => {
+  it('draws a saved synth layer once the add-on is unlocked, without touching its settings', async () => {
+    const b = await build(false);
+    const sync = graphSync(b);
+    const layer = synthLayer(b);
+    const saved = structuredClone(layer);
+    await sync.flush(1920, 1080, [layer]);
+    expect(synthInstalls()).toHaveLength(0);
+    b.access.setAddonsStatusForTests({ 'addon.analog-synth': true });
+    await sync.flush(1920, 1080, [layer]);
+    expect(synthInstalls()).toHaveLength(1);
+    expect(layer).toEqual(saved);
+  });
+
+  it('keeps an add-on usable until quit when a later look says it is locked', async () => {
+    const b = await build(false);
+    const licensed = { products: { 'addon.audio-lab': { state: { kind: 'licensed' }, usable: true } } };
+    b.access.applyAddonsStatus(licensed);
+    expect(b.access.addonUsable('addon.audio-lab')).toBe(true);
+    const next = b.access.applyAddonsStatus({ products: { 'addon.audio-lab': { state: { kind: 'expired', why: 'trial-ended' }, usable: false } } });
+    expect(next.products['addon.audio-lab']).toEqual({ state: { kind: 'expired', why: 'trial-ended' }, usable: true });
+    expect(b.access.addonUsable('addon.audio-lab')).toBe(true);
+    expect(b.access.addonUsable('addon.analog-synth')).toBe(false);
+  });
+
+  it('reads anything odd from the main process as locked', async () => {
+    const b = await build(false);
+    for (const raw of [null, 'x', { products: { 'addon.audio-lab': { state: { kind: 'owned' }, usable: true } } }]) {
+      expect(b.access.normalizeAddonsStatus(raw).products['addon.audio-lab']).toEqual({ state: { kind: 'locked' }, usable: false });
+    }
   });
 });

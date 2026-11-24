@@ -294,6 +294,8 @@
       if(get(keyframeTimeline).config.isPlaying)keyframeTimeline.pause();else keyframeTimeline.play();
     }
   }
+  // An add-on licence near its offline limit says so once, after the launch settles.
+  onMount(() => { const t = setTimeout(() => warnIfOffline(), 4000); return () => clearTimeout(t); });
   onMount(()=>{
     const open=(event:Event)=>openInteractiveStudio((event as CustomEvent).detail?.layerId);
     window.addEventListener('open-interactive-studio',open);
@@ -541,6 +543,8 @@
   import WelcomeModal from './lib/components/WelcomeModal.svelte';
   // EULAModal removed — no EULA in the open-source build.
   import UpdateModal from './lib/components/UpdateModal.svelte';
+  import AddonOfferDialog from './lib/components/addons/AddonOfferDialog.svelte';
+  import { warnIfOffline } from './lib/addons/addonAccess';
   import { updateModalOpen, leftSidebarTab } from './lib/stores/uiState';
   import { showToast } from './lib/stores/errorToast';
   import { sketchEditorTarget } from './lib/sketchEditor/sketchEditorStore';
@@ -9256,6 +9260,8 @@
     {#if $updateModalOpen}
       <UpdateModal open={true} onClose={() => updateModalOpen.set(false)} />
     {/if}
+    <!-- Try / Buy / licence key for a locked add-on (addons/addonAccess.ts). -->
+    <AddonOfferDialog />
 
     <!-- The p5.js sketch editor, opened from a sketch layer or a tray item.
          Loaded on first use, so the code editor is not part of start-up. -->

@@ -7,6 +7,10 @@
 
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { get } from 'svelte/store';
+import { setAddonsStatusForTests } from '../addons/addonAccess';
+
+// Audio Lab is a paid add-on: these tests run it unlocked.
+setAddonsStatusForTests({ 'addon.audio-lab': true });
 
 const clock = vi.hoisted(() => ({ link: false, tempo: 120, wait: 1000 }));
 

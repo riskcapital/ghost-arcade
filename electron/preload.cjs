@@ -52,6 +52,8 @@ const ALLOWED_IPC_COMMANDS = new Set([
   'native_live_capture_stop', 'native_live_capture_texture_info',
   // License
   'license_get_status', 'license_activate', 'license_deactivate', 'license_validate_online',
+  // Add-on licences (electron/addons/entitlement.cjs)
+  'addons_status', 'addons_activate', 'addons_free_seat', 'addons_refresh', 'addons_deactivate', 'addons_extend',
   // HTTP proxy
   'http_fetch', 'http_fetch_binary', 'http_put_binary',
   // Shader thumbnail
@@ -455,6 +457,16 @@ try {
   contextBridge.exposeInMainWorld('ghostShowStartup', { session: startup || null });
 } catch {
   contextBridge.exposeInMainWorld('ghostShowStartup', { session: null });
+}
+
+// Add-on licences as this launch found them, read synchronously so a
+// project's add-on layers are drawn (or not) from the first frame.
+try {
+  const isHelperWindow = typeof window !== 'undefined' && /[?&]mode=/.test(window.location.search);
+  const addons = ipcRenderer.sendSync('addons_launch_status', { editor: !isHelperWindow });
+  contextBridge.exposeInMainWorld('ghostAddons', { launch: addons || null });
+} catch {
+  contextBridge.exposeInMainWorld('ghostAddons', { launch: null });
 }
 
 // Also set a detection flag (replaces __TAURI_INTERNALS__)

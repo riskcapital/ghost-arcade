@@ -16,7 +16,7 @@
  */
 
 import { getContext, onDestroy, setContext } from 'svelte';
-import { MUSIC_STUDIO } from '../features';
+import { addonUsable } from '../addons/addonAccess';
 import { STUDIO_SCOPE, registerStudioControl, setStudioControlFallback, studioControl, type StudioControl } from './studioControls';
 
 const MODULE = Symbol('studio-midi-module');
@@ -34,11 +34,11 @@ export function setMidiModule(name: string): void {
 
 /**
  * Register a knob or fader that was given no path. `run` takes its position, 0-1.
- * Returns the path to put on the element, or '' in a build without the Audio Lab.
+ * Returns the path to put on the element, or '' while Audio Lab is locked.
  * Call it while the component is being set up.
  */
 export function autoValueControl(label: string, run: (position: number) => void): string {
-  if (!MUSIC_STUDIO) return '';
+  if (!addonUsable('addon.audio-lab')) return '';
   const module = getContext<string | undefined>(MODULE) ?? 'lab';
   const base = `ui.${module}.${midiSlug(label)}`;
   let id = base;
@@ -67,7 +67,7 @@ function buttonName(el: HTMLElement): string {
  * name. The same page always gives the same paths.
  */
 export function markAutoButtons(): void {
-  if (!MUSIC_STUDIO || typeof document === 'undefined') return;
+  if (!addonUsable('addon.audio-lab') || typeof document === 'undefined') return;
   const taken = new Set<string>();
   for (const el of document.querySelectorAll<HTMLElement>(`${ROOTS} [data-midi-auto]`)) {
     // Marked on an earlier scan: forget it and work it out again, as the page may have changed.

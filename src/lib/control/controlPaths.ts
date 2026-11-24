@@ -1,5 +1,5 @@
 import { TRAY_TAB_ARGS, TRAY_TAB_ORDER } from './trayTabs';
-import { MUSIC_STUDIO } from '../features';
+import { addonUsable } from '../addons/addonAccess';
 import { parseShowControlPath } from './showControlPaths';
 
 export interface ControlPathValidation {
@@ -234,11 +234,16 @@ export function validateControlPath(path: string): ControlPathValidation {
   return { valid: false, normalized, reason: `Unknown VJ target "${target ?? ''}".` };
 }
 
-// Audio Lab's own paths, listed only in a build that has it.
-if (MUSIC_STUDIO) CONTROL_PATH_EXAMPLES.push(
+// Audio Lab's own paths, listed only while it is unlocked.
+const AUDIO_LAB_PATH_EXAMPLES: ControlPathExample[] = [
   { path: 'studio:band.throw', label: "Throw the band into Audio Lab's echo (hold)" },
   { path: 'studio:band.freeze', label: "Freeze the band's sound" },
   { path: 'studio:pad.1', label: 'Audio Lab FX pad 1' },
   { path: 'studio:voice.1.level', label: 'Level of the first look on the instrument feeds' },
   { path: 'studio:song.next', label: 'Next song in the set list' },
-);
+];
+
+/** The example paths to show: the built-in ones, and Audio Lab's while it is unlocked. */
+export function controlPathExamples(audioLab = addonUsable('addon.audio-lab')): ControlPathExample[] {
+  return audioLab ? [...CONTROL_PATH_EXAMPLES, ...AUDIO_LAB_PATH_EXAMPLES] : CONTROL_PATH_EXAMPLES;
+}

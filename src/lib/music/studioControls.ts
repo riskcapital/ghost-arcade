@@ -14,7 +14,7 @@
  */
 
 import { writable } from 'svelte/store';
-import { MUSIC_STUDIO } from '../features';
+import { addonUsable } from '../addons/addonAccess';
 
 export const STUDIO_SCOPE = 'studio:';
 
@@ -57,9 +57,6 @@ export function studioControlPath(id: string): string {
 
 /** Register controls; returns a function that takes them away again. */
 export function registerStudioControls(list: readonly StudioControl[]): () => void {
-  // A build without the Music Studio offers none of its controls, so no
-  // controller, OSC, DMX or MCP path can reach it.
-  if (!MUSIC_STUDIO) return () => {};
   for (const control of list) {
     if (!ID.test(control.id)) throw new Error(`Bad studio control id: ${control.id}`);
     controls.set(control.id, control);
@@ -82,6 +79,11 @@ export function registerStudioControl(control: StudioControl): () => void {
   return registerStudioControls([control]);
 }
 
+// Locked, Audio Lab offers none of its controls, so no controller, OSC, DMX
+// or MCP path can reach it. They are registered either way and answer once
+// it is unlocked.
+const unlocked = () => addonUsable('addon.audio-lab');
+
 /** Controls that are worked out from their id when asked for, not registered (autoMidi.ts). */
 let fallback: ((id: string) => StudioControl | undefined) | null = null;
 export function setStudioControlFallback(find: ((id: string) => StudioControl | undefined) | null): void {
@@ -89,11 +91,13 @@ export function setStudioControlFallback(find: ((id: string) => StudioControl | 
 }
 
 export function studioControl(id: string): StudioControl | undefined {
+  if (!unlocked()) return undefined;
   return controls.get(id) ?? fallback?.(id);
 }
 
 /** Every control, grouped and in the order registered. */
 export function studioControls(): StudioControl[] {
+  if (!unlocked()) return [];
   const groups = new Map<string, StudioControl[]>();
   for (const control of controls.values()) {
     const list = groups.get(control.group) ?? [];

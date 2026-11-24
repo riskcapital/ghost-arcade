@@ -6,6 +6,10 @@ import {
   buildNativePluginGraph,
   buildNativePluginPrecompileCommands,
 } from './nativePluginGraphs';
+import { setAddonsStatusForTests } from '../addons/addonAccess';
+
+// Analog Synth is a paid add-on: these tests run it unlocked.
+setAddonsStatusForTests({ 'addon.analog-synth': true });
 
 const audio = {
   active: true,

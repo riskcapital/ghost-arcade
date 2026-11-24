@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { registerStudioControls, releaseStudioControls, runStudioControl, studioControl, studioControls } from './studioControls';
+import { setAddonsStatusForTests } from '../addons/addonAccess';
+
+// Audio Lab is a paid add-on: these tests run it unlocked.
+setAddonsStatusForTests({ 'addon.audio-lab': true });
 
 describe('studio controls', () => {
   it('fires a trigger once per press', () => {

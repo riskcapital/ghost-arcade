@@ -1335,7 +1335,6 @@ import { buildScene3DGraph } from '$lib/renderer/scene3dNative';
 import { validateScene3D } from '$lib/scene3d/sceneModel';
 import { buildVideoSynthGraph } from '$lib/videosynth/graph';
 import { videosynthIdPrefix } from '$lib/videosynth/ids';
-import { ANALOG_SYNTH } from '$lib/features';
 import { domePlacementCommand, domeProjectorOf, domeRigPayload, nativeDomeStage, projectorFrustum } from '$lib/output/domeMath';
 import { domeView } from '$lib/stores/domeView';
 import { mirrorMeshCommand, type MirrorMesh } from '$lib/output/mirrorMesh';
@@ -5336,10 +5335,9 @@ function videosynthPluginGraph(params: Record<string, any>, sourceId: string, wi
   } as InteractiveGraphBuildResult;
 }
 
-/** Analog Synth's graph, in a build that has the add-on. Decided here, not at
- *  the call (inside a try, where the bundler keeps everything), so a build
- *  without it leaves the graph and its shader name out. */
-const analogSynthGraph = ANALOG_SYNTH ? videosynthPluginGraph : null;
+/** Analog Synth's graph. A locked synth never gets here: its layers are
+ *  blocked before routing (nativePluginUnavailableReason). */
+const analogSynthGraph = videosynthPluginGraph;
 
 /** Where a zone acts on the world: the middle of its outline. */
 function zoneMiddle(points: { x: number; y: number }[]): { x: number; y: number } {

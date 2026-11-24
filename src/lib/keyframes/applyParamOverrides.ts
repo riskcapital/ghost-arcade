@@ -22,7 +22,7 @@
 import type { Layer } from '../types';
 import { applyInteractiveOverrides } from '../mobile/studio/interactiveEffects';
 import { applyLayerExtra, extraApplyState, finishLayerExtras, isLayerExtraKey, type ExtraApplyState } from './layerParamKeys';
-import { ANALOG_SYNTH } from '../features';
+import { addonUsable } from '../addons/addonAccess';
 
 export type ParamOverrideSet = Record<string, number | boolean>;
 
@@ -57,9 +57,9 @@ export function applyParamOverrides(target: Layer, overrides: ParamOverrideSet):
       };
     }
   }
-  // Analog Synth's controls live flat on the effect source. A build without
-  // the add-on leaves its layers as they were saved.
-  if (ANALOG_SYNTH && next.source?.effectSource?.effectType === 'videosynth') {
+  // Analog Synth's controls live flat on the effect source. Locked, the
+  // add-on's layers stay as they were saved.
+  if (addonUsable('addon.analog-synth') && next.source?.effectSource?.effectType === 'videosynth') {
     let synth: Record<string, any> | null = null;
     for (const key in overrides) {
       if (!key.startsWith('vsynth:')) continue;

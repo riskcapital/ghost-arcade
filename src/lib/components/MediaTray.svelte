@@ -99,6 +99,8 @@
   // --- Plugin System (Integrated) ---
   import { getAllPlugins, getPlugin, type PluginManifest } from '../plugins/registry';
   import { isNativePluginId } from '$lib/renderer/nativePluginInventory';
+  import { addonAccess, addonUsable, offerAddon } from '$lib/addons/addonAccess';
+  import AddonLock from './addons/AddonLock.svelte';
 
   // Ghost 2.0 intentionally exposes only plugins with an enabled native graph.
   $: availablePlugins = getAllPlugins().filter((plugin) => isNativePluginId(plugin.id));
@@ -1032,6 +1034,11 @@
   }
 
   function addPluginToCurrentMode(plugin: PluginManifest) {
+    // A locked add-on (a controller can browse to its card too) offers itself instead.
+    if (plugin.addon && !addonUsable(plugin.addon)) {
+      offerAddon(plugin.addon);
+      return;
+    }
     if (!vjMode) {
       void applyPluginToLayer(plugin);
       return;
@@ -5186,6 +5193,18 @@
 
           <!-- Integrated plugins (from registry) -->
           {#each availablePlugins as plugin (plugin.id)}
+            {#if plugin.addon && !$addonAccess[plugin.addon]}
+            <div class="plugin-card locked" data-tray-id={plugin.id} class:midi-cursor={midiCursorId === plugin.id}>
+              <div class="plugin-preview">
+                <PluginIcon pluginId={plugin.id} effectType={plugin.effectType} size={32} />
+              </div>
+              <div class="plugin-info">
+                <span class="plugin-name">{plugin.name}</span>
+                <span class="plugin-desc">{plugin.description}</span>
+                <AddonLock product={plugin.addon} />
+              </div>
+            </div>
+            {:else}
             <button
               class="plugin-card"
               data-tray-id={plugin.id}
@@ -5205,6 +5224,7 @@
                 <span class="plugin-tier">{plugin.tier}</span>
               </div>
             </button>
+            {/if}
           {/each}
 
           <!-- Old standalone Bevy Particles3D removed — now integrated via registry above -->
@@ -7908,6 +7928,10 @@
     flex-direction: column;
     gap: 6px;
   }
+
+  /* A paid add-on that is locked here: Try / Buy instead of Add. */
+  .plugin-card.locked { cursor: default; box-sizing: border-box; }
+  .plugin-card.locked .plugin-preview { opacity: 0.6; }
 
   /* Plugin card: a plain card in the panel's own surfaces. */
   .plugin-card {

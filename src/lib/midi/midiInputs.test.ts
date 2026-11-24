@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { mappingHearsDevice, resolveMidiInputs } from './midiInputs';
 import type { MidiDevice, MidiInputSetup } from './midiTypes';
+import { setAddonsStatusForTests } from '../addons/addonAccess';
+
+// Audio Lab is a paid add-on: these tests run it unlocked.
+setAddonsStatusForTests({ 'addon.audio-lab': true });
 
 const device = (id: string, name: string, state: MidiDevice['state'] = 'connected'): MidiDevice => ({ id, name, manufacturer: 'Test', state });
 
