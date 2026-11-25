@@ -17,7 +17,7 @@
 
 import { get, writable } from 'svelte/store';
 import { musicStudio, onMusicHydrate } from './musicStudioStore';
-import { BEATS_PER_BAR, MAX_LOOP_BARS, PlayedNotes, quantizeBeats, roleForRecording, type PlayedNote, type QuantizeId, type RecordedLoop, type RecordedNote } from './loopRecorder';
+import { BEATS_PER_BAR, EARLY_GRACE_BEATS, MAX_LOOP_BARS, PlayedNotes, quantizeBeats, roleForRecording, type PlayedNote, type QuantizeId, type RecordedLoop, type RecordedNote } from './loopRecorder';
 import {
   SOURCE_INSTRUMENT,
   alignXy,
@@ -67,6 +67,8 @@ import {
   loopFxChannel,
   setTrackSound,
   keysSound,
+  alignedOrigin,
+  syncedFreeEnd,
   soundValue,
   xyNotesForLayer,
   type LoopSound,
@@ -444,6 +446,68 @@ function takeLayer(i: number, from: number, to: number, origin: number, beats: n
   return takeFrom(t.source, t.instrument ?? armed?.instrument ?? s.instrument, cap, from, to, origin, beats, grid);
 }
 
+/**
+ * The grid new loops line up on: pass 0 and length of the longest loop
+ * playing on another track (null when none plays).
+ */
+function gridAnchor(except: number): { origin: number; beats: number } | null {
+  let best: { origin: number; beats: number } | null = null;
+  const count = data().trackCount;
+  for (let j = 0; j < count; j++) {
+    if (j === except) continue;
+    const phase = rts[j].phase;
+    if (phase !== 'play' && phase !== 'overdub') continue;
+    let grid: { origin: number; beats: number } | null = null;
+    if (isAudio(j)) {
+      const info = audioEngine()?.info(j);
+      if (info && info.bars > 0) grid = { origin: info.originBeat, beats: info.bars * BEATS_PER_BAR };
+    } else if (track(j).beats > 0) grid = { origin: rts[j].origin, beats: track(j).beats };
+    if (grid && (!best || grid.beats > best.beats)) best = grid;
+  }
+  return best;
+}
+
+/** A note played into a recording or overdub that is still under way, for the lanes to draw as it is played. */
+export interface LiveNote {
+  /** Beat it started, on the launch clock. */
+  at: number;
+  /** Beats held so far (to `beat` while still held). */
+  dur: number;
+  note: number;
+}
+
+/**
+ * What a MIDI track is recording right now, up to `beat`: the notes on the
+ * sound the take will keep (as takeLayer settles it), so the lanes show them
+ * while they are played instead of when the pass closes.
+ */
+export function liveTakeNotes(i: number, beat: number): LiveNote[] {
+  if (!host || i < 0 || i >= LOOP_TRACK_COUNT || isAudio(i)) return [];
+  const rt = rts[i];
+  if (rt.phase !== 'record' && rt.phase !== 'overdub') return [];
+  const t = track(i);
+  const from = rt.phase === 'record' ? rt.recStart - EARLY_GRACE_BEATS : rt.dubFrom;
+  if (!(beat > from)) return [];
+  const window = (list: readonly PlayedNote[], instrument: InstrumentId): LiveNote[] =>
+    list
+      .filter((n) => n.instrument === instrument && n.beat >= from && n.beat < beat)
+      .map((n) => ({ at: Math.max(n.beat, rt.phase === 'record' ? rt.recStart : from), dur: Math.max(1 / 64, Math.min(n.end ?? beat, beat) - n.beat), note: n.note }));
+  const played = host.played();
+  if (t.source) return window(t.source === 'xy' ? played : hitsPlayed.all(), SOURCE_INSTRUMENT[t.source]);
+  const candidates: Array<() => LiveNote[]> = [];
+  const src = rt.tab ? tabSource(rt.tab) : null;
+  if (src) candidates.push(() => window(src === 'xy' ? played : hitsPlayed.all(), SOURCE_INSTRUMENT[src]));
+  if (rt.phase === 'record') {
+    const s = get(musicStudio);
+    for (const instrument of [keysSound(s).instrument, rt.armSound?.instrument, t.instrument]) if (instrument) candidates.push(() => window(played, instrument));
+  } else candidates.push(() => window(played, t.instrument ?? get(musicStudio).instrument));
+  for (const c of candidates) {
+    const notes = c();
+    if (notes.length) return notes;
+  }
+  return [];
+}
+
 function hasContent(i: number): boolean {
   if (isAudio(i)) return (audioEngine()?.layerCount(i) ?? 0) > 0;
   return track(i).layers.length > 0 && track(i).beats > 0;
@@ -617,7 +681,9 @@ function closeRecord(i: number, beat: number): void {
     finishFree(i, beat);
     return;
   }
-  const close = rt.recEnd === null ? freeRecordEnd(rt.recStart, beat) : Math.min(rt.recEnd, Math.max(rt.recStart + BEATS_PER_BAR, nextBarAt(beat)));
+  // Free over loops already playing: a length that fits theirs, so it lines up with them.
+  const grid = gridAnchor(i);
+  const close = rt.recEnd === null ? (grid ? syncedFreeEnd(rt.recStart, beat, grid.beats) : freeRecordEnd(rt.recStart, beat)) : Math.min(rt.recEnd, Math.max(rt.recStart + BEATS_PER_BAR, nextBarAt(beat)));
   rt.recEnd = Math.min(close, rt.recStart + MAX_MIDI_LOOP_BARS * BEATS_PER_BAR);
 }
 
@@ -1054,8 +1120,11 @@ function stepMidi(i: number, beat: number, horizon: number, timeAt: (b: number) 
   }
   if (rt.phase === 'record' && rt.recEnd !== null && beat >= rt.recEnd - 0.02) {
     const beats = rt.recEnd - rt.recStart;
-    const layer = takeLayer(i, rt.recStart, rt.recEnd, rt.recStart, beats, captured(), true);
-    commitFirstLayer(i, layer, beats, rt.recStart, rt.recEnd);
+    // Pass 0 on the playing loops' grid; it plays on from where the recording ended.
+    const origin = alignedOrigin(rt.recStart, beats, gridAnchor(i)?.origin ?? null);
+    const layer = takeLayer(i, rt.recStart, rt.recEnd, origin, beats, captured(), true);
+    // A free take closed on a bar already gone plays on from now; its notes since were heard live.
+    commitFirstLayer(i, layer, beats, origin, beat - rt.recEnd > 0.25 ? beat : rt.recEnd);
     changed = true;
   }
   if (rt.phase === 'record' && rt.recEnd === null && beat - rt.recStart >= MAX_MIDI_LOOP_BARS * BEATS_PER_BAR) {

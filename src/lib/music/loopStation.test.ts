@@ -30,6 +30,7 @@ import {
   renameLoopTrack,
   setLoopTrackInstrument,
   setLoopTrackSound,
+  liveTakeNotes,
 } from './loopStation';
 import { normalizeStationData } from './loopTrack';
 import { memoryBackend, setUserLoopsBackend, userLoops } from './userLoops';
@@ -193,6 +194,39 @@ describe('a MIDI loop track', () => {
     expect(await loadUserLoopToTrack(id!)).toBe(0);
     expect(track0().layers[0].map((n) => n.beat)).toEqual([0, 3]);
     expect(await insertUserLoopInSession(id!)).toBe(true);
+  });
+});
+
+describe('loop timing', () => {
+  it('a take recorded over a playing loop sits on its grid and plays on from where it ended', () => {
+    pressLoopTrack(0);
+    runTo(4);
+    play(4);
+    runTo(20); // track 0: 4 bars from beat 4
+    musicStudio.updateLoopStation((d) => ({ ...d, length: 2 }));
+    pressLoopTrack(1);
+    expect(_trackRuntime(1).recStart).toBe(24);
+    runTo(24);
+    play(26, 67);
+    runTo(32.5);
+    // Its pass 0 is on track 0's 2-bar grid (4, 12, 20, 28): the note played at 26 keeps its place.
+    expect(_trackRuntime(1).origin).toBe(20);
+    expect(get(musicStudio).loopStation.tracks[1].layers[0].map((n) => n.beat)).toEqual([6]);
+    sent = [];
+    runTo(36);
+    const ons = sent.filter((e) => e.type === 'on' && e.note === 67);
+    expect(ons[0].time).toBeCloseTo((34 * 500) / 1000, 6);
+  });
+
+  it('shows the notes of a take while it records', () => {
+    pressLoopTrack(0);
+    runTo(4);
+    notes.push({ instrument: 'keys', note: 62, velocity: 0.8, beat: 5, end: null });
+    runTo(6);
+    expect(liveTakeNotes(0, 6)).toEqual([{ at: 5, dur: 1, note: 62 }]);
+    runTo(20);
+    expect(liveTakeNotes(0, 20.5)).toEqual([]);
+    expect(track0().layers[0].map((n) => n.note)).toEqual([62]);
   });
 });
 

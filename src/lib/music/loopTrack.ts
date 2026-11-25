@@ -243,6 +243,34 @@ export function freeRecordEnd(startBeat: number, beat: number): number {
   return startBeat + bars * BEATS_PER_BAR;
 }
 
+/**
+ * Pass 0 of a loop of `beats` recorded from `start`, on the grid of the loops
+ * already playing (pass 0 of one of them at `anchor`): the loop-length
+ * boundary at or before the start, so the new loop sits in its section as
+ * the others do and its notes keep the time they were played. With nothing
+ * playing (null) the recording's start is the loop's start.
+ */
+export function alignedOrigin(start: number, beats: number, anchor: number | null): number {
+  if (anchor === null || !(beats > 0)) return start;
+  return anchor + Math.floor((start - anchor) / beats + 1e-6) * beats + 0;
+}
+
+/**
+ * Where a free recording over loops already playing closes when stop is
+ * pressed at `beat`: on the length nearest the press that fits the longest
+ * of them (`masterBeats`): a half, quarter or eighth of it (at least a bar),
+ * or a whole number of it. So it lines up with them pass after pass.
+ */
+export function syncedFreeEnd(startBeat: number, beat: number, masterBeats: number): number {
+  if (!(masterBeats >= BEATS_PER_BAR)) return freeRecordEnd(startBeat, beat);
+  const into = beat - startBeat;
+  const lengths = [masterBeats / 8, masterBeats / 4, masterBeats / 2].filter((l) => l >= BEATS_PER_BAR && Number.isInteger(l / BEATS_PER_BAR));
+  for (let k = 1; k <= Math.max(1, Math.ceil(into / masterBeats) + 1); k++) lengths.push(k * masterBeats);
+  let best = lengths[0];
+  for (const l of lengths) if (Math.abs(l - into) < Math.abs(best - into)) best = l;
+  return startBeat + best;
+}
+
 /** Where a press during overdub or play takes effect: the next bar line. */
 export function punchAt(beat: number): number {
   return nextBarAt(beat + 1e-3);

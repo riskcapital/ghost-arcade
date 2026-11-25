@@ -18,9 +18,12 @@
     suggestedLoopName,
     undoLoopLayer,
     audioPeaks,
+    liveTakeNotes,
+    type LiveNote,
+    type TrackView,
   } from '../../music/loopStation';
   import { beatNow, trackProgress } from '../../music/loopUi';
-  import { parseSoundValue, setTrackKind, type LoopTrackKind } from '../../music/loopTrack';
+  import { parseSoundValue, setTrackKind, wrapBeat, type LoopTrackKind } from '../../music/loopTrack';
   import { SOURCE_MENU_LABELS, trackSoundLabel, type LoopSource } from '../../music/loopSources';
   /** The tab instruments a MIDI track can record. */
   const TAB_SOURCES: LoopSource[] = ['xy', 'dub', 'pads'];
@@ -85,22 +88,47 @@
     return !l ? '' : l.device ? `dev:${l.device}` : `ch:${l.channel}`;
   };
 
-  /** Notes as thin bars, high notes higher, coral for the newest layer while overdubbing. */
-  function noteRects(i: number) {
+  /** The beats a lane spans: the loop, or while a first take records, its length (a free one grows bar by bar). */
+  function laneBeats(v: TrackView, beat: number): number {
+    if (v.phase === 'record' && !(v.beats > 0)) {
+      if (v.endBeat !== null && v.endBeat > v.startBeat) return v.endBeat - v.startBeat;
+      return Math.max(16, Math.ceil(Math.max(0, beat - v.startBeat) / 4 + 1e-6) * 4);
+    }
+    return v.beats;
+  }
+
+  /**
+   * Notes as thin bars, high notes higher, coral for the newest layer while
+   * overdubbing and for the notes being recorded now (`live`), drawn as they
+   * are played.
+   */
+  function noteRects(i: number, v: TrackView, live: LiveNote[], span: number) {
     const t = tracks[i];
-    if (!(t.beats > 0)) return [];
-    const all = t.layers.flat();
+    if (!(span > 0)) return [];
+    const all = [...t.layers.flat(), ...live];
     if (!all.length) return [];
     const lo = Math.min(...all.map((n) => n.note));
     const hi = Math.max(lo + 12, ...all.map((n) => n.note));
-    return t.layers.flatMap((layer, li) =>
-      layer.map((n) => ({
-        x: (n.beat / t.beats) * 100,
-        y: 88 - ((n.note - lo) / (hi - lo)) * 76,
-        w: Math.max(0.6, (n.dur / t.beats) * 100),
-        newest: li === t.layers.length - 1 && t.layers.length > 1,
-      })),
-    );
+    const y = (note: number) => 88 - ((note - lo) / (hi - lo)) * 76;
+    const kept = t.beats > 0
+      ? t.layers.flatMap((layer, li) =>
+          layer.map((n) => ({
+            x: (n.beat / t.beats) * 100,
+            y: y(n.note),
+            w: Math.max(0.6, (n.dur / t.beats) * 100),
+            newest: li === t.layers.length - 1 && t.layers.length > 1,
+          })),
+        )
+      : [];
+    const pos = (at: number) => (v.phase === 'record' && !(v.beats > 0) ? at - v.startBeat : wrapBeat(at - v.origin, span));
+    const now = live.map((n) => ({ x: (pos(n.at) / span) * 100, y: y(n.note), w: Math.max(0.6, (Math.min(n.dur, span) / span) * 100), newest: true }));
+    return [...kept, ...now];
+  }
+
+  /** The playhead while a free first take records: through the bars it has so far. */
+  function headAt(v: TrackView, beat: number, span: number): number {
+    if (v.phase === 'record' && !(v.beats > 0) && v.endBeat === null && span > 0) return Math.max(0, Math.min(1, (beat - v.startBeat) / span));
+    return trackProgress(v, beat);
   }
 
   function wavePath(i: number): string {
@@ -121,7 +149,10 @@
   {#each { length: $musicStudio.loopStation.trackCount } as _, i}
     {@const t = tracks[i]}
     {@const v = view.tracks[i]}
-    {@const bars = Math.max(1, Math.round((v.beats || 16) / 4))}
+    {@const recording = t.kind === 'midi' && (v.phase === 'record' || v.phase === 'overdub')}
+    {@const span = recording ? laneBeats(v, $beatNow) : v.beats}
+    {@const live = recording ? liveTakeNotes(i, $beatNow) : []}
+    {@const bars = Math.max(1, Math.round((span || 16) / 4))}
     <div class="tr" class:sel={view.selected === i}>
       <div class="hd" role="presentation" onpointerdown={() => selectLoopTrack(i)}>
         <LoopTrackButton index={i} />
@@ -177,14 +208,14 @@
           <div class="clip" class:b={t.kind === 'audio' || v.phase === 'play' || v.phase === 'stopped'} class:stopped={v.phase === 'stopped'}>
             {#if t.kind === 'midi'}
               <svg viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
-                {#each noteRects(i) as r}<rect x={r.x} y={r.y} width={r.w} height="3" class:newest={r.newest} />{/each}
+                {#each noteRects(i, v, live, span) as r}<rect x={r.x} y={r.y} width={r.w} height="3" class:newest={r.newest} />{/each}
               </svg>
             {:else}
               <svg viewBox="0 0 200 20" preserveAspectRatio="none" aria-hidden="true"><path d={v.layers ? wavePath(i) : ''} /></svg>
             {/if}
           </div>
           {#if v.phase === 'play' || v.phase === 'overdub' || v.phase === 'record'}
-            <div class="ph" style="left: {trackProgress(v, $beatNow) * 100}%"></div>
+            <div class="ph" style="left: {headAt(v, $beatNow, span) * 100}%"></div>
           {/if}
         {/if}
       </div>

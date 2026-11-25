@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
   keysSound,
+  alignedOrigin,
+  syncedFreeEnd,
   loopFxChannel,
   normalizeTrack,
   parseSoundValue,
@@ -343,5 +345,25 @@ describe('keysSound', () => {
     expect(keysSound({ ...base, instrument: 'keys' })).toEqual({ instrument: 'keys', patch: 'organ' });
     expect(keysSound({ ...base, instrument: 'keys', keysTone: 'rhodes' })).toEqual({ instrument: 'keys', tone: 'rhodes' });
     expect(keysSound({ ...base, instrument: 'drums' })).toEqual({ instrument: 'drums' });
+  });
+});
+
+describe('a new loop on the playing loops\' grid', () => {
+  it('starts its pass 0 on the loop-length boundary at or before the recording', () => {
+    expect(alignedOrigin(24, 16, null)).toBe(24);
+    expect(alignedOrigin(24, 16, 4)).toBe(20);
+    expect(alignedOrigin(20, 16, 4)).toBe(20);
+    expect(alignedOrigin(28, 4, 4)).toBe(28);
+    expect(alignedOrigin(30, 8, -16)).toBe(24);
+  });
+
+  it('closes a free take on a length that fits the longest loop playing', () => {
+    // 4-bar loop playing: 3.25 bars in closes at 4 bars, 2.75 at 2, 1.4 at 1, 7 at 8; never 3.
+    expect(syncedFreeEnd(8, 8 + 13, 16)).toBe(8 + 16);
+    expect(syncedFreeEnd(8, 8 + 11, 16)).toBe(8 + 8);
+    expect(syncedFreeEnd(8, 8 + 5.6, 16)).toBe(8 + 4);
+    expect(syncedFreeEnd(8, 8 + 28, 16)).toBe(8 + 32);
+    // Nothing a bar long to fit: the nearest bar.
+    expect(syncedFreeEnd(0, 6.5, 0)).toBe(8);
   });
 });

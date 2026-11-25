@@ -12,7 +12,7 @@
    */
   import { onDestroy, onMount } from 'svelte';
   import { musicStudio } from '../../music/musicStudioStore';
-  import { audioLayerPeaks, loopStationView, selectLoopTrack } from '../../music/loopStation';
+  import { audioLayerPeaks, liveTakeNotes, loopStationView, selectLoopTrack } from '../../music/loopStation';
   import { LOOP_TRACK_COUNT } from '../../music/loopTrack';
   import { trackSoundLabel } from '../../music/loopSources';
   import { launchClockPosition } from '../../stores/launchClock';
@@ -34,6 +34,16 @@
   const view = $derived($loopStationView);
   /** The window: two passes of the longest loop, at least two bars. */
   const windowBeats = $derived(Math.max(8, 2 * Math.max(4, ...view.tracks.slice(0, s.loopStation.trackCount).map((t) => t.beats || 0))));
+
+  /**
+   * Where the window's pages start: pass 0 of the longest loop, so each loop
+   * shows from the start of its section (the loops line up on its grid).
+   */
+  const anchor = $derived.by(() => {
+    let best: { origin: number; beats: number } | null = null;
+    for (const t of view.tracks.slice(0, s.loopStation.trackCount)) if (t.phase !== 'empty' && t.beats > 0 && (!best || t.beats > best.beats)) best = t;
+    return best ? best.origin : 0;
+  });
 
   $effect(() => {
     // Anything the lanes show changing redraws them once.
@@ -71,15 +81,16 @@
     g.font = '10px system-ui, sans-serif';
     // Bar grid and ruler.
     for (let b = 0; b <= windowBeats; b++) {
-      const bar = (startBeat + b) % 4 === 0;
+      const rel = startBeat + b - anchor;
+      const bar = Math.abs(rel - Math.round(rel / 4) * 4) < 1e-6;
       g.fillStyle = bar ? edge : soft;
       g.fillRect(Math.round(x(startBeat + b)), 0, 1, height);
       if (bar && b < windowBeats) {
         g.fillStyle = ink;
-        g.fillText(String(Math.floor((startBeat + b) / 4) + 1), x(startBeat + b) + 4, 13);
+        g.fillText(String(Math.round(rel / 4) + 1), x(startBeat + b) + 4, 13);
       } else if (b < windowBeats && plotW / windowBeats > 26) {
         g.fillStyle = muted;
-        g.fillText(`.${((startBeat + b) % 4) + 1}`, x(startBeat + b) + 4, 13);
+        g.fillText(`.${((Math.round(rel) % 4) + 4) % 4 + 1}`, x(startBeat + b) + 4, 13);
       }
     }
     g.fillStyle = edge;
@@ -177,11 +188,12 @@
     raf = 0;
     if (!visible || document.hidden) return;
     const { beat } = launchClockPosition();
-    const p = Math.floor(beat / windowBeats);
+    const p = Math.floor((beat - anchor) / windowBeats);
+    const start = anchor + p * windowBeats;
     if (p !== page || dirty) {
       page = p;
       dirty = false;
-      drawBase(p * windowBeats);
+      drawBase(start);
     }
     const c = head;
     if (c && width && height) {
@@ -193,7 +205,37 @@
       const g = c.getContext('2d')!;
       g.setTransform(dpr, 0, 0, dpr, 0, 0);
       g.clearRect(0, 0, width, height);
-      const xh = HEAD_W + ((beat - p * windowBeats) / windowBeats) * (width - HEAD_W);
+      const plotW = width - HEAD_W;
+      const xAt = (b: number) => HEAD_W + ((b - start) / windowBeats) * plotW;
+      // Notes being recorded, drawn as they are played (the lane keeps them once the pass closes).
+      const count = s.loopStation.trackCount;
+      const laneH = (height - 20) / count;
+      g.fillStyle = css('--studio-rec', '#ff6b57');
+      for (let i = 0; i < count; i++) {
+        const v = view.tracks[i];
+        if (v.phase !== 'record' && v.phase !== 'overdub') continue;
+        const live = liveTakeNotes(i, beat);
+        if (!live.length) continue;
+        const kept = s.loopStation.tracks[i]?.layers.flat() ?? [];
+        const lo = Math.min(...live.map((n) => n.note), ...kept.map((n) => n.note));
+        const hi = Math.max(lo + 12, ...live.map((n) => n.note), ...kept.map((n) => n.note));
+        const y0 = 20 + i * laneH;
+        const padY = Math.min(8, laneH * 0.12);
+        const h = laneH - padY * 2;
+        const noteH = Math.max(2, Math.min(5, h / (hi - lo + 1)));
+        g.save();
+        g.beginPath();
+        g.rect(HEAD_W, y0, plotW, laneH);
+        g.clip();
+        for (const n of live) {
+          // Played before this page turned: shown where the loop repeats it on this page.
+          let at = n.at;
+          if (v.beats > 0) while (at < start) at += v.beats;
+          g.fillRect(xAt(at), y0 + padY + (1 - (n.note - lo) / (hi - lo)) * (h - noteH), Math.max(2, (n.dur / windowBeats) * plotW), noteH);
+        }
+        g.restore();
+      }
+      const xh = xAt(beat);
       g.fillStyle = css('--studio-ink', '#f2ede4');
       g.fillRect(Math.round(xh), 0, 1, height);
     }
