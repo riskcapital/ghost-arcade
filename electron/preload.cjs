@@ -54,6 +54,9 @@ const ALLOWED_IPC_COMMANDS = new Set([
   'license_get_status', 'license_activate', 'license_deactivate', 'license_validate_online',
   // Add-on licences (electron/addons/entitlement.cjs)
   'addons_status', 'addons_activate', 'addons_free_seat', 'addons_refresh', 'addons_deactivate', 'addons_extend',
+  // Signed app-code updates (electron/updates/code-update.cjs)
+  'code_update_status', 'code_update_check', 'code_update_install', 'code_update_cancel',
+  'code_update_revert', 'code_update_ready', 'code_update_restart',
   // HTTP proxy
   'http_fetch', 'http_fetch_binary', 'http_put_binary',
   // Shader thumbnail
@@ -230,7 +233,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
    * Returns a cleanup function that removes the listener.
    */
   on: (channel, callback) => {
-    const allowed = ['app-before-quit', 'app-quit-requested', 'director-stream-chunk', 'director-stream-end', 'demo-download-progress', 'spout-osr-status', 'texshare-atlas-status', 'stage3d-fullscreen-changed', 'stage3d-visibility-changed', 'projection-sim-fullscreen-changed', 'sim-window-moved', 'video-converter-progress', 'video-loop-progress', 'open-project-file', 'project-package-progress', 'win-maximized-changed', 'preview-monitor-state', 'preview-monitor-status', 'install-mode-paused', 'install-mode-quit-refused'];
+    const allowed = ['app-before-quit', 'app-quit-requested', 'director-stream-chunk', 'director-stream-end', 'demo-download-progress', 'spout-osr-status', 'texshare-atlas-status', 'stage3d-fullscreen-changed', 'stage3d-visibility-changed', 'projection-sim-fullscreen-changed', 'sim-window-moved', 'video-converter-progress', 'video-loop-progress', 'open-project-file', 'project-package-progress', 'win-maximized-changed', 'preview-monitor-state', 'preview-monitor-status', 'install-mode-paused', 'install-mode-quit-refused', 'code-update-progress'];
     if (!allowed.includes(channel)) return () => {};
     const handler = (_event, ...args) => callback(...args);
     ipcRenderer.on(channel, handler);
