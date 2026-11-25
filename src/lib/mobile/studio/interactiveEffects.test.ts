@@ -41,3 +41,11 @@ describe('Interactive automation and presets',()=>{
   expect(validateScene(JSON.parse(JSON.stringify(s))).animation).toEqual(s.animation);s.animation.tracks[0].keyframes[0].value=NaN;expect(()=>validateScene(s)).toThrow();
  });
 });
+describe('beat-synced modulation without a tempo',()=>{
+ it('runs at 120 BPM when the tempo is unknown (0), never at 1 BPM',()=>{const e=makeEffect('light');e.mods.lightX={source:'lfo-saw',speed:1,amount:1,invert:false,bpmSync:true,rangeMin:0,rangeMax:1};
+  // At 120 BPM a one-cycle-per-beat saw is half way through after 0.25 s.
+  expect(evaluateEffect(e,.25,{},0).params.lightX).toBeCloseTo(evaluateEffect(e,.25,{},120).params.lightX);expect(evaluateEffect(e,.25,{},120).params.lightX).toBeCloseTo(.5);});
+});
+describe('2D GPU kick and snare',()=>{
+ it('read their own hits, not the smoothed bass',async()=>{const {MATTER_COMMON}=await import('../../renderer/nativeInteractiveMatter');expect(MATTER_COMMON).toContain('case 12u:{signal=u.touch.x;}case 13u:{signal=u.touch.y;}');expect(MATTER_COMMON).not.toContain('case 12u,13u:{signal=m.audio.x;}');});
+});

@@ -70,7 +70,7 @@ fn lost(p: vec3f) -> bool {
 fn modulated(base: f32, a: vec4f, b: vec4f) -> f32 {
   if (a.x < 0.5) { return base; }
   let source = u32(a.x);
-  let phase = frame.time * a.z * select(1.0, max(frame.tempo, 1.0) / 60.0, b.z > 0.5);
+  let phase = frame.time * a.z * select(1.0, select(120.0, frame.tempo, frame.tempo >= 1.0) / 60.0, b.z > 0.5);
   var signal = 0.0;
   switch (source) {
     case 1u, 2u: { signal = frame.bass; }

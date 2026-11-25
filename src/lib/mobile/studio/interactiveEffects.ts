@@ -121,7 +121,7 @@ export function reorderEffects(effects:InteractiveEffect[],from:string,to:string
 /** Same normalized range/Depth/LFO semantics as shader Mod; portable evaluation
  * uses smoothed bands supplied by the host. Native evaluates during core replay. */
 export function evaluateEffect(effect:InteractiveEffect,time:number,audio:Record<string,number>={},bpm=120):InteractiveEffect{
- const params={...effect.params};for(const d of effectParams(effect.kind)){const m=effect.mods[d.key];if(!m||m.source==='manual')continue;let signal=audio[m.source]??0;const phase=time*m.speed*(m.bpmSync?bpm/60:1);switch(m.source){case 'lfo-sine':signal=.5+.5*Math.sin(phase*Math.PI*2);break;case 'lfo-tri':signal=1-Math.abs((phase%1)*2-1);break;case 'lfo-saw':signal=phase%1;break;case 'lfo-square':signal=phase%1<.5?1:0;break;case 'beatPhase':signal=time*bpm/60%1;break;}
+ const params={...effect.params};for(const d of effectParams(effect.kind)){const m=effect.mods[d.key];if(!m||m.source==='manual')continue;let signal=audio[m.source]??0;const tempo=bpm>=1?bpm:120;const phase=time*m.speed*(m.bpmSync?tempo/60:1);switch(m.source){case 'lfo-sine':signal=.5+.5*Math.sin(phase*Math.PI*2);break;case 'lfo-tri':signal=1-Math.abs((phase%1)*2-1);break;case 'lfo-saw':signal=phase%1;break;case 'lfo-square':signal=phase%1<.5?1:0;break;case 'beatPhase':signal=time*tempo/60%1;break;}
  signal=Math.max(0,Math.min(1,signal));const ranged=m.rangeMin!==undefined&&m.rangeMax!==undefined;if(!ranged&&!m.source.startsWith('lfo-')&&m.source!=='beatPhase')signal=.5+signal*.5;if(m.invert)signal=1-signal;params[d.key]=ranged?d.min+(m.rangeMin!+(m.rangeMax!-m.rangeMin!)*signal)*(d.max-d.min):Math.max(d.min,Math.min(d.max,params[d.key]+(signal-.5)*m.amount*(d.max-d.min)));}return {...effect,params};
 }
 

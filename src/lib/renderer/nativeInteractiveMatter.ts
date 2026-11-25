@@ -14,8 +14,8 @@ struct Geo { wall:vec4<f32>, source:vec4<f32> };
 @group(0) @binding(4) var<uniform> m:M;
 @group(0) @binding(10) var<storage,read> emissionState:array<vec4<f32>>;
 fn ctrl(index:u32,base:f32)->f32{
- let a=m.mods[index*2u];let b=m.mods[index*2u+1u];if(a.x<.5){return base;}var signal=0.;let source=u32(a.x);var phase=u.view.z*a.z*select(1.,max(m.clock.y,1.)/60.,b.z>.5);
- switch(source){case 1u,2u:{signal=m.audio.x;}case 3u:{signal=(m.audio.x+m.audio.y)*.5;}case 4u:{signal=m.audio.y;}case 5u:{signal=(m.audio.y+m.audio.z)*.5;}case 6u,7u,8u,9u:{signal=m.audio.z;}case 10u:{signal=m.audio.w;}case 11u:{signal=m.clock.x;}case 12u,13u:{signal=m.audio.x;}case 14u:{signal=.5+.5*sin(phase*6.2831853);}case 15u:{signal=1.-abs(fract(phase)*2.-1.);}case 16u:{signal=fract(phase);}case 17u:{signal=select(0.,1.,fract(phase)<.5);}default:{}}
+ let a=m.mods[index*2u];let b=m.mods[index*2u+1u];if(a.x<.5){return base;}var signal=0.;let source=u32(a.x);var phase=u.view.z*a.z*select(1.,select(120.,m.clock.y,m.clock.y>=1.)/60.,b.z>.5);
+ switch(source){case 1u,2u:{signal=m.audio.x;}case 3u:{signal=(m.audio.x+m.audio.y)*.5;}case 4u:{signal=m.audio.y;}case 5u:{signal=(m.audio.y+m.audio.z)*.5;}case 6u,7u,8u,9u:{signal=m.audio.z;}case 10u:{signal=m.audio.w;}case 11u:{signal=m.clock.x;}case 12u:{signal=u.touch.x;}case 13u:{signal=u.touch.y;}case 14u:{signal=.5+.5*sin(phase*6.2831853);}case 15u:{signal=1.-abs(fract(phase)*2.-1.);}case 16u:{signal=fract(phase);}case 17u:{signal=select(0.,1.,fract(phase)<.5);}default:{}}
  signal=clamp(signal,0.,1.);if(b.w>.5){signal=select(signal,1.-signal,a.w>.5);return mix(b.x,b.y,signal);}if(source<11u||source==12u||source==13u){signal=.5+signal*.5;}signal=select(signal,1.-signal,a.w>.5);return clamp(base+(signal-.5)*a.y*(b.y-b.x),b.x,b.y);
 }
 fn lightPosition()->vec3<f32>{return vec3<f32>(ctrl(0u,m.light.x),ctrl(1u,m.light.y),ctrl(2u,m.light.z));}

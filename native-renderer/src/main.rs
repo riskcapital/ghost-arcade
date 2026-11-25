@@ -9301,7 +9301,7 @@ impl App {
                     write_f32_le(&mut buffer.initial_bytes, 42, smooth.treble);
                     write_f32_le(&mut buffer.initial_bytes, 43, smooth.energy);
                     write_f32_le(&mut buffer.initial_bytes, 44, self.audio1[2]);
-                    write_f32_le(&mut buffer.initial_bytes, 45, self.audio1[3].max(1.0));
+                    write_f32_le(&mut buffer.initial_bytes, 45, scene_frame::tempo_or_default(self.audio1[3]));
                 }
                 continue;
             }
@@ -9315,6 +9315,13 @@ impl App {
                 write_f32_le(&mut buffer.initial_bytes, 2, time);
                 write_f32_le(&mut buffer.initial_bytes, 3, delta);
                 write_f32_le(&mut buffer.initial_bytes, 10, smooth.energy);
+                // The kick and snare hits (impulses, as in the 3D world's frame
+                // block) in touch.xy, which an Interactive uniform leaves unused;
+                // a Performer World keeps its pointer there.
+                if buffer.id.ends_with(":interactive:uniform") {
+                    write_f32_le(&mut buffer.initial_bytes, 8, self.audio2[1].clamp(0.0, 1.0));
+                    write_f32_le(&mut buffer.initial_bytes, 9, self.audio2[2].clamp(0.0, 1.0));
+                }
                 if let Some(effects) = graph_layer.params["interactiveScene"]["effects"].as_array() {
                     // `...:<effect id>:interactive:uniform`: read the id out of the
                     // buffer name instead of formatting one string per effect per frame.
@@ -9330,8 +9337,8 @@ impl App {
                             // reinstalling the graph. Only a modulated slot is driven here.
                             if source=="manual" { continue; }
                             let speed=m["speed"].as_f64().unwrap_or(0.15) as f32;
-                            let phase=time*speed*if m["bpmSync"]==true { self.audio1[3].max(1.0)/60.0 } else {1.0};
-                            let mut signal=match source {"sub"|"bass"|"kick"|"snare"=>smooth.bass,"lowMid"=>(smooth.bass+smooth.mid)*0.5,"mid"=>smooth.mid,"highMid"=>(smooth.mid+smooth.treble)*0.5,"treble"|"air"|"presence"|"high"=>smooth.treble,"amplitude"=>smooth.energy,"beatPhase"=>self.audio1[2],"lfo-sine"=>0.5+0.5*(phase*std::f32::consts::TAU).sin(),"lfo-tri"=>1.0-(phase.rem_euclid(1.0)*2.0-1.0).abs(),"lfo-saw"=>phase.rem_euclid(1.0),"lfo-square"=>if phase.rem_euclid(1.0)<0.5 {1.0}else{0.0},_=>0.5};
+                            let phase=time*speed*if m["bpmSync"]==true { scene_frame::tempo_or_default(self.audio1[3])/60.0 } else {1.0};
+                            let mut signal=match source {"sub"|"bass"=>smooth.bass,"kick"=>self.audio2[1],"snare"=>self.audio2[2],"lowMid"=>(smooth.bass+smooth.mid)*0.5,"mid"=>smooth.mid,"highMid"=>(smooth.mid+smooth.treble)*0.5,"treble"|"air"|"presence"|"high"=>smooth.treble,"amplitude"=>smooth.energy,"beatPhase"=>self.audio1[2],"lfo-sine"=>0.5+0.5*(phase*std::f32::consts::TAU).sin(),"lfo-tri"=>1.0-(phase.rem_euclid(1.0)*2.0-1.0).abs(),"lfo-saw"=>phase.rem_euclid(1.0),"lfo-square"=>if phase.rem_euclid(1.0)<0.5 {1.0}else{0.0},_=>0.5};
                             let value=if source=="manual" {base} else if let (Some(lo),Some(hi))=(m["rangeMin"].as_f64(),m["rangeMax"].as_f64()) {if m["invert"]==true {signal=1.0-signal;}min+(lo as f32+(hi-lo) as f32*signal)*(max-min)} else {if !source.starts_with("lfo-")&&source!="beatPhase" {signal=0.5+signal*0.5;}if m["invert"]==true {signal=1.0-signal;}base+(signal-0.5)*m["amount"].as_f64().unwrap_or(0.5) as f32*(max-min)};
                             write_f32_le(&mut buffer.initial_bytes,slot,value.clamp(min,max)*scale);
                         }

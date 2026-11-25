@@ -112,6 +112,12 @@ impl SceneFrame {
     }
 }
 
+/// The tempo a beat-synced LFO runs at: the analysed one, or 120 BPM while
+/// nothing is playing (0 is "unknown", which ran the LFO at 1 BPM).
+pub(crate) fn tempo_or_default(tempo: f32) -> f32 {
+    if tempo.is_finite() && tempo >= 1.0 { tempo.min(300.0) } else { 120.0 }
+}
+
 /// A paused layer's block: time and everything else stay where they were, but
 /// nothing advances. The block is persistent, so without this the last live
 /// delta stayed in it and a paused 3D world kept simulating; the kick and snare
@@ -223,6 +229,15 @@ mod tests {
         }
         // Bytes past the block are not touched.
         assert_eq!(&bytes[BYTES..], &[0u8; 8]);
+    }
+
+    #[test]
+    fn tempo_defaults_to_120_when_unknown() {
+        assert_eq!(tempo_or_default(0.0), 120.0);
+        assert_eq!(tempo_or_default(-3.0), 120.0);
+        assert_eq!(tempo_or_default(f32::NAN), 120.0);
+        assert_eq!(tempo_or_default(128.0), 128.0);
+        assert_eq!(tempo_or_default(900.0), 300.0);
     }
 
     #[test]
