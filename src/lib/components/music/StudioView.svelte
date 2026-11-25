@@ -31,6 +31,7 @@
   } from '../../music/musicRuntime';
   import './studioTokens.css';
   import StudioModule from './StudioModule.svelte';
+  import ShowUnderneathBanner from '../show/ShowUnderneathBanner.svelte';
   import StudioJack from './StudioJack.svelte';
   import MacroKnobBar from '../MacroKnobBar.svelte';
   import VisualPicker from './VisualPicker.svelte';
@@ -374,6 +375,8 @@
         {/each}
         <button class:active={looperPage} aria-pressed={looperPage} onclick={() => (looperPage = true)} title="The live looper: six loop tracks, their visuals and sections. Loops keep playing on the other tabs." data-midi-path="studio:set.looper" data-midi-label="Looper tab" data-midi-mode="toggle">{@render setMark('looper')}Looper</button>
       </div>
+      <!-- The Show or Timeline still running under the full-screen Audio Lab (its sound, LEDs and cues too). -->
+      <ShowUnderneathBanner />
       {#if !looperPage && loopsRunning}
         <button class="text-btn loops-running" onclick={() => (looperPage = true)} title="Loops are playing: back to the Looper tab"><span class="led" aria-hidden="true"></span>Loops {loopsRunning}</button>
       {/if}
