@@ -22,9 +22,9 @@ describe('native editor preview cost',()=>{
   expect(Array.from(px.slice(12,16))).toEqual([13,14,15,16]);
  });
  it('asks for the size on screen, not a 960 px square',()=>{
-  expect(previewRequestSize(864,486)).toEqual({width:864,height:486});
+  expect(previewRequestSize(864,486)).toEqual({width:640,height:360});
   expect(previewRequestSize(560,315)).toEqual({width:560,height:316});
-  expect(previewRequestSize(1728,972)).toEqual({width:960,height:540});
+  expect(previewRequestSize(1728,972)).toEqual({width:640,height:360});
   expect(previewRequestSize(0,0)).toEqual({width:480,height:270});
  });
  it('backs off with the round trip and never polls faster than 30 Hz',()=>{
@@ -37,7 +37,7 @@ describe('native editor preview cost',()=>{
   expect(await frame(canvas())).toBe(false);expect(invoke).not.toHaveBeenCalled();
   live=true;(invoke as any).mockResolvedValue(snapshot(4,2));
   expect(await frame(canvas())).toBe(true);expect(invoke).toHaveBeenCalledTimes(1);
-  expect((invoke as any).mock.calls[0][1]).toMatchObject({layer_id:'layer',width:864,height:486,encoding:'jpeg'});
+  expect((invoke as any).mock.calls[0][1]).toMatchObject({layer_id:'layer',width:640,height:360,encoding:'jpeg'});
  });
  it('reads a paused scene a few times, then stops until it is edited',async()=>{
   vi.useFakeTimers();try{

@@ -20,10 +20,12 @@ export function sourceSnapshotPixels(s:SourceSnapshot):Uint8ClampedArray<ArrayBu
  }
  return out;
 }
-/** Longest side the editor ever asks for (the old fixed request). */
-export const PREVIEW_MAX_DIM=960;
+/** Longest side the editor ever asks for. 640 reads in about half the time of
+ * 960 (16 ms against 30 on a desktop GPU), so a moving scene refreshes near
+ * 30 times a second instead of about 20, and keeps up on a busy core. */
+export const PREVIEW_MAX_DIM=640;
 /** The snapshot size for a preview shown at `cssWidth` x `cssHeight`: the size
- * it has on screen in CSS pixels, never more than the old fixed 960 and never
+ * it has on screen in CSS pixels, never more than PREVIEW_MAX_DIM and never
  * the square source texture. A dense display does not get more: the cost of a
  * read grows with its pixels (encoding 960x540 takes 30 ms, 640x360 takes 13),
  * and the simulation behind the picture is coarser than either. */
