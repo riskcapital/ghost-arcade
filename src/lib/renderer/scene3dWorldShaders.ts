@@ -611,6 +611,10 @@ export const DRIP_FLOATS = 16;
 /** Floats per drop kind: slots, emit, params, mods, 16 sites of three vec4 (ends, the face's normal and depth). */
 export const DRIP_KIND_FLOATS = (2 + 5 + 40 + 48) * 4;
 export const DRIP_PARAM_KEYS = effectParams('drips').map((d) => d.key);
+/** The fluid's own params, after the paint's in the same kind layout (20 fit). */
+export const FLUID_EXTRA_KEYS = ['depth'] as const;
+if (DRIP_PARAM_KEYS.length + FLUID_EXTRA_KEYS.length > 20) throw new Error('DripKind holds 20 params');
+const FLUID_CONSTS = FLUID_EXTRA_KEYS.map((key, i) => `const FL_${key.toUpperCase()} = ${DRIP_PARAM_KEYS.length + i}u;`).join('\n');
 /** Drops poured each frame while a finger pours. */
 export const POURED_PER_FRAME = 6;
 
@@ -1534,6 +1538,7 @@ ${WORLD_COMMON}
 ${WORLD_SIM}
 ${DRIP_COMMON}
 
+${FLUID_CONSTS}
 struct FluidParams {
   grid: vec4f,    // cells along x, y, z; cells in all
   origin: vec4f,  // the grid's low corner; h, the cell and kernel size
@@ -1604,7 +1609,11 @@ fn fluid_born(k: u32, i: u32, tick: u32) -> Drip {
   // A round stream, as wide as the emitter, poured from the front half of the
   // world so it lands on the blocks and runs over them rather than behind them.
   let deep = max(phys.bounds.z - r * 2.0, r * 2.0 + 0.01);
-  let z = deep * 0.8;
+  // Emitter depth: 0 at the back of the world, 1 at the front. On the wall that
+  // is the wall to the front pane; in a room, from behind the farthest faces to
+  // well in front of the nearest, so it can pour behind the objects or before them.
+  let room = phys.room.x > 0.5;
+  let z = mix(select(r * 2.0, -0.3, room), select(deep, deep + 0.6, room), clamp(dparam(k, FL_DEPTH), 0.0, 1.0));
   let at = vec2f(dparam(k, D_X), dparam(k, D_Y));
   let mouth = unproject(at, z);
   let wide = max(length(unproject(at + vec2f(dparam(k, D_RADIUS), 0.0), z) - mouth), r);

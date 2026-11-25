@@ -34,7 +34,7 @@ export function effectParams(kind:EffectKind):EffectParam[]{
  ];
  if(kind==='fluid')return [
   p('hue','Color',0,360,200),p('variety','Variety',0,1,.05),p('size','Particle size',0,1,.2),p('gloss','Gloss',0,1,.85),p('glow','Glow',0,1,0),p('clear','Translucency',0,1,.35),
-  p('x','Emitter X',0,1,.5,undefined,'Emitter'),p('y','Emitter Y',0,1,.04,undefined,'Emitter'),p('radius','Emitter width',.005,.5,.025,undefined,'Emitter'),p('flow','Flow rate',0,1,.5,undefined,'Emitter'),p('period','Pulse interval (s)',.2,12,2,undefined,'Emitter'),p('duration','Burst duration (s)',.05,4,.4,undefined,'Emitter'),
+  p('x','Emitter X',0,1,.5,undefined,'Emitter'),p('y','Emitter Y',0,1,.04,undefined,'Emitter'),p('depth','Emitter depth (Z)',0,1,.5,undefined,'Emitter'),p('radius','Emitter width',.005,.5,.025,undefined,'Emitter'),p('flow','Flow rate',0,1,.5,undefined,'Emitter'),p('period','Pulse interval (s)',.2,12,2,undefined,'Emitter'),p('duration','Burst duration (s)',.05,4,.4,undefined,'Emitter'),
   p('viscosity','Viscosity',0,1,.08,undefined,'Fluid'),p('swirl','Swirl',0,1,.3,undefined,'Fluid'),p('cling','Cling',0,1,.05,undefined,'Fluid'),p('lifetime','Lifetime (s)',1,60,20,undefined,'Fluid'),p('amount','Most particles',256,12288,2000,undefined,'Fluid'),
  ];
  if(kind==='flames')return [

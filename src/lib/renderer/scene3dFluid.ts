@@ -12,7 +12,7 @@
 import type { InteractiveScene } from '../mobile/studio/interactive';
 import { effectParams, MOD_SOURCES, type InteractiveEffect } from '../mobile/studio/interactiveEffects';
 import type { WorldGeo } from '../scene3d/worldGeometry';
-import { DRIP_FLOATS, DRIP_KIND_FLOATS, DRIP_PARAM_KEYS, FLUID_MAX_NEIGHBOURS, FLUID_PARAM_FLOATS } from './scene3dWorldShaders';
+import { DRIP_FLOATS, DRIP_KIND_FLOATS, DRIP_PARAM_KEYS, FLUID_EXTRA_KEYS, FLUID_MAX_NEIGHBOURS, FLUID_PARAM_FLOATS } from './scene3dWorldShaders';
 
 /** Particles for all Fluid effects together, and the most one effect may have. */
 export const MAX_FLUID = 16384;
@@ -95,7 +95,7 @@ export function fluidGrid(geo: WorldGeo, size: number): FluidGrid {
     // What the projector sees, from the nearest a drop is poured to just past
     // the farthest face: fluid out of the picture is spent cells.
     const { pos, fwd, right, up } = geo.projector;
-    const near = Math.max(0.05, geo.spawnRef - geo.deepest - 0.1);
+    const near = Math.max(0.05, geo.spawnRef - geo.deepest - 0.7);
     const far = geo.spawnRef + 0.4;
     lo = [Infinity, Infinity, Infinity];
     hi = [-Infinity, -Infinity, -Infinity];
@@ -152,7 +152,7 @@ export function fluidKinds(layout: FluidLayout): Float32Array {
     const at = k * DRIP_KIND_FLOATS;
     kinds.set([k * layout.perEffect, layout.perEffect, EMISSIONS.indexOf(e.emission), e.burst], at);
     kinds.set([0, 0, 0, e.enabled ? 1 : 0], at + 4);
-    DRIP_PARAM_KEYS.forEach((key, i) => {
+    [...DRIP_PARAM_KEYS, ...FLUID_EXTRA_KEYS].forEach((key, i) => {
       const d = fluidDefs.find((x) => x.key === key) ?? dripDefs[i];
       kinds[at + 8 + i] = e.params[key] ?? d.value;
       const mod = e.mods[key];
