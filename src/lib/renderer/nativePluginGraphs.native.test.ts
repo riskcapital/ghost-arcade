@@ -62,6 +62,7 @@ describe('native plugin graphs', () => {
       'scene3d/world',
       'scene3d/post',
       'scene3d/relief',
+      'scene3d/fluid',
       'scene3d/balls',
       'scene3d/balls-draw',
       'scene3d/drips',
