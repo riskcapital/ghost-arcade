@@ -1185,6 +1185,26 @@ function recordShowEdit(continuousKey?: string): void {
   else recordDiscreteAction();
 }
 
+/** A section loop or jump, or the in/out loop, moved the playing playhead:
+ *  it played from `from` up to `cut` and carries on from `land` to `to`. */
+export interface ShowTimeJump {
+  from: number;
+  cut: number;
+  land: number;
+  to: number;
+}
+const jumpListeners = new Set<(jump: ShowTimeJump) => void>();
+/** Told just before the playhead lands (cue markers fire on each pass). */
+export function onShowTimeJump(listener: (jump: ShowTimeJump) => void): () => void {
+  jumpListeners.add(listener);
+  return () => jumpListeners.delete(listener);
+}
+function notifyJump(jump: ShowTimeJump): void {
+  for (const listener of jumpListeners) {
+    try { listener(jump); } catch (err) { console.warn('[ShowTimeline] jump listener failed:', err); }
+  }
+}
+
 /** Told when the whole show is cleared or another one is loaded (a live
  *  takeover of the old show's surfaces ends there). */
 const resetListeners = new Set<() => void>();
@@ -1621,6 +1641,7 @@ function tick(now: number): void {
       // anchor and the evaluation knows by how much show time moved.
       transportClock.shift(step.time - next);
       lastLoopWrap = { generation: seekGeneration + 1, wrap: { fromGeneration: seekGeneration, shift: step.shift } };
+      notifyJump({ from: s.currentTime, cut: step.cut, land: step.land, to: step.time });
       applyTime(step.time, true);
       ticker.request();
       return;
@@ -1636,6 +1657,7 @@ function tick(now: number): void {
     const wrapped = area.start + ((next - area.end) % (area.end - area.start));
     transportClock.shift(wrapped - next);
     lastLoopWrap = { generation: seekGeneration + 1, wrap: { fromGeneration: seekGeneration, shift: next - wrapped } };
+    notifyJump({ from: s.currentTime, cut: area.end, land: area.start, to: wrapped });
     applyTime(wrapped, true);
     ticker.request();
     return;

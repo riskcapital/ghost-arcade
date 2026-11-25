@@ -80,8 +80,9 @@ export type SectionStep =
   | { kind: 'play'; time: number; events: SectionEvent[] }
   /** Stay at `time` (a hold). */
   | { kind: 'hold'; time: number; events: SectionEvent[] }
-  /** The playhead moved by a loop or a jump: `time` = next − shift. */
-  | { kind: 'wrap'; time: number; shift: number; events: SectionEvent[] };
+  /** The playhead moved by a loop or a jump: `time` = next − shift. It
+   *  played up to `cut` and carried on from `land`. */
+  | { kind: 'wrap'; time: number; shift: number; cut: number; land: number; events: SectionEvent[] };
 
 export type GoResult =
   | { kind: 'resume'; section: TimelineSection; events: SectionEvent[] }
@@ -149,9 +150,9 @@ export function stepSections(
     else if (prev < vx.at - 1e-9 && next >= vx.at - 1e-9 && vx.at < s.end - 1e-9) {
       state.vampExit = null;
       const time = s.end + (next - vx.at);
-      state.freeRun.push({ from: vx.at, to: s.end, extra: vx.at - s.end });
+      pushFreeRun(state, { from: vx.at, to: s.end, extra: vx.at - s.end });
       events.push({ type: 'leave', section: s });
-      return { kind: 'wrap', time, shift: next - time, events };
+      return { kind: 'wrap', time, shift: next - time, cut: vx.at, land: s.end, events };
     }
   }
 
@@ -189,9 +190,9 @@ export function stepSections(
         }
         const length = s.end - s.start;
         const time = next - length;
-        state.freeRun.push({ from: s.end, to: s.start, extra: length });
+        pushFreeRun(state, { from: s.end, to: s.start, extra: length });
         events.push({ type: 'loop', section: s });
-        return { kind: 'wrap', time, shift: length, events };
+        return { kind: 'wrap', time, shift: length, cut: s.end, land: s.start, events };
       }
       case 'jump': {
         const target = byId(sections, s.jumpTo);
@@ -201,15 +202,15 @@ export function stepSections(
         if (count < passes) {
           state.passes[s.id] = count;
           const length = s.end - s.start;
-          state.freeRun.push({ from: s.end, to: s.start, extra: length });
+          pushFreeRun(state, { from: s.end, to: s.start, extra: length });
           events.push({ type: 'loop', section: s });
-          return { kind: 'wrap', time: next - length, shift: length, events };
+          return { kind: 'wrap', time: next - length, shift: length, cut: s.end, land: s.start, events };
         }
         state.passes[s.id] = 0;
         const time = target.start + (next - s.end);
-        state.freeRun.push({ from: s.end, to: target.start, extra: s.end - target.start });
+        pushFreeRun(state, { from: s.end, to: target.start, extra: s.end - target.start });
         events.push({ type: 'jump', from: s, to: target });
-        return { kind: 'wrap', time, shift: next - time, events };
+        return { kind: 'wrap', time, shift: next - time, cut: s.end, land: target.start, events };
       }
     }
   }
@@ -235,7 +236,7 @@ export function goSections(
     const hold = state.hold;
     state.hold = null;
     if (!s) return playing ? { kind: 'none' } : { kind: 'play' };
-    state.freeRun.push({ from: hold.at, to: hold.at, extra: Math.max(0, now - hold.since) });
+    pushFreeRun(state, { from: hold.at, to: hold.at, extra: Math.max(0, now - hold.since) });
     // The step past the end must not stop here again.
     if (!state.armed.includes(s.id)) state.armed.push(s.id);
     const events: SectionEvent[] = [{ type: 'resume', section: s }];
@@ -272,6 +273,17 @@ export function resetSections(state: SectionPlayerState, sections: readonly Time
   if (live) events.push({ type: 'liveEnd', section: live });
   Object.assign(state, createSectionPlayerState());
   return events;
+}
+
+/**
+ * Record a hold, loop or jump for freeRunOffset. Only `from`, `to` and the
+ * sum of `extra` matter there, so a vamp looping for hours adds to one entry
+ * instead of growing the list every pass.
+ */
+function pushFreeRun(state: SectionPlayerState, e: FreeRunEvent): void {
+  const i = state.freeRun.findIndex((x) => Math.abs(x.from - e.from) < 1e-9 && Math.abs(x.to - e.to) < 1e-9);
+  if (i >= 0) state.freeRun[i] = { ...state.freeRun[i], extra: state.freeRun[i].extra + e.extra };
+  else state.freeRun.push(e);
 }
 
 /**

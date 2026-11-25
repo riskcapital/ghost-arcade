@@ -12,6 +12,7 @@ import {
   setShowCompositionLoader,
   setShowSectionEffects,
   setShowTrackFrameSink,
+  onShowTimeJump,
   showFreeRunOffset,
   showSectionStatus,
   showTimeline,
@@ -210,3 +211,23 @@ describe('free-running offsets end with the run', () => {
     expect(showFreeRunOffset(0, 8)).toBeLessThan(held + 0.2);
   });
 });
+
+describe('a vamp, pass after pass', () => {
+  it('tells where each pass was cut and landed (cue markers fire on every pass), and keeps one free-run entry', () => {
+    timeline([sec('v', 0, 2, { action: 'vamp' }), sec('b', 2, 8)]);
+    const jumps: Array<{ from: number; cut: number; land: number; to: number }> = [];
+    const off = onShowTimeJump((j) => jumps.push(j));
+    showTimeline.seek(0); showTimeline.play(); playFor(7);
+    off();
+    expect(jumps.length).toBeGreaterThanOrEqual(3);
+    for (const j of jumps) {
+      expect(j.cut).toBe(2);
+      expect(j.land).toBe(0);
+      expect(j.from).toBeLessThanOrEqual(2);
+      expect(j.to).toBeGreaterThanOrEqual(-1e-9);
+      expect(j.to).toBeLessThan(0.5);
+    }
+    expect(showTimeline.sectionState().freeRun).toHaveLength(1);
+  });
+});
+
