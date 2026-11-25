@@ -72,6 +72,16 @@ function objectFaces(object: ProjectionSimObject): Face[] {
     }));
 }
 
+/** Frees the occluders' geometry and materials (made fresh for each run). */
+function disposeOccluders(occluders: THREE.Object3D[]): void {
+  for (const root of occluders) root.traverse((node) => {
+    const mesh = node as THREE.Mesh;
+    if (!mesh.isMesh) return;
+    mesh.geometry?.dispose();
+    for (const material of Array.isArray(mesh.material) ? mesh.material : [mesh.material]) material?.dispose();
+  });
+}
+
 /** Meshes used to test whether a face is hidden behind another object. */
 function buildOccluders(objects: ProjectionSimObject[]): THREE.Object3D[] {
   const meshes: THREE.Object3D[] = [];
@@ -154,7 +164,7 @@ export async function autoMapProjectionSim(
   const shaderFile = options.shaderFile;
   const minArea = options.minArea ?? 0.00002;
   // Leave room for the layers the user made themselves.
-  const ownLayers = get(project).layers.filter((layer) => (layer as any).autoMap !== AUTO_MAP_TAG).length;
+  const ownLayers = get(project).layers.filter((layer) => layer.autoMap !== AUTO_MAP_TAG).length;
   const budget = Math.max(0, Math.min(options.maxSurfaces ?? CORE_LAYER_LIMIT, CORE_LAYER_LIMIT - ownLayers));
   const objects = scene.objects.filter((o) => o.visible && o.receiveProjection && o.type === 'primitive');
   const projectors = scene.projectors.filter((p) => p.enabled);
@@ -167,45 +177,49 @@ export async function autoMapProjectionSim(
   const candidates: Candidate[] = [];
   let skipped = 0;
 
-  for (const [objectIndex, object] of objects.entries()) {
-    for (const face of objectFaces(object)) {
-      // Lay the face through the projector that sees it most squarely.
-      let best: { projector: ProjectionSimProjector; facing: number } | null = null;
-      for (const projector of projectors) {
-        if (!faceVisible(face, object.id, projector, occluders, raycaster)) continue;
-        const centre = face.corners.reduce((s, c) => s.add(c), new THREE.Vector3()).multiplyScalar(0.25);
-        const facing = face.normal.dot(new THREE.Vector3(...projector.position).sub(centre).normalize());
-        if (!best || facing > best.facing) best = { projector, facing };
+  try {
+    for (const [objectIndex, object] of objects.entries()) {
+      for (const face of objectFaces(object)) {
+        // Lay the face through the projector that sees it most squarely.
+        let best: { projector: ProjectionSimProjector; facing: number } | null = null;
+        for (const projector of projectors) {
+          if (!faceVisible(face, object.id, projector, occluders, raycaster)) continue;
+          const centre = face.corners.reduce((s, c) => s.add(c), new THREE.Vector3()).multiplyScalar(0.25);
+          const facing = face.normal.dot(new THREE.Vector3(...projector.position).sub(centre).normalize());
+          if (!best || facing > best.facing) best = { projector, facing };
+        }
+        if (!best) continue;
+        const [width, height] = projectorImageSize(best.projector);
+        const model = projectorCameraModel(best.projector, width, height);
+        const [cx, cy, cw, ch] = projectorContentCrop(best.projector, slices);
+        const points: Array<[number, number]> = [];
+        for (const corner of face.corners) {
+          const pixel = projectToImage(model, [corner.x, corner.y, corner.z]);
+          if (!pixel) break;
+          // Projector image -> composition (y down) -> layer corners (y up).
+          points.push([cx + (pixel[0] / width) * cw, 1 - (cy + (pixel[1] / height) * ch)]);
+        }
+        if (points.length !== 4) continue;
+        const area = polygonArea(points);
+        if (area < minArea) { skipped++; continue; }
+        const [tl, tr, br, bl] = points;
+        const centre = face.corners.reduce((sum, c) => sum.add(c), new THREE.Vector3()).multiplyScalar(0.25);
+        candidates.push({
+          name: `${object.name} · ${face.name}`,
+          area,
+          depth: centre.distanceTo(new THREE.Vector3(...best.projector.position)),
+          colour: faceColour(objectIndex, face),
+          corners: {
+            topLeft: { x: tl[0], y: tl[1] },
+            topRight: { x: tr[0], y: tr[1] },
+            bottomRight: { x: br[0], y: br[1] },
+            bottomLeft: { x: bl[0], y: bl[1] },
+          } as WarpCorners,
+        });
       }
-      if (!best) continue;
-      const [width, height] = projectorImageSize(best.projector);
-      const model = projectorCameraModel(best.projector, width, height);
-      const [cx, cy, cw, ch] = projectorContentCrop(best.projector, slices);
-      const points: Array<[number, number]> = [];
-      for (const corner of face.corners) {
-        const pixel = projectToImage(model, [corner.x, corner.y, corner.z]);
-        if (!pixel) break;
-        // Projector image -> composition (y down) -> layer corners (y up).
-        points.push([cx + (pixel[0] / width) * cw, 1 - (cy + (pixel[1] / height) * ch)]);
-      }
-      if (points.length !== 4) continue;
-      const area = polygonArea(points);
-      if (area < minArea) { skipped++; continue; }
-      const [tl, tr, br, bl] = points;
-      const centre = face.corners.reduce((sum, c) => sum.add(c), new THREE.Vector3()).multiplyScalar(0.25);
-      candidates.push({
-        name: `${object.name} · ${face.name}`,
-        area,
-        depth: centre.distanceTo(new THREE.Vector3(...best.projector.position)),
-        colour: faceColour(objectIndex, face),
-        corners: {
-          topLeft: { x: tl[0], y: tl[1] },
-          topRight: { x: tr[0], y: tr[1] },
-          bottomRight: { x: br[0], y: br[1] },
-          bottomLeft: { x: bl[0], y: bl[1] },
-        } as WarpCorners,
-      });
     }
+  } finally {
+    disposeOccluders(occluders);
   }
 
   // Keep the faces that cover the most of the picture, then stack those by
@@ -218,7 +232,7 @@ export async function autoMapProjectionSim(
 
   // Replace the previous run's layers, leave everything else alone.
   for (const layer of get(project).layers) {
-    if ((layer as any).autoMap === AUTO_MAP_TAG) project.removeLayer(layer.id);
+    if (layer.autoMap === AUTO_MAP_TAG) project.removeLayer(layer.id);
   }
 
   const src = shaderFile ? `./ISF/${encodeURIComponent(shaderFile)}` : '';
@@ -243,7 +257,8 @@ export async function autoMapProjectionSim(
         shaderValues: {},
       } as any);
     }
-    project.updateLayer(id, { corners: candidate.corners, autoMap: AUTO_MAP_TAG } as any);
+    // A flat face seen through a lens is a true perspective quad: pinned as one, its inside lands too.
+    project.updateLayer(id, { corners: candidate.corners, cornerPerspective: true, autoMap: AUTO_MAP_TAG });
   }
   return { surfaces: chosen.length, skipped, overBudget, budget };
 }

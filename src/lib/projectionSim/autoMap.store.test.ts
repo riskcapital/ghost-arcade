@@ -46,6 +46,8 @@ it('maps each face to a media layer that can take content, filled with its face 
     expect(face.type).toBe('media');
     expect(face.source).toBeNull();
     expect(face.colorContent?.alpha).toBe(1);
+    // Pinned as a true perspective: a lens sees a flat face as a perspective quad.
+    expect(face.cornerPerspective).toBe(true);
   }
   // A shader goes onto a face like onto any media layer.
   const face = faces[0];
