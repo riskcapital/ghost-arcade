@@ -25,7 +25,7 @@
     getMasterWarpCanvas, disposeMasterWarpOutput,
   } from './lib/sync/outputComposite';
   import {
-    beginSliceAtlasFrame, renderSliceAtlasTile, endSliceAtlasFrame, disposeAtlasRenderer,
+    beginSliceAtlasFrame, renderSliceAtlasTile, endSliceAtlasFrame, disposeAtlasRenderer, pruneSliceMeshTextures,
   } from './lib/output/blendRenderer';
   import { packAtlas, atlasLayoutSignature, type AtlasLayout } from './lib/output/atlasLayout';
   import { invoke } from '$lib/bridge';
@@ -72,6 +72,9 @@
     if (sig !== lastSig) {
       lastSig = sig;
       currentLayout = layout;
+      // A deleted slice's mesh texture goes with it (a master warp mesh
+      // re-packs on its next frame).
+      pruneSliceMeshTextures(new Set(slices.map((s) => s.id)));
       // Tell main the new layout so it can (re)configure the native
       // atlas senders + resize the OSR window. Sent on change only.
       invoke('texshare_atlas_layout', {

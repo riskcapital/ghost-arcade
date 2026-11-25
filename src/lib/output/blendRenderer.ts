@@ -48,8 +48,9 @@ let sourceTexture: THREE.CanvasTexture | null = null;
 let meshTexPlaceholder: THREE.DataTexture | null = null;
 // Per-slice mesh texture cache. Keyed by sliceId so we don't
 // reallocate a DataTexture every frame for a screen whose mesh hasn't
-// changed. Invalidated by a hash of the points array.
-const meshTexCache = new Map<string, { tex: THREE.DataTexture; hash: string; cols: number; rows: number }>();
+// changed. Re-uploaded when the packed points differ; entries for
+// deleted slices go in pruneSliceMeshTextures.
+const meshTexCache = new Map<string, { tex: THREE.DataTexture; cols: number; rows: number }>();
 
 let backingCanvas: HTMLCanvasElement | OffscreenCanvas | null = null;
 
@@ -253,11 +254,11 @@ const FRAG_SHADER = /* glsl */ `
         // and inverse-bilinear to recover the content UV.
         bool found = false;
         vec2 cellUv = vec2(0.0);
+        // The first cell (row by row) that contains q wins; stop there.
         for (int ri = 0; ri < ${MAX_MESH} - 1; ri++) {
-          if (ri >= uMeshRows - 1) break;
+          if (ri >= uMeshRows - 1 || found) break;
           for (int ci = 0; ci < ${MAX_MESH} - 1; ci++) {
-            if (ci >= uMeshCols - 1) break;
-            if (found) continue;
+            if (ci >= uMeshCols - 1 || found) break;
             vec2 a = meshAt(ri,     ci);
             vec2 b = meshAt(ri,     ci + 1);
             vec2 c = meshAt(ri + 1, ci + 1);
@@ -337,27 +338,23 @@ function ensureMeshPlaceholder(): THREE.DataTexture {
   return meshTexPlaceholder;
 }
 
-// Stable hash of a mesh's contents for cache invalidation. JSON is
-// fast enough for ≤32×32 grids (the upper bound).
-function meshHash(slice: OutputSlice): string {
-  const g = slice.meshGrid;
-  if (!g) return 'none';
-  return `${g.rows}x${g.cols}:${JSON.stringify(g.points)}`;
-}
+
+const meshPackScratch = new Float32Array(MAX_MESH * MAX_MESH * 2);
 
 // Generic mesh-texture packer used by both source mesh (master-canvas
 // coords) and output mesh (projector-quad coords). Shape is identical;
 // only the cache + content differ. `mesh` is the MeshWarpGrid to pack.
 function packMeshToTexture(
-  cache: Map<string, { tex: THREE.DataTexture; hash: string; cols: number; rows: number }>,
+  cache: Map<string, { tex: THREE.DataTexture; cols: number; rows: number }>,
   sliceId: string,
   mesh: { rows: number; cols: number; points: { x: number; y: number }[][] } | null | undefined,
-  hash: string,
 ): THREE.DataTexture {
   if (!mesh || mesh.rows < 2 || mesh.cols < 2) return ensureMeshPlaceholder();
-  const cached = cache.get(sliceId);
-  if (cached && cached.hash === hash) return cached.tex;
-  const data = new Float32Array(MAX_MESH * MAX_MESH * 2);
+  // Pack into the scratch and compare it with what the texture holds: an
+  // unchanged mesh (every frame but a drag) re-uploads nothing and, unlike
+  // the JSON hash this replaces, allocates nothing either.
+  const data = meshPackScratch;
+  data.fill(0);
   for (let r = 0; r < mesh.rows; r++) {
     for (let c = 0; c < mesh.cols; c++) {
       const p = mesh.points[r]?.[c];
@@ -366,26 +363,39 @@ function packMeshToTexture(
       data[i + 1] = p?.y ?? 0;
     }
   }
+  const cached = cache.get(sliceId);
   if (cached) {
-    (cached.tex.image.data as Float32Array).set(data);
+    const held = cached.tex.image.data as Float32Array;
+    if (cached.rows === mesh.rows && cached.cols === mesh.cols && sameFloats(held, data)) return cached.tex;
+    held.set(data);
     cached.tex.needsUpdate = true;
-    cache.set(sliceId, { tex: cached.tex, hash, cols: mesh.cols, rows: mesh.rows });
+    cached.rows = mesh.rows;
+    cached.cols = mesh.cols;
     return cached.tex;
   }
-  const tex = new THREE.DataTexture(data, MAX_MESH, MAX_MESH, THREE.RGFormat, THREE.FloatType);
+  const tex = new THREE.DataTexture(data.slice(), MAX_MESH, MAX_MESH, THREE.RGFormat, THREE.FloatType);
   tex.magFilter = THREE.NearestFilter;
   tex.minFilter = THREE.NearestFilter;
   tex.wrapS = THREE.ClampToEdgeWrapping;
   tex.wrapT = THREE.ClampToEdgeWrapping;
   tex.needsUpdate = true;
-  cache.set(sliceId, { tex, hash, cols: mesh.cols, rows: mesh.rows });
+  cache.set(sliceId, { tex, cols: mesh.cols, rows: mesh.rows });
   return tex;
 }
 
-// Source mesh texture for a slice. Cached + content-hashed so drag
+function sameFloats(a: Float32Array, b: Float32Array): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    // Two NaNs count as the same (the old JSON hash wrote both as null).
+    if (a[i] !== b[i] && !(Number.isNaN(a[i]) && Number.isNaN(b[i]))) return false;
+  }
+  return true;
+}
+
+// Source mesh texture for a slice. Cached + compared by content so drag
 // edits update GPU-side incrementally rather than reallocating.
 function meshTextureFor(slice: OutputSlice): THREE.DataTexture {
-  return packMeshToTexture(meshTexCache, slice.id, slice.meshGrid, meshHash(slice));
+  return packMeshToTexture(meshTexCache, slice.id, slice.meshGrid);
 }
 
 function ensureRenderer(maxW: number, maxH: number): boolean {
@@ -648,9 +658,22 @@ function disposeSliceReadbackState(gl: WebGL2RenderingContext, st: SliceReadback
   try { gl.deleteBuffer(st.pbo); } catch { /* context loss */ }
 }
 
-/** Drop async-readback state for slices that no longer exist. Call when
- *  the configured slice set changes — each state holds a GPU buffer. */
+/** Drop the mesh textures of slices that no longer exist (each holds a
+ *  float texture in every renderer that drew it). */
+export function pruneSliceMeshTextures(liveSliceIds: Set<string>): void {
+  for (const [sliceId, cached] of meshTexCache) {
+    if (!liveSliceIds.has(sliceId)) {
+      cached.tex.dispose();
+      meshTexCache.delete(sliceId);
+    }
+  }
+}
+
+/** Drop async-readback state and mesh textures for slices that no longer
+ *  exist. Call when the configured slice set changes — each state holds a
+ *  GPU buffer. */
 export function pruneSliceReadbackStates(liveSliceIds: Set<string>): void {
+  pruneSliceMeshTextures(liveSliceIds);
   if (sliceReadbackStates.size === 0) return;
   const gl = renderer?.getContext() as WebGL2RenderingContext | undefined;
   for (const [sliceId, st] of sliceReadbackStates) {
@@ -971,9 +994,12 @@ export function disposeMasterRenderer(): void {
   masterScene = null; masterCamera = null; masterCanvas = null;
 }
 
+let flipRowScratch = new Uint8Array(0);
+
 function flipRowsInPlace(buf: Uint8Array, w: number, h: number) {
   const rowBytes = w * 4;
-  const tmp = new Uint8Array(rowBytes);
+  if (flipRowScratch.length < rowBytes) flipRowScratch = new Uint8Array(rowBytes);
+  const tmp = flipRowScratch.subarray(0, rowBytes);
   for (let y = 0; y < (h >> 1); y++) {
     const top = y * rowBytes;
     const bot = (h - 1 - y) * rowBytes;
