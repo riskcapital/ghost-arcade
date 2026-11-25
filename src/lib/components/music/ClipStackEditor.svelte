@@ -245,7 +245,7 @@
 {/snippet}
 
 {#if target}
-  <div class="backdrop" role="presentation">
+  <div class="backdrop" role="presentation" data-audio-lab>
     <div class="dialog" role="dialog" aria-modal="true" aria-label="Visuals for {target.title}" tabindex="-1" ondragover={dragOverEditor} ondrop={dropOnEditor}>
       <header class="head">
         <div class="title">

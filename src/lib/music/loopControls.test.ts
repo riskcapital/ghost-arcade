@@ -37,11 +37,12 @@ describe('looper mapping', () => {
     expect(loopKey(k('Digit3'))).toBe(true);
     expect(loopKey(k('Space'))).toBe(true);
     expect(loopKey(k('Space', { shiftKey: true }))).toBe(true);
-    expect(loopKey(k('KeyZ', { key: 'z', metaKey: true }))).toBe(true);
-    expect(loopKey(k('KeyZ', { key: 'z', metaKey: true, shiftKey: true }))).toBe(true);
+    // Cmd+Z is Audio Lab's undo history, not the looper's own key.
+    expect(loopKey(k('KeyZ', { key: 'z', metaKey: true }))).toBe(false);
+    expect(loopKey(k('KeyZ', { key: 'z', metaKey: true, shiftKey: true }))).toBe(false);
     expect(loopKey(k('Period', { key: '.', metaKey: true }))).toBe(true);
     expect(loopKey(k('KeyQ'))).toBe(false);
-    expect(calls).toEqual(['select 2', 'press 2', 'stop 2', 'undo 2', 'redo 2', 'stop all']);
+    expect(calls).toEqual(['select 2', 'press 2', 'stop 2', 'stop all']);
   });
 
   it('gives each pedal preset its tap and hold', () => {

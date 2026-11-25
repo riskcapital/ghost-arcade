@@ -21,6 +21,7 @@
     startRecording,
     stopRecording,
   } from '../../music/musicRuntime';
+  import { installAudioLabUndoKeys } from '../../music/audioLabHistory';
   import './studioTokens.css';
   import StudioModule from './StudioModule.svelte';
   import PlayModule from './PlayModule.svelte';
@@ -60,6 +61,8 @@
 
   onMount(() => {
     ensureMusicRuntime();
+    // One undo history for Audio Lab's edits, on Cmd/Ctrl+Z while Audio Lab is being worked on.
+    installAudioLabUndoKeys();
   });
 
   onDestroy(() => {

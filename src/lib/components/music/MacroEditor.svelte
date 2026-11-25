@@ -49,7 +49,7 @@
 </script>
 
 {#if macro}
-  <aside class="editor" aria-label="{macro.name} effects">
+  <aside class="editor" aria-label="{macro.name} effects" data-audio-lab>
     <header>
       <div class="title">
         <span class="ga-eyebrow">Macro</span>

@@ -37,6 +37,7 @@ import type { StudioSet } from './studioSets';
 import { clipFromRecording, findClip } from './session';
 import { readUserLoop, saveUserLoop } from './userLoops';
 import { generateUUID } from '../utils/uuid';
+import { outsideHistory } from './historyGate';
 import { INSTRUMENTS, noteOff, noteOn, type InstrumentId, type NoteEvent } from './noteEvents';
 import { INSTRUMENT_LABELS, type KeysPatch, type SynthPatch } from './instruments';
 import { launchClockPosition, launchClockTempo, resyncLaunchClock } from '../stores/launchClock';
@@ -221,6 +222,36 @@ const inflight = new Map<number, Promise<void>>();
 const gens: number[] = Array.from({ length: LOOP_TRACK_COUNT }, () => 0);
 const revs: number[] = Array.from({ length: LOOP_TRACK_COUNT }, () => 0);
 const bumpGen = (i: number) => { gens[i]++; revs[i]++; };
+
+/** What changed an audio track's layers, for Audio Lab's undo history. */
+export type AudioLoopCause = 'layer' | 'undo' | 'redo' | 'clear';
+export interface AudioLoopStep {
+  track: number;
+  /** Layers before and after. */
+  before: number;
+  after: number;
+  cause: AudioLoopCause;
+}
+let audioStepHook: ((step: AudioLoopStep) => void) | null = null;
+/** Hear every audio track's layer change (a take, an overdub pass, Undo, Redo, Clear). */
+export function onAudioLoopStep(fn: ((step: AudioLoopStep) => void) | null): void {
+  audioStepHook = fn;
+}
+const audioCounts: number[] = Array.from({ length: LOOP_TRACK_COUNT }, () => 0);
+let audioCause: AudioLoopCause | null = null;
+function withAudioCause<T>(cause: AudioLoopCause, fn: () => T): T {
+  audioCause = cause;
+  try {
+    return fn();
+  } finally {
+    audioCause = null;
+  }
+}
+
+/** Layers an audio track holds now (0 when audio is not running). */
+export function audioLoopLayerCount(i: number): number {
+  return audioEngine()?.layerCount(i) ?? 0;
+}
 /** The saved file of each layer already written, by its left channel. */
 const layerFiles = new WeakMap<Float32Array, { src: string; _assetRef?: unknown }>();
 /** How long after the last change a track's layers are written (a long overdub writes once, not every pass). */
@@ -233,7 +264,13 @@ function audioEngine(): AudioLoopTracks | null {
     wiredEngine = a;
     a.onLayersChanged = (i) => {
       revs[i]++;
+      const count = a.layerCount(i);
+      const before = audioCounts[i];
+      audioCounts[i] = count;
       if (!restoring) scheduleAudioSave(i);
+      // A layer folded away for memory is no step: it cannot be taken back.
+      const cause = audioCause ?? (count > before ? 'layer' : null);
+      if (!restoring && cause && count !== before) audioStepHook?.({ track: i, before, after: count, cause });
     };
     restored = false;
   }
@@ -1003,7 +1040,7 @@ export function setLoopLevel(i: number, level: number): void {
 export function undoLoopLayer(i: number): boolean {
   const rt = rts[i];
   if (isAudio(i)) {
-    const ok = audioEngine()?.undo(i) ?? false;
+    const ok = withAudioCause('undo', () => audioEngine()?.undo(i) ?? false);
     if (ok && !hasContent(i)) rt.phase = 'empty';
     publish();
     return ok;
@@ -1035,7 +1072,7 @@ export function undoLoopLayer(i: number): boolean {
 export function redoLoopLayer(i: number): boolean {
   const rt = rts[i];
   if (isAudio(i)) {
-    const ok = audioEngine()?.redo(i) ?? false;
+    const ok = withAudioCause('redo', () => audioEngine()?.redo(i) ?? false);
     if (ok && rt.phase === 'empty') rt.phase = 'stopped';
     publish();
     return ok;
@@ -1101,7 +1138,7 @@ export function clearLoopTrack(i: number): void {
     clearTimeout(saveTimers.get(i));
     saveTimers.delete(i);
     bumpGen(i);
-    audioEngine()?.clear(i);
+    withAudioCause('clear', () => audioEngine()?.clear(i));
   } else {
     const t = track(i);
     rt.cleared = t.layers.length ? { layers: t.layers, beats: t.beats, ...(t.source === 'xy' ? { xy: t.xy ?? [] } : {}) } : null;
@@ -1154,6 +1191,31 @@ export function setTrackLayers(i: number, layers: MidiLayer[], beats = track(i).
   publish();
 }
 
+/** A MIDI track's notes as Audio Lab's undo history keeps them. */
+export interface LoopNotes {
+  layers: MidiLayer[];
+  beats: number;
+  xy: XyLayer[] | undefined;
+  name: string;
+}
+
+/**
+ * Put a MIDI track's notes back as they were (Audio Lab's undo and redo).
+ * The track's own layer redo and Clear's undo are dropped: the history
+ * holds those steps now.
+ */
+export function restoreLoopNotes(i: number, notes: LoopNotes): void {
+  if (track(i)?.kind !== 'midi') return;
+  const rt = rts[i];
+  rt.redo = [];
+  rt.redoXy = [];
+  rt.cleared = null;
+  rt.editBefore = null;
+  musicStudio.updateLoopTrack(i, { layers: notes.layers, beats: notes.beats, xy: notes.xy, name: notes.name });
+  cutPending(i, clockNow().beat);
+  publish();
+}
+
 /**
  * The full clip editor on a MIDI track: the loop goes into the session as a
  * clip for the editor to work on, and every edit there replaces the track's
@@ -1169,7 +1231,8 @@ export function openTrackInFullEditor(i: number, setEditorId: (id: string | null
   const notes = flattenMidi({ layers: t.layers, redo: [] }).map(({ layer: _l, ...n }) => n);
   const loop: RecordedLoop = { kind: 'recorded', id: generateUUID(), name: t.name || INSTRUMENT_LABELS[instrument], role: roleForRecording(instrument, notes), instrument, beats: t.beats, notes, createdAt: Date.now() };
   const clip = clipFromRecording(loop);
-  musicStudio.addSessionClip(loop.role, clip);
+  // The clip is the editor's working copy, not an edit to the session.
+  outsideHistory(() => musicStudio.addSessionClip(loop.role, clip));
   const before = t.layers;
   let last = clip.notes;
   let lastBeats = clip.beats;
@@ -1181,7 +1244,7 @@ export function openTrackInFullEditor(i: number, setEditorId: (id: string | null
     stopEditor?.();
     const s = get(musicStudio);
     const found = findClip(s.session, clip.id);
-    if (found) musicStudio.setSessionClip(found.track, found.row, null);
+    if (found) outsideHistory(() => musicStudio.setSessionClip(found.track, found.row, null));
   };
   stopStudio = musicStudio.subscribe((s) => {
     const found = findClip(s.session, clip.id);

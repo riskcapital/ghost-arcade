@@ -15,6 +15,7 @@
  * clip that declares note inputs.
  */
 
+import { outsideHistory } from './historyGate';
 import { bringStack, dropStack } from './stackRuntime';
 import { toneById } from './tone/tones';
 import { derived, get, writable } from 'svelte/store';
@@ -1027,7 +1028,8 @@ export function applyLiveScene(id: string): void {
   const scene = s.scenes.find((sc) => sc.id === id);
   musicStudio.setTransport({ queuedSceneId: null });
   if (!scene) return;
-  if (scene.sound) musicStudio.applySetup(scene.sound as Partial<SongSetup>, { sound: true, band: false });
+  // Calling a scene up is playing the show: no undo step.
+  if (scene.sound) outsideHistory(() => musicStudio.applySetup(scene.sound as Partial<SongSetup>, { sound: true, band: false }));
   if (scene.voices && studioTargetNow()) {
     const voices = normalizeStudioSource({ musicVoices: scene.voices }).musicVoices;
     editStudio((src) => ({ ...src, musicVoices: voices }));
@@ -1041,14 +1043,15 @@ function applyScene(id: string): void {
   musicStudio.setTransport({ queuedSceneId: null });
   if (!scene) return;
   // Its sound first (a set change keeps the music going), then its visuals, then what plays.
-  if (scene.sound) musicStudio.applySetup(scene.sound as Partial<SongSetup>, { sound: true, band: false });
+  // Calling a scene up is playing the show: no undo step.
+  if (scene.sound) outsideHistory(() => musicStudio.applySetup(scene.sound as Partial<SongSetup>, { sound: true, band: false }));
   if (scene.voices && studioTargetNow()) {
     const voices = normalizeStudioSource({ musicVoices: scene.voices }).musicVoices;
     editStudio((src) => ({ ...src, musicVoices: voices }));
   }
   const takeIds = new Set(s.takes.map((t) => t.id));
   for (const action of sceneLaunchActions(scene, playingNow(), takeIds)) {
-    if (action.kind === 'pattern') musicStudio.setPattern(action.pattern);
+    if (action.kind === 'pattern') outsideHistory(() => musicStudio.setPattern(action.pattern));
     else if (action.kind === 'beat') (action.play ? startSequencer : stopSequencer)();
     else if (action.kind === 'take') {
       if (action.takeId) playTake(action.takeId, true);

@@ -42,7 +42,7 @@
 </script>
 
 {#if channel}
-  <aside class="editor" class:over={!!clipName} aria-label="{name} effects">
+  <aside class="editor" class:over={!!clipName} aria-label="{name} effects" data-audio-lab>
     <header>
       <div class="title">
         <span class="ga-eyebrow">Insert effects</span>

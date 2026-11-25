@@ -210,7 +210,7 @@ export function holdLoopEditorKeys(): () => void {
 
 /**
  * The looper panel's keys: 1–8 select, Space the selected track's button,
- * Shift+Space stops it, Cmd+Z / Shift+Cmd+Z undo and redo its layer, M
+ * Shift+Space stops it, M
  * mutes, Shift+S saves (S alone is a note on the letter keys), Backspace
  * clears, Cmd+. stops all. A key the letter keyboard plays is never the
  * looper's. Returns true when the key was the looper's.
@@ -224,11 +224,7 @@ export function loopKey(e: Pick<KeyboardEvent, 'key' | 'code' | 'shiftKey' | 'me
     stopAllLoopTracks();
     return true;
   }
-  if (mod && (e.key === 'z' || e.key === 'Z')) {
-    if (e.shiftKey) redoLoopLayer(i);
-    else undoLoopLayer(i);
-    return true;
-  }
+  // Cmd+Z and Shift+Cmd+Z are Audio Lab's undo and redo (audioLabHistory.ts), the looper's edits among the rest.
   if (mod || e.altKey) return false;
   if (musicKeyboardClaims(e as KeyboardEvent)) return false;
   if (/^Digit[1-8]$/.test(e.code)) {

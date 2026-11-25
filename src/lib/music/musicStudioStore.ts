@@ -603,6 +603,17 @@ export function nextTakeName(takes: Take[]): string {
   return `Take ${Math.max(highest, takes.length) + 1}`;
 }
 
+/** The parts of the studio Audio Lab's undo history puts back (audioLabHistory.ts). */
+export interface HistoryParts {
+  machine?: Beat;
+  pattern?: DrumPattern;
+  session?: Session;
+  acidSteps?: AcidStep[];
+  liveStacks?: Record<string, ClipStack>;
+  inserts?: Record<string, MacroFxInstance[] | undefined>;
+  macroFx?: Record<string, MacroFxInstance[] | undefined>;
+}
+
 /** True when Audio Lab may open; when it is locked, offer it instead. */
 function audioLabOpens(): boolean {
   if (addonUsable('addon.audio-lab')) return true;
@@ -998,6 +1009,32 @@ function createMusicStudioStore() {
         sceneId: s.sceneId === id ? null : s.sceneId,
         queuedSceneId: s.queuedSceneId === id ? null : s.queuedSceneId,
       })),
+
+    /**
+     * Put edited parts back as they were (Audio Lab's undo and redo): whole
+     * fields, and single effect chains (undefined takes a chain away).
+     */
+    restoreParts: (patch: HistoryParts) =>
+      update((s) => {
+        const next: MusicStudioState = { ...s };
+        if ('machine' in patch && patch.machine) next.machine = patch.machine;
+        if ('pattern' in patch && patch.pattern) next.pattern = patch.pattern;
+        if ('session' in patch && patch.session) next.session = patch.session;
+        if ('acidSteps' in patch && patch.acidSteps) next.acidSteps = patch.acidSteps;
+        if ('liveStacks' in patch && patch.liveStacks) next.liveStacks = patch.liveStacks;
+        const chains = (was: Record<string, MacroFxInstance[]>, edits: Record<string, MacroFxInstance[] | undefined> | undefined) => {
+          if (!edits) return was;
+          const out = { ...was };
+          for (const [k, v] of Object.entries(edits)) {
+            if (v) out[k] = v;
+            else delete out[k];
+          }
+          return out;
+        };
+        next.inserts = chains(s.inserts, patch.inserts);
+        next.macroFx = chains(s.macroFx, patch.macroFx);
+        return next;
+      }),
 
     /** The project section. */
     serialize(): MusicStudioProjectSection {
