@@ -1,8 +1,11 @@
 <script lang="ts">
   /**
-   * In VJ mode: the show is still running underneath (its tray is hidden
-   * there), and how many of its tracks are taken over live. The LIVE count
-   * is the Return: it hands them all back (Shift: instantly).
+   * In VJ mode (and Audio Lab over it): the Show or the Timeline is still
+   * running underneath (its tray is hidden there), with its sound, LEDs,
+   * lines and cues, and how many of its tracks are taken over live. It keeps
+   * running on purpose (a takeover plays over it and hands back to it); the
+   * pill names which document it is and can pause it. The LIVE count is the
+   * Return: it hands them all back (Shift: instantly).
    */
   import { showTimeline } from '../../stores/showTimeline';
   import { liveTakeover } from '../../show/takeover/liveTakeover';
@@ -12,11 +15,12 @@
   }
 
   const playing = $derived($showTimeline.isPlaying);
+  const isTimeline = $derived($showTimeline.doc === 'timeline');
   const count = $derived(Object.values($liveTakeover.surfaces).filter((o) => o.phase !== 'releasing').length);
 </script>
 
 {#if playing || count > 0}
-  <div class="su" title="The show timeline carries on while you play; tracks taken over live go back to it with Return" data-show-underneath>
+  <div class="su" title={isTimeline ? 'The Timeline carries on while you play, with its sound, LEDs and cues; tracks taken over live go back to it with Return' : 'The show timeline carries on while you play; tracks taken over live go back to it with Return'} data-show-underneath>
     <!-- The Return first: a crowded header clips the banner's end. -->
     {#if count > 0}<button
       class="su-live"
@@ -26,7 +30,14 @@
       data-vj-takeover-return
     >LIVE {count} <span aria-hidden="true">↩</span></button>{/if}
     <span class="su-dot" class:paused={!playing}></span>
-    <span class="su-text">{#if playing}Show playing underneath{:else}Show paused underneath{/if}</span>
+    <span class="su-text">{#if isTimeline}{#if playing}Timeline playing underneath{:else}Timeline paused underneath{/if}{:else if playing}Show playing underneath{:else}Show paused underneath{/if}</span>
+    {#if playing}<button
+      class="su-pause"
+      onclick={() => showTimeline.pause()}
+      title={isTimeline ? 'Pause the Timeline' : 'Pause the show'}
+      aria-label={isTimeline ? 'Pause the Timeline' : 'Pause the show'}
+      data-show-underneath-pause
+    ><svg width="9" height="9" viewBox="0 0 10 10" aria-hidden="true"><rect x="1.5" y="1" width="2.4" height="8" rx="0.6" fill="currentColor" /><rect x="6.1" y="1" width="2.4" height="8" rx="0.6" fill="currentColor" /></svg></button>{/if}
   </div>
 {/if}
 
@@ -60,4 +71,10 @@
   }
   .su-live:hover { background: #ffa552; }
   .su-live:active { transform: scale(0.95); }
+  .su-pause {
+    display: inline-grid; place-items: center; width: 16px; height: 16px; padding: 0;
+    color: #ffb070; background: transparent; border: 1px solid rgba(255, 140, 40, 0.5); border-radius: 50%; cursor: pointer;
+  }
+  .su-pause:hover { background: rgba(255, 140, 40, 0.18); }
+  .su-pause:focus-visible { outline: 2px solid #ffb070; outline-offset: 1px; }
 </style>

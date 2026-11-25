@@ -32,7 +32,9 @@
   ];
 
   const side = $derived($sideColumn);
-  const width = $derived(sideWidth(side));
+  let windowWidth = $state(typeof window !== 'undefined' ? window.innerWidth : 1920);
+  // On a 1280 px laptop the 600 px Perform column would leave the lanes a sliver.
+  const width = $derived(sideWidth(side, windowWidth));
 
   // The Media tab's target: the selected row a card click goes on.
   const selection = showSlice('selection');
@@ -57,6 +59,7 @@
   }
 </script>
 
+<svelte:window bind:innerWidth={windowWidth} />
 {#if side.open}
   <aside class="tl-side" style:width="{width}px" data-timeline-side={side.tab} aria-label="Timeline side column">
     <!-- svelte-ignore a11y_no_static_element_interactions -->

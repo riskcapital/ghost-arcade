@@ -11,7 +11,7 @@ import { showTimeline, setShowCompositionLoader, type ShowArrangement } from '..
 import { rowTrackId } from '../../show/tracks/showStageRows';
 import { setHistoryCallback } from '../../stores/historyHooks';
 import { curveForEasing, fitLineRanges, lanesToLines, laneToLine, rowLineTarget } from './laneConversion';
-import { removeLinesForBlocks, shiftLinesWithBlock, linesEnd } from './lineDocOps';
+import { carryRowLinesAcross, removeLinesForBlocks, shiftLinesWithBlock, shiftRowLinesFrom, splitLinesForBlock, linesEnd } from './lineDocOps';
 import { lineValueAt } from './lineEvaluator';
 import type { ControlLine } from './lineModel';
 
@@ -74,6 +74,39 @@ describe('lines follow their blocks', () => {
     expect(out[1].points.map((p) => p.t)).toEqual([1, 4, 9]);
     expect(removeLinesForBlocks(out, ['c1']).map((l) => l.id)).toEqual(['r']);
     expect(linesEnd(out)).toBe(9);
+  });
+
+  it('a follow line with only depth points moves with the block too', () => {
+    const depthOnly: ControlLine = { ...rowLine, id: 'd', points: [], follow: { source: { kind: 'beat' }, depthPoints: [{ t: 3, v: 0.5 }] } as any };
+    const out = shiftLinesWithBlock([depthOnly], { clipId: 'c1', rowTarget: { scope: 'layer', id: 'A' }, from: 2, to: 5, delta: 2 });
+    expect(out[0].follow!.depthPoints!.map((p) => p.t)).toEqual([5]);
+  });
+
+  it('a ripple moves the row points from the gap on', () => {
+    const out = shiftRowLinesFrom([rowLine, blockLine], { scope: 'layer', id: 'A' }, 3, -2);
+    expect(out[0].points.map((p) => p.t)).toEqual([1, 1, 7]);
+    expect(out[1]).toBe(blockLine);
+  });
+
+  it('a split keeps the curve on both halves', () => {
+    const line: ControlLine = { ...blockLine, points: [{ t: 0, v: 0 }, { t: 2, v: 0.2 }, { t: 6, v: 0.6 }, { t: 8, v: 1 }] };
+    const out = splitLinesForBlock([line], { clipId: 'c1', rightId: 'c2', start: 0, t: 4, end: 8 }, () => 'new');
+    expect(out.map((l) => l.target)).toEqual([{ scope: 'block', id: 'c1' }, { scope: 'block', id: 'c2' }]);
+    expect(out[0].points.map((p) => p.t)).toEqual([0, 2, 6]);
+    expect(out[1].points.map((p) => p.t)).toEqual([2, 6, 8]);
+    expect(out[1].id).toBe('new');
+    for (const t of [3, 4]) expect(lineValueAt(out[0], t)).toBeCloseTo(lineValueAt(line, t) as number);
+    for (const t of [4, 5, 7]) expect(lineValueAt(out[1], t)).toBeCloseTo(lineValueAt(line, t) as number);
+  });
+
+  it('a block moved to another row takes the row points under it there', () => {
+    const out = carryRowLinesAcross([rowLine], { source: { scope: 'layer', id: 'A' }, target: { scope: 'layer', id: 'B' }, from: 2, to: 5, delta: 1 }, () => 'nb');
+    expect(out[0].points.map((p) => p.t)).toEqual([1, 9]);
+    expect(out[1]).toMatchObject({ id: 'nb', target: { scope: 'layer', id: 'B' }, key: 'layer:opacity' });
+    expect(out[1].points.map((p) => p.t)).toEqual([4]);
+    const into = carryRowLinesAcross([rowLine, { ...rowLine, id: 'b2', target: { scope: 'layer', id: 'B' }, points: [{ t: 0, v: 1 }] }], { source: { scope: 'layer', id: 'A' }, target: { scope: 'layer', id: 'B' }, from: 2, to: 5, delta: 1 }, () => 'x');
+    expect(into).toHaveLength(2);
+    expect(into[1].points.map((p) => p.t)).toEqual([0, 4]);
   });
 });
 
@@ -144,5 +177,49 @@ describe('the Timeline document holds its lines', () => {
     expect(get(showTimeline).lines[0].points[0].t).toBeCloseTo(c.startTime + 4);
     showTimeline.removeLayerClips([id]);
     expect(get(showTimeline).lines).toEqual([]);
+  });
+
+  it('ripple delete moves the later blocks\' lines and the row points after the gap', () => {
+    const row = rowTrackId('A');
+    const a = showTimeline.addLayerClip(row, { kind: 'image', name: 'a.png', src: '/a.png' }, 0)!;
+    const ca = get(showTimeline).layerTracks.find((t) => t.layerId === 'A')!.clips.find((c) => c.id === a)!;
+    const b = showTimeline.addLayerClip(row, { kind: 'image', name: 'b.png', src: '/b.png' }, ca.startTime + ca.duration)!;
+    const cb = get(showTimeline).layerTracks.find((t) => t.layerId === 'A')!.clips.find((c) => c.id === b)!;
+    const mid = cb.startTime + cb.duration / 2;
+    showTimeline.setLines([
+      { id: 'blk', target: { scope: 'block', id: b }, key: 'shader:x', kind: 'continuous', min: 0, max: 1, points: [{ t: mid, v: 1 }] },
+      opacity([{ t: mid, v: 0.5 }]),
+    ]);
+    showTimeline.removeLayerClips([a], { ripple: true });
+    const s = get(showTimeline);
+    const moved = s.layerTracks.find((t) => t.layerId === 'A')!.clips.find((c) => c.id === b)!;
+    const shift = moved.startTime - cb.startTime;
+    expect(shift).toBeLessThan(0);
+    expect(s.lines.find((l) => l.id === 'blk')!.points[0].t).toBeCloseTo(mid + shift);
+    expect(s.lines.find((l) => l.id === 'op')!.points[0].t).toBeCloseTo(mid + shift);
+  });
+
+  it('a block dragged with others (or onto another row) takes its own lines; the row\'s points stay for the editor to move', () => {
+    const id = showTimeline.addLayerClip(rowTrackId('A'), { kind: 'image', name: 'a.png', src: '/a.png' }, 0)!;
+    const c = get(showTimeline).layerTracks.find((t) => t.layerId === 'A')!.clips[0];
+    showTimeline.setLines([
+      { id: 'b', target: { scope: 'block', id }, key: 'shader:x', kind: 'continuous', min: 0, max: 1, points: [{ t: c.startTime + 1, v: 1 }] },
+      opacity([{ t: c.startTime + 1, v: 0.5 }]),
+    ]);
+    expect(showTimeline.moveLayerClipsAcross([id], 2, 0)).toBe(true);
+    const lines = get(showTimeline).lines;
+    expect(lines.find((l) => l.id === 'b')!.points[0].t).toBeCloseTo(c.startTime + 3);
+    expect(lines.find((l) => l.id === 'op')!.points[0].t).toBeCloseTo(c.startTime + 1);
+  });
+
+  it('a split copies the block\'s lines onto the right half', () => {
+    const id = showTimeline.addLayerClip(rowTrackId('A'), { kind: 'image', name: 'a.png', src: '/a.png' }, 0)!;
+    const c = get(showTimeline).layerTracks.find((t) => t.layerId === 'A')!.clips[0];
+    const t = c.startTime + c.duration / 2;
+    showTimeline.setLines([{ id: 'b', target: { scope: 'block', id }, key: 'shader:x', kind: 'continuous', min: 0, max: 1, points: [{ t: c.startTime, v: 0 }, { t: c.startTime + c.duration, v: 1 }] }]);
+    const [right] = showTimeline.splitLayerClips(t, [id]);
+    const lines = get(showTimeline).lines;
+    expect(lines.map((l) => l.target)).toEqual([{ scope: 'block', id }, { scope: 'block', id: right }]);
+    expect(lineValueAt(lines[1], t + 0.1)).toBeCloseTo(lineValueAt(lines[0], t + 0.1) as number);
   });
 });

@@ -192,6 +192,8 @@ export function borrowStageCamera(): () => void {
     if (returned) return;
     returned = true;
     cameraBorrowed = Math.max(0, cameraBorrowed - 1);
+    // The lane takes the camera back now, not at the next playhead tick (none come while paused).
+    if (cameraBorrowed === 0 && (get(stageShow)?.cameraLane.length ?? 0) > 0) ensureCameraLoop();
   };
 }
 

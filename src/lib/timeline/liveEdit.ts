@@ -14,8 +14,8 @@
  *     at, together. Discard puts back what each held change changed (the
  *     setting's value before it, the piece's content before it), as one
  *     undo step, and nothing else: an edit made meanwhile that was not held
- *     stays. When a held change cannot be put back, Discard says so and
- *     changes nothing.
+ *     stays. A held change Discard cannot put back stays held, and the bar
+ *     says which.
  *
  * Content swaps on a piece are held the same way (the content recorder's
  * cut-ins). Off is exactly the recorder disarmed: Live edit is "Rec lines +
@@ -82,6 +82,8 @@ export type LiveEditEvent =
   | { type: 'settle' }
   /** Discard could not put them back: nothing changed, say why. */
   | { type: 'refuse'; notice: string }
+  /** Discard put back what it could: these stay held, and the bar says why. */
+  | { type: 'keep'; edits: readonly HeldEdit[]; notice: string }
   /** Another project or document: what is held belongs to the old one. */
   | { type: 'reset' };
 
@@ -118,18 +120,21 @@ export function liveEditStep(state: LiveEditState, event: LiveEditEvent): LiveEd
       return state.kind === 'holding' ? { kind: 'on' } : state;
     case 'refuse':
       return state.kind === 'holding' ? { ...state, notice: event.notice } : state;
+    case 'keep':
+      if (state.kind !== 'holding') return state;
+      return event.edits.length ? { kind: 'holding', edits: event.edits, notice: event.notice } : { kind: 'on' };
   }
 }
 
-/** What Discard's revert hook answers. */
-export type RevertResult = { ok: true } | { ok: false; reason: string };
+/** What Discard's revert hook answers: put back (all, or all but `kept`), or nothing changed. */
+export type RevertResult = { ok: true; kept?: readonly HeldEdit[]; reason?: string } | { ok: false; reason: string };
 
 export interface LiveEditHooks {
   /** Key a parameter at a time (timelineLines' keyAtPlayhead); `was`, its value before. */
   keyAt(target: ParamTarget, key: string, value: number | boolean, t: number, was?: number | boolean): void;
   /** Cut held content in on its row at its time (the row is made when it has none). */
   cutIn(edit: HeldContentEdit): void;
-  /** Put back what these held changes changed, as one undo step; all or nothing. */
+  /** Put back what these held changes changed, as one undo step; what cannot be is kept. */
   revert(edits: readonly HeldEdit[]): RevertResult;
   /** Arm or disarm the recorder with Follow edits. */
   setArmed(on: boolean): void;
@@ -225,28 +230,33 @@ export function updateHeldEdits(): number {
   const s = get(state);
   if (s.kind !== 'holding' || !hooks.keyAt || !hooks.cutIn) return 0;
   const { keyAt, cutIn } = hooks;
-  dispatch({ type: 'settle' });
-  runAsOneStep(() => {
-    settling = true;
-    try {
-      for (const e of s.edits) {
-        if (e.kind === 'param') keyAt(e.target, e.key, e.value, e.t, e.was);
-        else cutIn(e);
+  // Keyed first, then let go: let go first, the stage showed the lines
+  // without the held values or their keys for a frame (a snap back).
+  try {
+    runAsOneStep(() => {
+      settling = true;
+      try {
+        for (const e of s.edits) {
+          if (e.kind === 'param') keyAt(e.target, e.key, e.value, e.t, e.was);
+          else cutIn(e);
+        }
+      } finally {
+        settling = false;
       }
-    } finally {
-      settling = false;
-    }
-    recordDiscreteAction();
-  });
+      recordDiscreteAction();
+    });
+  } finally {
+    dispatch({ type: 'settle' });
+  }
   return s.edits.length;
 }
 
 /**
  * Drop every held change, putting back what each one changed (one undo
  * step; Undo brings them back as plain edits). Edits made meanwhile that
- * were not held are left as they are. When a held change cannot be put back
- * nothing changes, the held changes stay and the bar says why. True when
- * they were dropped.
+ * were not held are left as they are. A held change that cannot be put back
+ * stays held and the bar says why (the others are put back). True when all
+ * were dropped.
  */
 export function discardHeldEdits(): boolean {
   const s = get(state);
@@ -265,6 +275,10 @@ export function discardHeldEdits(): boolean {
   }
   if (!result.ok) {
     dispatch({ type: 'refuse', notice: result.reason });
+    return false;
+  }
+  if (result.kept?.length) {
+    dispatch({ type: 'keep', edits: result.kept, notice: result.reason ?? CANT_DISCARD });
     return false;
   }
   dispatch({ type: 'settle' });

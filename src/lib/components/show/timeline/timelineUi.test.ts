@@ -410,7 +410,7 @@ describe('tray height (B7)', () => {
     expect(tray).toMatch(/Math\.max\(TRACK_INSPECTOR_RESERVE, inspectorH\)/);
     expect(tray).toMatch(/const inspectorRoom = \$derived\(isTimeline \? 0 :/);
     expect(tray).toMatch(/const chromeH = \$derived\(transportH \+ inspectorRoom \+ 1\)/);
-    expect(tray).toMatch(/Math\.min\(Math\.round\(vh \* 0\.66\), vh - TIMELINE_CANVAS_ROOM\)/);
+    expect(tray).toMatch(/Math\.min\(Math\.round\(vh \* 0\.66\), vh - TIMELINE_CANVAS_ROOM - BOTTOM_RAIL\)/);
     expect(tray).toMatch(/insp-idle" bind:clientHeight=\{inspectorH\}/);
   });
 

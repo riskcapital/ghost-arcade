@@ -37,7 +37,7 @@ describe('editor: show publish to the stage window', () => {
     await flushMicrotasks();
     expect(sent[1]).toMatchObject({ type: 'show-tick', version: v1 });
     const tick = (sent[1] as Extract<RehearsalMessage, { type: 'show-tick' }>).tick;
-    expect(Object.keys(tick).sort()).toEqual(['at', 'chasing', 'currentTime', 'isPlaying', 'seekGeneration']);
+    expect(Object.keys(tick).sort()).toEqual(['at', 'chasing', 'currentTime', 'isPlaying', 'sectionHolding', 'seekGeneration']);
     expect(tick.at).toBe(now);
 
     // A marker added: the arrangement changed.

@@ -95,7 +95,11 @@ export function discoverLedParams(controllers: readonly WLEDController[] | undef
     let names: string[] = [];
     try { names = Object.keys(getWLEDPatternDefinition(e.pattern).params ?? {}); } catch { names = Object.keys(e.params ?? {}); }
     for (const name of new Set([...names, ...Object.keys(e.params ?? {})])) {
-      params.push({ key: `ledfx:${e.id}:${name}`, label: capital(name), type: 'number', min: 0, max: name === 'colorCount' ? 4 : 1, step: 0.01, defaultValue: Number(e.params?.[name] ?? 0), group });
+      // Colour count (1..4) and pattern (one of six layouts) are whole steps, not 0..1 amounts.
+      const range = name === 'colorCount' ? { min: 1, max: 4, step: 1, kind: 'stepped' as const }
+        : name === 'colorPattern' ? { min: 0, max: 5, step: 1, kind: 'stepped' as const }
+          : { min: 0, max: 1, step: 0.01 };
+      params.push({ key: `ledfx:${e.id}:${name}`, label: capital(name), type: 'number', ...range, defaultValue: Number(e.params?.[name] ?? 0), group });
     }
   }
   return params;

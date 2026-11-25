@@ -187,6 +187,8 @@ export function renderLedBlock(clip: TimelineLedClip, span: { start: number; cou
         if (key.startsWith(LED_BLOCK_KEYS.paramPrefix)) params[key.slice(LED_BLOCK_KEYS.paramPrefix.length)] = num(lines[key], 0);
       }
       const content = def.category === 'content';
+      // Speed 0 stops the pattern where it starts (a beat-synced one follows the tempo regardless).
+      const paused = speed === 0 && def.category !== 'rhythmic';
       const hex = (c: [number, number, number]) => `#${c.map((v) => Math.round(v).toString(16).padStart(2, '0')).join('')}`;
       const effect: WLEDEffect = {
         id: clip.id,
@@ -209,7 +211,7 @@ export function renderLedBlock(clip: TimelineLedClip, span: { start: number; cou
       const base = new Uint8Array(n * 3);
       if (content && ctx.source) base.set(ctx.source.subarray(span.start * 3, (span.start + n) * 3));
       const out = new Uint8Array(n * 3);
-      applyWLEDEffects(base, out, { id: clip.id, ledCount: n, ranges: [] }, [], [effect], undefined, local * 1000, ctx.bpm);
+      applyWLEDEffects(base, out, { id: clip.id, ledCount: n, ranges: [] }, [], [effect], undefined, paused ? 0 : local * 1000, ctx.bpm);
       for (let i = 0; i < n; i++) put(i, out[i * 3], out[i * 3 + 1], out[i * 3 + 2]);
       return;
     }

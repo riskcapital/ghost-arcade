@@ -47,6 +47,8 @@ describe('show transport mirror', () => {
     const s = { currentTime: 3, at: 10_000, isPlaying: true, duration: 20, loop: false };
     expect(showTimeAt(s, 10_250)).toBeCloseTo(3.25);
     expect(showTimeAt({ ...s, isPlaying: false }, 10_250)).toBe(3);
+    // Held at a Hold section's end: it stays put between ticks.
+    expect(showTimeAt({ ...s, sectionHolding: true }, 10_250)).toBe(3);
     // A stalled editor does not run the stage far ahead.
     expect(showTimeAt(s, 15_000)).toBeCloseTo(3.5);
     expect(showTimeAt({ ...s, currentTime: 19.9 }, 10_400)).toBe(20);
@@ -345,7 +347,7 @@ describe('show state publish split', () => {
     cameraLane: [], audioDelay: { enabled: false, seconds: 0 }, takeover: null,
   };
   it('the tick carries the playhead; the arrangement key ignores it', () => {
-    expect(rehearsalTransportTick(state)).toEqual({ currentTime: 3, at: 1000, isPlaying: true, seekGeneration: 2, chasing: false });
+    expect(rehearsalTransportTick(state)).toEqual({ currentTime: 3, at: 1000, isPlaying: true, seekGeneration: 2, chasing: false, sectionHolding: false });
     const moved = { ...state, currentTime: 9, at: 5000, isPlaying: false, seekGeneration: 7, chasing: true };
     expect(rehearsalArrangementKey(moved)).toBe(rehearsalArrangementKey(state));
     expect(rehearsalArrangementKey({ ...state, presets: [{ ...state.presets[0], label: 'B' }] })).not.toBe(rehearsalArrangementKey(state));
@@ -393,6 +395,10 @@ describe('clock skew between the two windows', () => {
     for (const transit of [40, 3, 12, 25]) est.note(1000, 1000 + 2 + transit);
     expect(est.value()).toBe(5);
     expect(clockSkewAllowsExact(est.value())).toBe(true);
+    // A stage clock 50 ms ahead (negative d): the quickest message is the most negative.
+    const ahead = createClockSkewEstimator(4);
+    for (const transit of [30, 1, 12]) ahead.note(1000, 1000 - 50 + transit);
+    expect(ahead.value()).toBe(-49);
     // After a sleep the stage window runs 120 s behind.
     est.reset();
     for (const transit of [4, 9]) est.note(1000, 1000 + 120_000 + transit);

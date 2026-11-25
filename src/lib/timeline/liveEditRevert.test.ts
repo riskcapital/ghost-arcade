@@ -48,9 +48,30 @@ describe("Discard's plan", () => {
     expect(plan.project.wledEffects![0].speed).toBe(1.5);
   });
 
-  it('refuses, naming the change, when a piece is gone, there is no value from before or the setting is not one it can write', () => {
+  it('puts back what it can and keeps the rest held: a sound fader does not stop a layer going back', () => {
     const gone = held({ scope: 'layer', id: 'Z' }, 'layer:opacity', 0.4, 1);
-    expect(planDiscard(base(), [held({ scope: 'layer', id: 'A' }, 'layer:opacity', 0.4, 1), gone])).toEqual({ ok: false, edit: gone });
+    const fader = held({ scope: 'sound', id: 'row1' } as never, 'sound:gain', 0.2, 0.8);
+    const plan = planDiscard(base(), [held({ scope: 'layer', id: 'A' }, 'layer:opacity', 0.4, 1), fader, gone]);
+    expect(plan.ok).toBe(true);
+    if (!plan.ok) return;
+    expect((plan.project.layers as Layer[])[0].opacity).toBe(1);
+    expect(plan.kept).toEqual([fader, gone]);
+  });
+
+  it('puts a piece\'s content back before its settings', () => {
+    const previous = { id: 's-old', type: 'shader', name: 'Old', shaderValues: { speed: 2 } } as never;
+    const swap: HeldEdit = { kind: 'content', id: 'content|layer:A', trackId: null, media: { kind: 'shader', name: 'Prism' } as never, before: null, t: 2, piece: { layerId: 'A', previous } };
+    const plan = planDiscard(base(), [held({ scope: 'layer', id: 'A' }, 'shader:speed', 2, 7), swap]);
+    expect(plan.ok).toBe(true);
+    if (!plan.ok) return;
+    const a = (plan.project.layers as Layer[])[0];
+    expect((a.source as { id: string; shaderValues: Record<string, number> }).id).toBe('s-old');
+    expect((a.source as { shaderValues: Record<string, number> }).shaderValues.speed).toBe(7);
+  });
+
+  it('refuses, naming the change, when nothing can be put back: a piece is gone, there is no value from before or the setting is not one it can write', () => {
+    const gone = held({ scope: 'layer', id: 'Z' }, 'layer:opacity', 0.4, 1);
+    expect(planDiscard(base(), [gone])).toEqual({ ok: false, edit: gone });
     const noWas = held({ scope: 'layer', id: 'A' }, 'layer:opacity', 0.4);
     expect(planDiscard(base(), [noWas])).toEqual({ ok: false, edit: noWas });
     const block = held({ scope: 'block', id: 'clip' }, 'shader:speed', 3, 1);
@@ -65,7 +86,8 @@ describe("Discard's plan", () => {
     const card: HeldEdit = { kind: 'content', id: 'content|g', trackId: 'g', media: { kind: 'shader', name: 'Card' } as never, before: null, t: 2 };
     const p = base();
     const plan = planDiscard(p, [swap, card]);
-    expect(plan).toEqual({ ok: true, project: p, sources: [{ layerId: 'A', source: previous }] });
+    expect(plan).toMatchObject({ ok: true, sources: [{ layerId: 'A', source: previous }], params: [], kept: [] });
+    if (plan.ok) expect((plan.project.layers as Layer[])[0].source).toBe(previous);
     const lost = { ...swap, piece: { layerId: 'Z', previous } } as HeldEdit;
     expect(planDiscard(p, [lost])).toEqual({ ok: false, edit: lost });
   });

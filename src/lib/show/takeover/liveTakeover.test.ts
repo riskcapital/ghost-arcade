@@ -362,6 +362,24 @@ describe('pure evaluation and summary', () => {
     expect(store.tick().frame.surfaces).toEqual([]);
   });
 
+  it('the last effect taken off hands back like a release (held cues run)', () => {
+    const { t, store } = harness();
+    store.addTempEffect('a', { id: 'fx1', type: 'invert', enabled: true, params: {} } as any, 'trk');
+    store.removeTempEffect('a', 'fx1');
+    expect(t.allReleased).toBe(1);
+  });
+
+  it('a release called off while fading out fades back in over a non-zero time', () => {
+    const { t, store } = harness();
+    store.engage('wall', blueRow);
+    store.release('wall', { mode: 'fade', fadeSeconds: 2 });
+    t.now += 1;
+    store.cancelRelease('wall');
+    const o = store.state.surfaces.wall;
+    expect(o.phase).toBe('in');
+    expect(o.fadeInSeconds).toBeGreaterThanOrEqual(0.05);
+  });
+
   it('summarises for other windows', () => {
     const { store } = harness({ showTime: 3, playing: true, tempo: createTempoMap(120, 0) });
     store.engage('a', blueRow, { trackId: 't1' });

@@ -150,12 +150,27 @@ describe('track templates', () => {
     const rowId = showTimeline.addLayerTrack(layer);
     showTimeline.addLayerClip(rowId, { kind: 'image', name: 'a.png', src: 'a.png' }, 0);
     const saved = JSON.parse(JSON.stringify(showTimeline.serialize()));
+    // This machine's URLs stay out of the file when the AssetRef rebuilds them.
+    const tpl = saved.layerTracks[0].template;
+    expect(tpl.splatContent.texturePath).toBe('');
+    expect(tpl.pixelFXContent.sourceUrl).toBe('');
     showTimeline._resetForTest();
     showTimeline.hydrate(saved, '/project');
     const reopened = get(showTimeline).layerTracks[0].template as any;
     expect(reopened.splatContent._textureAssetRef).toEqual(textureRef);
     expect(reopened.splatContent.texturePath).toMatch(/media\/tex\.png$/);
     expect(reopened.pixelFXContent.sourceUrl).toMatch(/media\/px\.mp4$/);
+  });
+
+  it('of the parked document are saved as their layers are now too', () => {
+    showTimeline.openDoc('timeline');
+    const rowId = showTimeline.addLayerTrack(wall);
+    showTimeline.addLayerClip(rowId, { kind: 'image', name: 'a.png', src: 'a.png' }, 0);
+    showTimeline.openDoc('show');
+    setShowTemplateLayerSource(() => [{ ...wall, opacity: 0.3 } as Layer]);
+    const saved = showTimeline.serialize();
+    expect(saved.timeline!.layerTracks![0].template!.opacity).toBe(0.3);
+    expect(JSON.stringify(showTimeline.serialize({ updateStore: false }))).toBe(JSON.stringify(saved));
   });
 
   it('are saved as the layer is now, not as the last refresh left them', () => {

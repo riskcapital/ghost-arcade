@@ -312,16 +312,27 @@ describe('Live edit on the Timeline', () => {
     expect(get(liveEdit.liveEditOn)).toBe(true);
   });
 
-  it('when a held change cannot be put back, Discard changes nothing and says why', () => {
+  it('when a held change cannot be put back, Discard puts back the rest and keeps that one held, saying why', () => {
     liveEditParked();
     setLayer('A', { opacity: 0.4 });
     setLayer('B', { opacity: 0.5 });
     state.update((p) => ({ ...p, layers: p.layers.filter((l) => l.id !== 'A') }));
     const before = steps;
     expect(liveEdit.discardHeldEdits()).toBe(false);
-    expect(get(state).layers.find((l) => l.id === 'B')!.opacity).toBe(0.5);
+    expect(get(state).layers.find((l) => l.id === 'B')!.opacity).toBe(1);
+    expect(steps - before).toBe(1);
+    expect(get(liveEdit.heldEdits)).toMatchObject([{ kind: 'param', target: { scope: 'layer', id: 'A' } }]);
+    expect(get(liveEdit.liveEdit).notice).toMatch(/can't put back/);
+  });
+
+  it('when no held change can be put back, Discard changes nothing and says why', () => {
+    liveEditParked();
+    setLayer('A', { opacity: 0.4 });
+    state.update((p) => ({ ...p, layers: p.layers.filter((l) => l.id !== 'A') }));
+    const before = steps;
+    expect(liveEdit.discardHeldEdits()).toBe(false);
     expect(steps).toBe(before);
-    expect(get(liveEdit.heldEdits)).toHaveLength(2);
+    expect(get(liveEdit.heldEdits)).toHaveLength(1);
     expect(get(liveEdit.liveEdit).notice).toMatch(/can't put back/);
   });
 

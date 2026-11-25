@@ -171,7 +171,7 @@ import { evaluateShowLooks, type ShowLookState } from '../show/tracks/showLooks'
 import { normalizeLines, type ControlLine } from '../timeline/lines/lineModel';
 import type { LineBinding } from '../timeline/lines/lineControls';
 import { lanesToLines, rowLineTarget } from '../timeline/lines/laneConversion';
-import { linesEnd, normalizeBindings, removeLinesForBlocks, shiftLinesOnTarget, shiftLinesWithBlock } from '../timeline/lines/lineDocOps';
+import { carryRowLinesAcross, linesEnd, normalizeBindings, removeLinesForBlocks, shiftLinesOnTarget, shiftLinesWithBlock, shiftRowLinesFrom, splitLinesForBlock } from '../timeline/lines/lineDocOps';
 import { normalizeLedClip, normalizeLedClips, type TimelineLedClip } from '../timeline/leds/ledClips';
 import { normalizeStageClip, normalizeStageClips, type StageClipRow, type TimelineStageClip } from '../timeline/stagefx/stageClips';
 import { normalizeNamedOrders, normalizeWhere, type WhereNamedOrder } from '../timeline/where/whereModel';
@@ -1185,6 +1185,26 @@ function recordShowEdit(continuousKey?: string): void {
   else recordDiscreteAction();
 }
 
+/** A section loop or jump, or the in/out loop, moved the playing playhead:
+ *  it played from `from` up to `cut` and carries on from `land` to `to`. */
+export interface ShowTimeJump {
+  from: number;
+  cut: number;
+  land: number;
+  to: number;
+}
+const jumpListeners = new Set<(jump: ShowTimeJump) => void>();
+/** Told just before the playhead lands (cue markers fire on each pass). */
+export function onShowTimeJump(listener: (jump: ShowTimeJump) => void): () => void {
+  jumpListeners.add(listener);
+  return () => jumpListeners.delete(listener);
+}
+function notifyJump(jump: ShowTimeJump): void {
+  for (const listener of jumpListeners) {
+    try { listener(jump); } catch (err) { console.warn('[ShowTimeline] jump listener failed:', err); }
+  }
+}
+
 /** Told when the whole show is cleared or another one is loaded (a live
  *  takeover of the old show's surfaces ends there). */
 const resetListeners = new Set<() => void>();
@@ -1621,6 +1641,7 @@ function tick(now: number): void {
       // anchor and the evaluation knows by how much show time moved.
       transportClock.shift(step.time - next);
       lastLoopWrap = { generation: seekGeneration + 1, wrap: { fromGeneration: seekGeneration, shift: step.shift } };
+      notifyJump({ from: s.currentTime, cut: step.cut, land: step.land, to: step.time });
       applyTime(step.time, true);
       ticker.request();
       return;
@@ -1636,6 +1657,7 @@ function tick(now: number): void {
     const wrapped = area.start + ((next - area.end) % (area.end - area.start));
     transportClock.shift(wrapped - next);
     lastLoopWrap = { generation: seekGeneration + 1, wrap: { fromGeneration: seekGeneration, shift: next - wrapped } };
+    notifyJump({ from: s.currentTime, cut: area.end, land: area.start, to: wrapped });
     applyTime(wrapped, true);
     ticker.request();
     return;
@@ -1701,10 +1723,17 @@ function finishShow(action: ShowEndAction): void {
 }
 
 /** Recompute duration + reselect after any structural mutation. */
+/** A document's length: everything on it, its sound rows, lines and sections too. */
+export function showDocDuration(d: Partial<ShowDocFields>): number {
+  const sound = d.sound;
+  const audio = d.audioTracks ?? [];
+  const tracks = !sound || soundDocIsEmpty(sound) ? audio : [...audio, ...sound.live, ...sound.builds];
+  const duration = computeShowDuration(d.presetClips ?? [], tracks, d.layerTracks ?? [], d.cameraLane ?? [], d.lookClips ?? [], d.lines ?? [], d.ledClips ?? [], d.stageClips ?? []);
+  return d.sections?.length ? Math.max(duration, sectionsEnd(d.sections)) : duration;
+}
+
 function withDuration(s: ShowTimelineState): ShowTimelineState {
-  const tracks = soundDocIsEmpty(s.sound) ? s.audioTracks : [...s.audioTracks, ...s.sound.live, ...s.sound.builds];
-  const duration = computeShowDuration(s.presetClips, tracks, s.layerTracks, s.cameraLane, s.lookClips, s.lines, s.ledClips, s.stageClips);
-  return { ...s, duration: s.sections.length ? Math.max(duration, sectionsEnd(s.sections)) : duration };
+  return { ...s, duration: showDocDuration(s) };
 }
 
 /** The audio blocks changed: a beat grid detected from one of them follows it. */
@@ -2272,11 +2301,43 @@ function serializeClipMedia(media: ShowClipMedia): ShowClipMedia {
   return { ...media, ...(ref ? { _assetRef: ref } : {}), src: refIsDurable(ref) ? '' : media.src };
 }
 
+/** The runtime URL fields of a layer's content and the AssetRef that rebuilds each on load. */
+const TEMPLATE_URL_FIELDS: ReadonlyArray<readonly [field: string, refKey: string]> = [
+  ['src', '_assetRef'],
+  ['mediaSrc', '_assetRef'],
+  ['modelData', '_assetRef'],
+  ['filePath', '_assetRef'],
+  ['texturePath', '_textureAssetRef'],
+  ['sourceUrl', '_sourceAssetRef'],
+];
+
+/** A copy with every URL whose AssetRef rebuilds it blanked (this machine's paths stay out of the file). */
+function withoutDurableUrls(node: unknown): unknown {
+  if (Array.isArray(node)) {
+    let changed = false;
+    const out = node.map((v) => { const n = withoutDurableUrls(v); if (n !== v) changed = true; return n; });
+    return changed ? out : node;
+  }
+  if (!node || typeof node !== 'object') return node;
+  const obj = node as Record<string, unknown>;
+  let out: Record<string, unknown> | null = null;
+  for (const [field, refKey] of TEMPLATE_URL_FIELDS) {
+    if (typeof obj[field] === 'string' && obj[field] !== '' && refIsDurable(obj[refKey] as AssetRef | undefined)) {
+      out ??= { ...obj };
+      out[field] = '';
+    }
+  }
+  for (const [key, value] of Object.entries(obj)) {
+    if (!value || typeof value !== 'object' || key.startsWith('_')) continue;
+    const next = withoutDurableUrls(value);
+    if (next !== value) { out ??= { ...obj }; out[key] = next; }
+  }
+  return out ?? node;
+}
+
 function serializeTemplate(template: Layer | null): Layer | null {
   if (!template) return null;
-  const source = template.source;
-  if (!source || !refIsDurable(source._assetRef)) return template;
-  return { ...template, source: { ...source, src: '' } };
+  return withoutDurableUrls(template) as Layer;
 }
 
 /** A document as it is saved (see `serialize`). */
@@ -2399,6 +2460,9 @@ function hydrateDoc(p: Record<string, unknown>, projectDir?: string): ShowDocFie
     soloTrackId: null,
   };
 }
+
+/** See showTimeline.expectHydrate. */
+let hydratePending = false;
 
 export const showTimeline = {
   subscribe: store.subscribe,
@@ -3688,6 +3752,7 @@ export const showTimeline = {
     const wanted = clipIds ? new Set(clipIds) : null;
     const selected = new Set(s.selectedClipIds);
     const created: string[] = [];
+    let lines = s.lines;
     const layerTracks = s.layerTracks.map((track) => {
       if (track.locked) return track;
       const clip = findClipAt(track.clips, t);
@@ -3697,6 +3762,8 @@ export const showTimeline = {
       const halves = splitClip(clip, t);
       if (!halves) return track;
       created.push(halves[1].id);
+      // The block's own lines carry on over both halves.
+      lines = splitLinesForBlock(lines, { clipId: clip.id, rightId: halves[1].id, start: clip.startTime, t, end: clipEnd(clip) }, generateUUID);
       return { ...track, clips: track.clips.flatMap((c) => (c.id === clip.id ? halves : [c])) };
     });
     // Nothing selected under the playhead: split every track instead.
@@ -3705,7 +3772,7 @@ export const showTimeline = {
       return c ? [c.id] : [];
     }));
     if (!created.length) return created;
-    store.update((x) => ({ ...x, layerTracks }));
+    store.update((x) => ({ ...x, layerTracks, lines }));
     recordShowEdit();
     republishTracks();
     return created;
@@ -3717,21 +3784,39 @@ export const showTimeline = {
     // Only blocks really removed lose their lines (a locked row keeps both).
     const removed = new Set<string>();
     let changed = false;
-    store.update((s) => withDuration({
-      ...s,
-      layerTracks: s.layerTracks.map((track) => {
+    // A ripple moves the later blocks: the row's points after each gap and
+    // the moved blocks' own lines go with them.
+    let rippled: ControlLine[] | null = null;
+    store.update((s) => {
+      let lines = s.lines;
+      const layerTracks = s.layerTracks.map((track) => {
         if (track.locked || !track.clips.some((c) => ids.has(c.id))) return track;
         changed = true;
         for (const c of track.clips) if (ids.has(c.id)) removed.add(c.id);
         if (!opts.ripple) return { ...track, clips: deleteClips(track.clips, ids) };
         const result = rippleDelete(track.clips, ids);
         let lanes = track.lanes;
-        for (const shift of result.shifts) lanes = shiftLaneKeys(lanes, shift.from, Number.POSITIVE_INFINITY, shift.delta);
+        const rowTarget = rowLineTarget(track);
+        for (const shift of result.shifts) {
+          lanes = shiftLaneKeys(lanes, shift.from, Number.POSITIVE_INFINITY, shift.delta);
+          lines = shiftRowLinesFrom(lines, rowTarget, shift.from, shift.delta);
+        }
+        const before = new Map(track.clips.map((c) => [c.id, c.startTime]));
+        for (const c of result.clips) {
+          const delta = c.startTime - (before.get(c.id) ?? c.startTime);
+          if (Math.abs(delta) > 1e-9) lines = shiftLinesOnTarget(lines, { scope: 'block', id: c.id }, delta);
+        }
         return { ...track, clips: result.clips, lanes };
-      }),
-      selectedClipIds: s.selectedClipIds.filter((id) => !ids.has(id)),
-      selection: s.selection && ids.has(s.selection.id) ? null : s.selection,
-    }));
+      });
+      if (lines !== s.lines) rippled = lines;
+      return withDuration({
+        ...s,
+        layerTracks,
+        ...(rippled ? { lines: rippled } : {}),
+        selectedClipIds: s.selectedClipIds.filter((id) => !ids.has(id)),
+        selection: s.selection && ids.has(s.selection.id) ? null : s.selection,
+      });
+    });
     if (!changed) return;
     store.update((s) => {
       const lines = removeLinesForBlocks(s.lines, removed);
@@ -3827,11 +3912,28 @@ export const showTimeline = {
    * track list) and nothing changed. `rowOrder` (track ids): the order the
    * rows are drawn in, which `trackOffset` counts in.
    */
-  moveLayerClipsAcross(clipIds: string[], delta: number, trackOffset: number, rowOrder?: readonly string[]): boolean {
+  moveLayerClipsAcross(clipIds: string[], delta: number, trackOffset: number, rowOrder?: readonly string[], opts: { carryRowPoints?: boolean } = {}): boolean {
     const ids = new Set(clipIds);
-    const layerTracks = moveClipsAcrossTracks(get(store).layerTracks, ids, delta, trackOffset, rowOrder);
+    const before = get(store).layerTracks;
+    const layerTracks = moveClipsAcrossTracks(before, ids, delta, trackOffset, rowOrder);
     if (!layerTracks) return false;
-    store.update((s) => withDuration({ ...s, layerTracks }));
+    // The blocks' own lines move with them. The row's points stay: the
+    // editor moves the selected keys itself (`opts.carryRowPoints` for a
+    // caller that wants the row points under each block taken along).
+    const landed = new Map<string, ShowLayerTrack>();
+    for (const t of layerTracks) for (const c of t.clips) if (ids.has(c.id)) landed.set(c.id, t);
+    store.update((s) => {
+      let lines = s.lines;
+      for (const track of before) {
+        for (const c of track.clips) {
+          if (!ids.has(c.id)) continue;
+          lines = shiftLinesOnTarget(lines, { scope: 'block', id: c.id }, delta);
+          const to = landed.get(c.id);
+          if (opts.carryRowPoints && to) lines = carryRowLinesAcross(lines, { source: rowLineTarget(track), target: rowLineTarget(to), from: c.startTime, to: clipEnd(c), delta }, generateUUID);
+        }
+      }
+      return withDuration({ ...s, layerTracks, lines });
+    });
     recordShowEdit(`layer-move:${[...ids].sort().join(',')}`);
     republishTracks();
     return true;
@@ -4753,7 +4855,23 @@ export const showTimeline = {
     }
     if (options.updateStore !== false) s = get(store);
     const active = docSnapshot(s);
-    const parked = docSnapshot(parkedDoc);
+    // The parked document's rows are saved as their layers are now too
+    // (in the snapshot: the parked doc is refreshed when it is opened).
+    let parkedFields = parkedDoc;
+    if (templateLayerSource && parkedDoc.layerTracks.length) {
+      try {
+        const fresh = freshTemplates(templatePairs(parkedDoc.layerTracks, templateLayerSource()));
+        if (fresh.size) {
+          parkedFields = { ...parkedDoc, layerTracks: parkedDoc.layerTracks.map((t) => {
+            const next = fresh.get(t.id);
+            return next ? { ...t, ...next } : t;
+          }) };
+        }
+      } catch (err) {
+        console.warn('[ShowTimeline] parked template refresh before save failed:', err);
+      }
+    }
+    const parked = docSnapshot(parkedFields);
     const [show, timeline] = s.doc === 'show' ? [active, parked] : [parked, active];
     return {
       // 3: rows come from the mapping layers; empty rows are not saved,
@@ -4783,7 +4901,26 @@ export const showTimeline = {
    * music, tempo and camera lane to whichever has content (both, if both
    * do). The Show is active unless only the Timeline has anything.
    */
+  /**
+   * A project import is about to replace the show (its hydrate runs a
+   * microtask after the new layers land): until then the rows must not be
+   * reconciled, or the old show's rows meet the new project's layers.
+   */
+  expectHydrate() {
+    hydratePending = true;
+    // Backstop: an import that failed before queueing its hydrate never holds the rows past this task.
+    setTimeout(() => { hydratePending = false; }, 0);
+  },
+  /** The import that called expectHydrate is done (hydrated or not). */
+  hydrateSettled() {
+    hydratePending = false;
+  },
+  hydratePending(): boolean {
+    return hydratePending;
+  },
+
   hydrate(payload: unknown, projectDir?: string): void {
+    hydratePending = false;
     cancelRaf();
     forgetSections();
     forgetPhrases();

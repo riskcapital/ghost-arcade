@@ -8,7 +8,7 @@
  * without a jump, otherwise from a live capture of what the editor played.
  */
 import { get, writable } from 'svelte/store';
-import { showTimeline, type ShowTimelineState } from '../../stores/showTimeline';
+import { showSectionStatus, showTimeline, type ShowTimelineState } from '../../stores/showTimeline';
 import { project } from '../../stores/layers';
 import { cueList } from '../cueList';
 import { liveTakeover, takeoverSummary } from '../takeover/liveTakeover';
@@ -79,10 +79,14 @@ export function buildRehearsalShowState(audioDelay: RehearsalAudioDelay, at = ep
     loop: s.loop,
     seekGeneration: showTimeline.seekGeneration(),
     chasing: showTimeline.isChasing(),
+    sectionHolding: s.isPlaying && get(showSectionStatus).holdId !== null,
     tempo: s.tempo ? JSON.parse(JSON.stringify(s.tempo)) : null,
     hasAudio: s.audioTracks.some((t) => !t.muted && !!t.url && t.volume > 0),
     presets: s.presetClips.map((c) => ({ id: c.id, start: c.startTime, duration: c.duration, label: c.label ?? comps.get(c.compositionId) ?? '' })),
-    markers: cueList.state.markers.map((m) => ({ id: m.id, time: m.time, label: m.label })),
+    // The playing document's markers only (the other document's sit elsewhere in time).
+    markers: cueList.state.markers
+      .filter((m) => (m.doc === 'timeline') === (s.doc === 'timeline'))
+      .map((m) => ({ id: m.id, time: m.time, label: m.label })),
     cameraLane: s.cameraLane.map((c) => ({ ...c })),
     audioDelay: { ...audioDelay },
     takeover: (() => {
@@ -107,6 +111,7 @@ function arrangementInputs(audioDelay: RehearsalAudioDelay): unknown[] {
     s.audioTracks,
     s.presetClips,
     s.cameraLane,
+    s.doc,
     (get(project) as { compositions?: unknown }).compositions,
     cueList.state.markers,
     liveTakeover.state,
@@ -165,7 +170,7 @@ export function createRehearsalPublisher(
     const s = get(showTimeline);
     post({
       type: 'show-tick',
-      tick: { currentTime: s.currentTime, at, isPlaying: s.isPlaying, seekGeneration: showTimeline.seekGeneration(), chasing: showTimeline.isChasing() },
+      tick: { currentTime: s.currentTime, at, isPlaying: s.isPlaying, seekGeneration: showTimeline.seekGeneration(), chasing: showTimeline.isChasing(), sectionHolding: s.isPlaying && get(showSectionStatus).holdId !== null },
       version,
     });
   };
@@ -362,6 +367,8 @@ export function installEditorRehearsal(): () => void {
         else if (publisher.stageHas(msg.stateVersion)) publish();
         break;
       case 'stage-bye':
+        // An old page closing after a new one said hello leaves the new one connected.
+        if (msg.instance && stageInstance && msg.instance !== stageInstance) break;
         setAlive(false);
         stageInstance = null;
         break;

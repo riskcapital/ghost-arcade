@@ -164,6 +164,27 @@ describe('Live edit', () => {
     expect(get(liveEdit).notice).toBeNull();
   });
 
+  it('Discard that puts back all but some keeps those held and says why', () => {
+    const kept = { kind: 'param', id: 'param|x|sound:gain', target: piece, key: 'sound:gain', value: 0.2, t: 3 } as const;
+    installLiveEditHooks(hooks({ revert: () => ({ ok: true, kept: [kept], reason: 'Kept one' }) }));
+    setLiveEditArmed(true);
+    holdParamEdit(piece, 'opacity', 0.5, 3, 1);
+    expect(discardHeldEdits()).toBe(false);
+    expect(get(liveEdit).held).toEqual([kept]);
+    expect(get(liveEdit).notice).toBe('Kept one');
+  });
+
+  it('Update keys the held changes before letting go of them (no frame without either)', () => {
+    let heldWhileKeying = -1;
+    const h = hooks({ keyAt: vi.fn(() => { heldWhileKeying = get(liveEdit).held.length; }) });
+    installLiveEditHooks(h);
+    setLiveEditArmed(true);
+    holdParamEdit(piece, 'opacity', 0.5, 3, 1);
+    expect(updateHeldEdits()).toBe(1);
+    expect(heldWhileKeying).toBe(1);
+    expect(get(liveEdit).held).toEqual([]);
+  });
+
   it('Discard without a way to put changes back refuses', () => {
     setLiveEditArmed(true);
     holdParamEdit(piece, 'opacity', 0.5, 3, 1);

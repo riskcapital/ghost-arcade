@@ -83,4 +83,23 @@ describe('the one GO at runtime', () => {
     expect(get(standbyId)).toBe(a);
     expect(get(showTimeline).currentTime).toBe(0);
   });
+
+  it('a hand standby lets go when its section is deleted, the other document opens, or on an unlinked marker', () => {
+    showTimeline.setSections([
+      { id: 's1', name: 'One', color: '#fff', start: 0, end: 4, action: 'through' },
+      { id: 's2', name: 'Two', color: '#fff', start: 4, end: 8, action: 'through' },
+    ]);
+    standByOn(get(performStack).find((i) => i.id === 's2')!);
+    showTimeline.setSections([{ id: 's1', name: 'One', color: '#fff', start: 0, end: 4, action: 'through' }]);
+    expect(get(standbyId)).not.toBe('s2');
+    expect(performGo().kind).not.toBe('jumpTo');
+    standByOn(get(performStack).find((i) => i.id === 's1')!);
+    showTimeline.openDoc('show');
+    expect(get(handStandby)).toBeNull();
+    showTimeline.openDoc('timeline');
+    const m = cueList.addMarker(2, null, 'Note', 'timeline');
+    standByOn(get(performStack).find((i) => i.id === m)!);
+    expect(get(handStandby)).toBeNull();
+  });
 });
+

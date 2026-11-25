@@ -51,6 +51,20 @@ describe('LED blocks', () => {
     expect(pixel(px, 9)).toEqual([0, 0, 255]);
   });
 
+  it('an effect block at speed 0 stands still', () => {
+    const c = block({ kind: 'effect', pattern: 'marquee' as never, color: '#ffffff', speed: 0 });
+    expect(c.speed).toBe(0);
+    const a = new Uint8Array(60);
+    const b = new Uint8Array(60);
+    renderLedBlock(c, { start: 0, count: 20 }, ctx(1.3), a);
+    renderLedBlock(c, { start: 0, count: 20 }, ctx(4.7), b);
+    expect(Array.from(b)).toEqual(Array.from(a));
+    const moving = block({ kind: 'effect', pattern: 'marquee' as never, color: '#ffffff', speed: 1 });
+    renderLedBlock(moving, { start: 0, count: 20 }, ctx(1.3), a);
+    renderLedBlock(moving, { start: 0, count: 20 }, ctx(1.6), b);
+    expect(Array.from(b)).not.toEqual(Array.from(a));
+  });
+
   it('chase puts a runner where speed × time says', () => {
     const px = new Uint8Array(30);
     const c = block({ kind: 'chase', color: '#ffffff', speed: 0.5, width: 0.1 });

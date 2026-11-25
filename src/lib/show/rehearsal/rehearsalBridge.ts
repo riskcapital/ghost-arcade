@@ -62,6 +62,8 @@ export interface RehearsalShowState {
   seekGeneration: number;
   /** Timecode / an external clock owns the playhead: commands are refused. */
   chasing: boolean;
+  /** Playing but held at a Hold section's end: the playhead stays put (not run on between ticks). */
+  sectionHolding?: boolean;
   tempo: ShowTempoMap | null;
   hasAudio: boolean;
   presets: RehearsalPresetBlock[];
@@ -73,7 +75,7 @@ export interface RehearsalShowState {
 }
 
 /** The part of the state that moves every tick. */
-export type RehearsalTransportTick = Pick<RehearsalShowState, 'currentTime' | 'at' | 'isPlaying' | 'seekGeneration' | 'chasing'>;
+export type RehearsalTransportTick = Pick<RehearsalShowState, 'currentTime' | 'at' | 'isPlaying' | 'seekGeneration' | 'chasing' | 'sectionHolding'>;
 
 export function rehearsalTransportTick(state: RehearsalTransportTick): RehearsalTransportTick {
   return {
@@ -82,12 +84,13 @@ export function rehearsalTransportTick(state: RehearsalTransportTick): Rehearsal
     isPlaying: state.isPlaying,
     seekGeneration: state.seekGeneration,
     chasing: state.chasing,
+    sectionHolding: !!state.sectionHolding,
   };
 }
 
 /** Everything but the tick, for telling whether the arrangement changed. */
 export function rehearsalArrangementKey(state: RehearsalShowState): string {
-  const { currentTime: _t, at: _a, isPlaying: _p, seekGeneration: _g, chasing: _c, ...rest } = state;
+  const { currentTime: _t, at: _a, isPlaying: _p, seekGeneration: _g, chasing: _c, sectionHolding: _h, ...rest } = state;
   return JSON.stringify(rest);
 }
 
@@ -131,8 +134,9 @@ export type RehearsalMessage =
 // ─── Transport mirror ───────────────────────────────────────────────────
 
 /** Show time the editor is at `epochMs`, from its last published state. */
-export function showTimeAt(state: Pick<RehearsalShowState, 'currentTime' | 'at' | 'isPlaying' | 'duration' | 'loop'>, epochMs: number): number {
-  if (!state.isPlaying) return state.currentTime;
+export function showTimeAt(state: Pick<RehearsalShowState, 'currentTime' | 'at' | 'isPlaying' | 'duration' | 'loop' | 'sectionHolding'>, epochMs: number): number {
+  // Held at a section's end: run on, the camera would saw back at every tick.
+  if (!state.isPlaying || state.sectionHolding) return state.currentTime;
   // Never extrapolate far: a stalled editor must not run the stage ahead.
   // Looking back (the stage view's screens run behind the editor) is fine.
   const elapsed = Math.max(-1, Math.min(0.5, (epochMs - state.at) / 1000));
@@ -513,8 +517,10 @@ export function createClockSkewEstimator(keep = 12) {
     },
     value(): number | null {
       if (samples.length === 0) return null;
+      // d = skew + transit, and transit is never negative: the smallest d
+      // (signed: a clock behind gives negative ones) has the least transit.
       let best = samples[0];
-      for (const d of samples) if (Math.abs(d) < Math.abs(best)) best = d;
+      for (const d of samples) if (d < best) best = d;
       return best;
     },
     reset(): void {

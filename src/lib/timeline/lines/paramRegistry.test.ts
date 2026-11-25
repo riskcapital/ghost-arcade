@@ -42,6 +42,11 @@ function gpuLayer(): Layer {
   return { ...createLayer('G1', 'Planet', 'gpu'), gpuLayerContent: { shaderId: 'planet', params: {} } as any } as Layer;
 }
 
+function interactiveLayer(): Layer {
+  const layer = createLayer('I1', 'Play', 'media');
+  return { ...layer, source: { id: 'src-i', type: 'effect', name: 'Interactive', effectSource: { effectType: 'interactive', interactiveScene: { effects: [{ id: 'b1', kind: 'balls3d', enabled: true, params: {} }] } } } as any } as Layer;
+}
+
 /** A value different from the param's default, inside its range. */
 function another(p: ParamEntry): number | boolean {
   if (p.kind === 'bool') return !p.default;
@@ -55,7 +60,7 @@ function another(p: ParamEntry): number | boolean {
 
 describe('parameter registry', () => {
   it('every discovered layer key applies to a copy and reads back, the layer untouched', () => {
-    for (const layer of [richLayer(), gpuLayer()]) {
+    for (const layer of [richLayer(), gpuLayer(), interactiveLayer()]) {
       const params = layerParams(layer);
       const before = JSON.stringify(layer);
       expect(params.length).toBeGreaterThan(10);
@@ -186,5 +191,33 @@ describe('parameter registry', () => {
     expect(colorHex(0x0000ff)).toBe('#0000ff');
     expect(readStageLedParam('ledfx:w1:color', null, [controller], [effect])).toBe(0xff0000);
     expect(readParam({ layers: [], wledControllers: [controller] }, { scope: 'led' }, 'led:c1:brightness')).toBe(1);
+  });
+});
+
+describe('add-on and Interactive values read back', () => {
+  it('an Analog Synth control reads as stored, or its default', () => {
+    const layer = { ...createLayer('V1', 'Synth', 'media'), source: { id: 's', type: 'effect', name: 'Synth', effectSource: { effectType: 'videosynth', vsAFreq: 0.37 } } } as unknown as Layer;
+    expect(readLayerParam(layer, 'vsynth:vsAFreq')).toBeCloseTo(0.37);
+    expect(typeof readLayerParam(layer, 'vsynth:vsBFreq')).toBe('number');
+    expect(readLayerParam(createLayer('X', 'X', 'media'), 'vsynth:vsAFreq')).toBeUndefined();
+  });
+});
+
+
+describe('a corner pin and a move in one set', () => {
+  it('on a copy flushed twice, the pin is kept and the move is not added up', () => {
+    const layer = createLayer('C1', 'Wall', 'media');
+    const next = { ...layer } as Layer;
+    const set = { 'corner:tl:x': 0.1, 'transform:x': 0.05 };
+    applyParamOverrides(next, set);
+    const once = JSON.stringify(next.corners);
+    expect(next.corners.topLeft.x).toBeCloseTo(0.15, 9);
+    // The native sync re-flushes the same copy.
+    applyParamOverrides(next, set);
+    expect(JSON.stringify(next.corners)).toBe(once);
+    expect(layer.corners.topLeft.x).not.toBeCloseTo(0.15, 9);
+    // The same copy with the pin moved: the new pin, moved once.
+    applyParamOverrides(next, { ...set, 'corner:tl:x': 0.2 });
+    expect(next.corners.topLeft.x).toBeCloseTo(0.25, 9);
   });
 });

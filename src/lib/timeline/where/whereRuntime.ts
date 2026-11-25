@@ -204,7 +204,7 @@ export function applyContentWhere(
 /** Kick onsets of the Timeline's song (show seconds), when it was analysed. */
 const kickMemo = new Map<string, number[]>();
 const analysing = new Set<string>();
-function songKicks(s: ShowTimelineState, wanted: boolean): number[] | null {
+export function songKicks(s: Pick<ShowTimelineState, 'audioTracks'>, wanted: boolean): number[] | null {
   for (const t of s.audioTracks) {
     if (!t.url || t.muted) continue;
     const features = cachedSongFeatures(t.url);
@@ -224,7 +224,10 @@ function songKicks(s: ShowTimelineState, wanted: boolean): number[] | null {
     const key = `${t.url}|${t.startTime}|${t.offset ?? 0}`;
     let kicks = kickMemo.get(key);
     if (!kicks) {
-      kicks = kickOnsets(features.features.kick, features.frameRate, t.startTime - (t.offset ?? 0));
+      // Only the kicks the block plays (not the trimmed-off head or tail of the file).
+      const end = t.startTime + t.duration;
+      kicks = kickOnsets(features.features.kick, features.frameRate, t.startTime - (t.offset ?? 0))
+        .filter((k) => k >= t.startTime - 1e-6 && k <= end + 1e-6);
       if (kickMemo.size > 8) kickMemo.clear();
       kickMemo.set(key, kicks);
     }
@@ -233,9 +236,10 @@ function songKicks(s: ShowTimelineState, wanted: boolean): number[] | null {
   return null;
 }
 
-function wantsKicks(s: ShowTimelineState): boolean {
+export function wantsKicks(s: Pick<ShowTimelineState, 'lookClips' | 'ledClips' | 'stageClips' | 'layerTracks'>): boolean {
   const kick = (w: WhereSpec | null | undefined) => w?.motion.kind === 'kick';
-  return s.lookClips.some((c) => kick(c.where)) || s.ledClips.some((c) => kick(c.where)) || s.layerTracks.some((t) => t.clips.some((c) => kick(c.where)));
+  return s.lookClips.some((c) => kick(c.where)) || s.ledClips.some((c) => kick(c.where)) || s.stageClips.some((c) => kick(c.where))
+    || s.layerTracks.some((t) => t.clips.some((c) => kick(c.where)));
 }
 
 function bpmAt(tempo: ShowTempoMap | null, t: number): number {

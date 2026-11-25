@@ -398,8 +398,10 @@
 
   /** Room the docked Timeline leaves above it (top bar and a canvas strip). */
   const TIMELINE_CANVAS_ROOM = 300;
+  /** The status bar and dock under the tray (App.svelte's --ga-bottom-rail-offset). */
+  const BOTTOM_RAIL = 74;
   function timelineAutoHeight(vh: number): number {
-    return Math.max(TRAY_MIN_HEIGHT, Math.min(Math.round(vh * 0.66), vh - TIMELINE_CANVAS_ROOM));
+    return Math.max(TRAY_MIN_HEIGHT, Math.min(Math.round(vh * 0.66), vh - TIMELINE_CANVAS_ROOM - BOTTOM_RAIL));
   }
   function timelineDragCeiling(vh: number): number {
     return Math.max(TRAY_MIN_HEIGHT, Math.round(vh * 0.85));

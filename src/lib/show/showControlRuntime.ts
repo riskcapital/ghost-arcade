@@ -22,7 +22,7 @@ import { projectors } from './projectors';
 import { timecodeChase } from './timecode/timecodeChase';
 import { ScheduleRunner, createScheduleHooks, showSchedule } from './scheduler';
 import { onShowControlHydrate } from './showControlPersistence';
-import { showTimeline, setShowChaseTransportHandler } from '../stores/showTimeline';
+import { onShowTimeJump, showTimeline, setShowChaseTransportHandler } from '../stores/showTimeline';
 import { installShowLaunchClock } from './sync/showLaunchClock';
 import { project } from '../stores/layers';
 import { snapshots } from '../stores/snapshots';
@@ -139,6 +139,18 @@ export function installShowControl(): () => void {
   let prevTime: number | null = null;
   let prevPlaying = false;
   let prevDoc: string | null = null;
+  // A section loop / jump or the in/out loop: the markers of each pass fire
+  // (up to the cut, then from where it lands), and none it skipped over.
+  let jumpedTo: number | null = null;
+  cleanups.push(onShowTimeJump((j) => {
+    const s = get(showTimeline);
+    if (!s.isPlaying) return;
+    const doc = s.doc ?? 'show';
+    // Up to the cut but not on it: a marker at a vamp's end fires once, when the playhead goes through.
+    if (j.cut - 1e-6 > j.from) cueList.timelineAdvanced(j.from, j.cut - 1e-6, null, doc);
+    if (j.to >= j.land - 1e-6) cueList.timelineAdvanced(j.land - 1e-6, Math.max(j.to, j.land), null, doc);
+    jumpedTo = j.to;
+  }));
   cleanups.push(showTimeline.subscribe((s) => {
     const t = s.currentTime;
     const doc = s.doc ?? 'show';
@@ -147,7 +159,12 @@ export function installShowControl(): () => void {
       prevTime = null;
       prevPlaying = false;
     }
-    if (s.isPlaying && prevPlaying && prevTime !== null) {
+    // The update the jump lands with: its markers were fired with the jump.
+    const landed = jumpedTo !== null && Math.abs(t - jumpedTo) < 1e-3;
+    jumpedTo = null;
+    if (landed) {
+      // (nothing more to fire)
+    } else if (s.isPlaying && prevPlaying && prevTime !== null) {
       const delta = t - prevTime;
       if (delta > 0 && delta <= 1) {
         cueList.timelineAdvanced(prevTime, t, null, doc);

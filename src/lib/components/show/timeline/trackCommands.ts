@@ -11,7 +11,9 @@ import { showTimeline, SHOW_SNAP_SECONDS } from '../../../stores/showTimeline';
 import { gridStepSeconds, secondsAtBar, barBeatAt } from '../../../show/tempoMap';
 import { focusedTrackId, laneKeySelection, setTrackClipboard, trackClipboard } from './trackLayout';
 import { canPasteKeys, copySelectedKeys, deleteSelectedKeys, hasKeySelection, moveSelectedKeys, pasteKeysAtPlayhead } from './keyCommands';
-import { clearSelectedKeys, selectedKeys } from '../../../timeline/lines/lineSelection';
+import { clearSelectedKeys, selectedKeys, selectKeys } from '../../../timeline/lines/lineSelection';
+import { shiftKeys } from '../../../timeline/lines/keyEdit';
+import { keysOffBlocks } from '../../../timeline/lines/lineDocOps';
 
 export function hasClipSelection(): boolean {
   return get(showTimeline).selectedClipIds.length > 0 || !!get(laneKeySelection)?.times.length || hasKeySelection();
@@ -126,9 +128,21 @@ export function nudgeSelection(direction: -1 | 1, bar: boolean): boolean {
   const at = Math.min(...clips.map((c) => c.startTime), ...lineKeys.map((k) => k.t));
   const delta = Math.max(direction * (bar ? barStep(at) : gridStep(at)), -at);
   if (Math.abs(delta) < 1e-9) return true;
-  // Blocks move without their points (moveLayerClipsAcross): every selected key moves by the same step.
-  if (lineKeys.length) moveSelectedKeys(delta);
-  if (clips.length) showTimeline.moveLayerClipsAcross(ids, delta, 0);
+  // Blocks move with their own lines but without the row's points
+  // (moveLayerClipsAcross): every other selected key moves by the same step.
+  if (!clips.length) {
+    if (lineKeys.length) moveSelectedKeys(delta);
+    return true;
+  }
+  const offKeys = keysOffBlocks(s.lines, lineKeys, ids);
+  const onKeys = lineKeys.filter((k) => !offKeys.includes(k));
+  if (offKeys.length) {
+    const r = shiftKeys(s.lines, offKeys, delta);
+    if (r.lines !== s.lines) showTimeline.setLines(r.lines);
+    selectKeys([...r.keys, ...onKeys.map((k) => ({ ...k, t: Math.max(0, k.t + delta) }))]);
+  }
+  showTimeline.moveLayerClipsAcross(ids, delta, 0);
+  if (!offKeys.length && onKeys.length) selectKeys(onKeys.map((k) => ({ ...k, t: Math.max(0, k.t + delta) })));
   return true;
 }
 

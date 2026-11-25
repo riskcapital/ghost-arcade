@@ -182,8 +182,10 @@ export function whereWindowAt(
       break;
     }
     case 'kick': {
+      // One step per kick after the block starts (a kick on its first frame
+      // is where it starts, as a beat there is for the beat count).
       const steps = ctx.kicks && ctx.kicks.length
-        ? Math.max(0, countKicks(ctx.kicks, start, t) - 1)
+        ? countKicks(ctx.kicks, start + 2e-6, t)
         : Math.floor(Math.max(0, beats()) + 1e-9);
       position = slotPosition(n > 0 ? steps % n : 0, n);
       wrap = false;
