@@ -1,3 +1,7 @@
+# Ghost Arcade Pro 2.2.1 — November 25, 2026
+
+Updates that install in place without a full download, signed and with an automatic way back; Interactive Studio back on with Fluid, a real liquid simulation, and Drip Blobs; auto map that lands on turned and warped Screens and maps the tops of shapes; an Audio Lab looper that starts on your first note, with clear record lights, one drum beat in every set and undo and redo across Audio Lab; group effects that work in Mapping mode; a steadier Timeline and a faster render core. See [release notes](docs/releases/v2.2.1.md).
+
 # Ghost Arcade Pro 2.2.0 — November 24, 2026
 
 A Timeline that scores the whole stage: rows per mapped piece, groups, presets, looks, control lines, LED, Screen FX and audio rows, sections with GO, Auto show, Live key and the keys a video editor knows; Render to video on its own clock up to 120 fps with the sound in sync; two add-ons, Audio Lab (a music studio whose sound draws the picture, with ten demo songs and a looper) and Analog Synth, each with a 3-day trial; a Dome inside view with projector rings and mirror domes; Install mode for unattended shows; Find latest with community effects; editor crash recovery and much lower CPU while a show plays. The Pro icon glows red in place of its PRO label. See [release notes](docs/releases/v2.2.0.md).
