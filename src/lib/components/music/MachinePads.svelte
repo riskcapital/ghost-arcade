@@ -12,7 +12,7 @@
    */
   import { onDestroy, onMount } from 'svelte';
   import { musicStudio } from '../../music/musicStudioStore';
-  import { musicKeysYield, isTypingTarget } from '../../music/musicKeyboard';
+  import { musicKeysYield, takesTypedNotes } from '../../music/musicKeyboard';
   import { insertEditorChannel } from '../../music/studioUi';
   import {
     KIT_FAMILY_LABELS, MACHINE_KITS, PAD_KEYS, USER_FAMILY_LABEL, padForKey,
@@ -56,7 +56,7 @@
   }
 
   function onKeyDown(e: KeyboardEvent) {
-    if (e.ctrlKey || e.metaKey || e.altKey || isTypingTarget(document.activeElement)) return;
+    if (e.ctrlKey || e.metaKey || e.altKey || takesTypedNotes(document.activeElement)) return;
     const pad = padForKey(e.key);
     if (pad < 0) return;
     e.preventDefault();

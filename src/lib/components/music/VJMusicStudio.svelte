@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { releaseMenuFocus } from '../../utils/menuFocus';
   import MachinePads from './MachinePads.svelte';
   import MachineSequencer from './MachineSequencer.svelte';
   /**
@@ -96,7 +97,7 @@
 {/snippet}
 
 {#if shown}
-  <div class="music-tray studio-tokens set-{s.set}" class:minimized data-help-page="clip-launcher">
+  <div use:releaseMenuFocus class="music-tray studio-tokens set-{s.set}" class:minimized data-help-page="clip-launcher">
     <div class="music-head">
       <span class="music-title">Audio Lab</span>
       <div class="ga-segmented compact" role="group" aria-label="Instrument set">

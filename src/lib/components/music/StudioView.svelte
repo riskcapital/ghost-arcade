@@ -6,6 +6,7 @@
    * renderer draws the output into the frame this view hands it; everything
    * else here is opaque.
    */
+  import { releaseMenuFocus } from '../../utils/menuFocus';
   import { get } from 'svelte/store';
   import { nativePreviewHostEl } from '../../stores/nativePreviewHost';
   import { project } from '../../stores/layers';
@@ -338,7 +339,7 @@
 {/snippet}
 
 {#if open}
-  <div class="studio-view studio-tokens set-{s.set}" class:lower-tall={lowerTall} class:looper-page={looperPage} role="region" aria-label="Audio Lab" bind:this={root}>
+  <div use:releaseMenuFocus class="studio-view studio-tokens set-{s.set}" class:lower-tall={lowerTall} class:looper-page={looperPage} role="region" aria-label="Audio Lab" bind:this={root}>
     <header class="bar" use:windowCaption use:wheelScrollsSideways>
       <span class="bar-title">Audio Lab</span>
       <div class="group">

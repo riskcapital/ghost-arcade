@@ -5,7 +5,8 @@
  * octave and velocity. Those keys are taken before the app's single-key
  * shortcuts and learned key bindings (T would otherwise cycle the test
  * pattern), everything else (modifier shortcuts, number keys, Space) keeps
- * working. Typing into a text field never plays notes.
+ * working. Typing into a text field never plays notes; a focused menu does not
+ * take the note keys (they would jump it to another option).
  */
 
 import { get, writable } from 'svelte/store';
@@ -31,6 +32,16 @@ export function isTypingTarget(el: Element | null): boolean {
   return false;
 }
 
+/**
+ * A focused control the letter keys would type into, for the keys that play
+ * notes. A closed menu (a sound or instrument select) is not one: its only use
+ * of a letter is to jump to the option starting with it, which would change
+ * the sound instead of playing it. The menu keeps its arrows, Enter and Space.
+ */
+export function takesTypedNotes(el: Element | null): boolean {
+  return isTypingTarget(el) && (el as HTMLElement).tagName !== 'SELECT';
+}
+
 function performerOwnsKeys(): boolean {
   return get(synthVisionStore).keyboardActive;
 }
@@ -39,7 +50,7 @@ function performerOwnsKeys(): boolean {
 export function musicKeyAction(e: KeyboardEvent, octave: number): KeyboardAction {
   if (!get(musicKeysArmed) || get(musicKeysYield) || performerOwnsKeys()) return null;
   if (e.ctrlKey || e.metaKey || e.altKey) return null;
-  if (typeof document !== 'undefined' && isTypingTarget(document.activeElement)) return null;
+  if (typeof document !== 'undefined' && takesTypedNotes(document.activeElement)) return null;
   return keyboardAction(e.code, octave);
 }
 
