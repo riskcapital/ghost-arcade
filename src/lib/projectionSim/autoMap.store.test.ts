@@ -54,3 +54,14 @@ it('maps each face to a media layer that can take content, filled with its face 
   project.setLayerSource(face.id, { id: 'shader-on-face', type: 'shader', name: 'grid', src: 'builtin:grid', shaderCode: 'void main(){}', shaderValues: {} } as any);
   expect(get(project).layers.find((layer) => layer.id === face.id)?.source?.type).toBe('shader');
 });
+
+it('maps the tops of the default cube pyramid too, though its projector is only a little above them', async () => {
+  const { buildProjectionSimPreset } = await import('./presets');
+  const scene = buildProjectionSimPreset('cube-pyramid')!;
+  await autoMap.autoMapProjectionSim(scene);
+  const names = get(project).layers.filter((layer) => (layer as any).autoMap === autoMap.AUTO_MAP_TAG).map((layer) => layer.name);
+  // The cube on top, and the cubes of each row with nothing stacked on them.
+  for (const cube of ['Pyramid cube 10', 'Pyramid cube 7', 'Pyramid cube 9', 'Pyramid cube 1', 'Pyramid cube 4', 'Pyramid cube 6']) {
+    expect(names, cube).toContain(`${cube} · Top`);
+  }
+});

@@ -111,7 +111,9 @@ function faceVisible(
   const eye = new THREE.Vector3(...projector.position);
   const centre = face.corners.reduce((sum, c) => sum.add(c), new THREE.Vector3()).multiplyScalar(0.25);
   const toEye = eye.clone().sub(centre).normalize();
-  if (face.normal.dot(toEye) < 0.2) return false; // edge-on or facing away
+  // Facing away or truly edge-on. Tops seen from a projector only a little
+  // above them are steep but real faces; minArea drops the slivers.
+  if (face.normal.dot(toEye) < 0.02) return false;
   // Sample the centre and points towards each corner: a face counts when
   // most of it is in the open, not just its middle.
   const samples = [centre, ...face.corners.map((c) => centre.clone().lerp(c, 0.7))];
