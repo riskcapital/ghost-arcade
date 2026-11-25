@@ -1,6 +1,10 @@
+# Ghost Arcade Pro 2.2.0 — November 24, 2026
+
+A Timeline that scores the whole stage: rows per mapped piece, groups, presets, looks, control lines, LED, Screen FX and audio rows, sections with GO, Auto show, Live key and the keys a video editor knows; Render to video on its own clock up to 120 fps with the sound in sync; two add-ons, Audio Lab (a music studio whose sound draws the picture, with ten demo songs and a looper) and Analog Synth, each with a 3-day trial; a Dome inside view with projector rings and mirror domes; Install mode for unattended shows; Find latest with community effects; editor crash recovery and much lower CPU while a show plays. The Pro icon glows red in place of its PRO label. See [release notes](docs/releases/v2.2.0.md).
+
 # Ghost Arcade Pro 2.1.12 — November 24, 2026
 
-A Timeline that scores the whole stage: rows per mapped piece, groups, presets, looks, control lines, LED, Screen FX and audio rows, sections with GO, Auto show, Live key and the keys a video editor knows; Render to video on its own clock up to 120 fps with the sound in sync; two add-ons, Audio Lab (a music studio whose sound draws the picture, with ten demo songs and a looper) and Analog Synth, each with a 3-day trial; a Dome inside view with projector rings and mirror domes; Install mode for unattended shows; Find latest with community effects; editor crash recovery and much lower CPU while a show plays. See [release notes](docs/releases/v2.1.12.md).
+The same release for Windows and Linux only, before 2.2.0 brought it to macOS. See [release notes](docs/releases/v2.1.12.md).
 
 # Ghost Arcade Pro 2.1.11 — November 6, 2026
 
