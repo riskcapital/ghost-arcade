@@ -137,27 +137,34 @@ export function paintingSize(quad: Point[], longest = 1600): { width: number; he
  * The painting cut out of the photo, as the picture the desktop will pin to
  * `quad` (the painting's corners in projector pixels, TL TR BR BL).
  *
- * The desktop stretches a pinned picture between its corners bilinearly, not
- * in perspective. So this is not a plain perspective crop: every pixel of
- * the result asks "where will the desktop put me on the projector?" and
- * then "what does the photo show there?". That makes every point of the
- * picture, not just its corners, land on the same point of the painting.
+ * Every pixel of the result asks "where will the desktop put me on the
+ * projector?" and then "what does the photo show there?", so every point of
+ * the picture, not just its corners, lands on the same point of the painting.
+ * `pin` is how the desktop stretches the picture between the corners:
+ * 'perspective' (desktops that pin flat faces in true perspective; send
+ * `imageWarp: 'perspective'` with it) or 'bilinear' (older desktops).
  */
 export function rectifyPainting(
   source: { width: number; height: number; data: Uint8ClampedArray | Uint8Array },
   photoToProjector: number[],
   quad: Point[],
   size: { width: number; height: number },
+  pin: 'perspective' | 'bilinear' = 'bilinear',
 ): Uint8ClampedArray {
   const toPhoto = invertHomography(photoToProjector);
   const out = new Uint8ClampedArray(size.width * size.height * 4);
   const [tl, tr, br, bl] = quad;
+  const unitToQuad = pin === 'perspective' ? squareToQuad(quad) : null;
   for (let y = 0; y < size.height; y++) {
     const v = (y + 0.5) / size.height;
     for (let x = 0; x < size.width; x++) {
       const u = (x + 0.5) / size.width;
-      const px = (1 - v) * ((1 - u) * tl.x + u * tr.x) + v * ((1 - u) * bl.x + u * br.x);
-      const py = (1 - v) * ((1 - u) * tl.y + u * tr.y) + v * ((1 - u) * bl.y + u * br.y);
+      let px: number, py: number;
+      if (unitToQuad) ({ x: px, y: py } = applyHomography(unitToQuad, u, v));
+      else {
+        px = (1 - v) * ((1 - u) * tl.x + u * tr.x) + v * ((1 - u) * bl.x + u * br.x);
+        py = (1 - v) * ((1 - u) * tl.y + u * tr.y) + v * ((1 - u) * bl.y + u * br.y);
+      }
       const p = applyHomography(toPhoto, px, py);
       // Bilinear sample of the photo, clamped at its edges.
       const fx = Math.max(0, Math.min(source.width - 1.001, p.x - 0.5)), fy = Math.max(0, Math.min(source.height - 1.001, p.y - 0.5));
@@ -171,4 +178,15 @@ export function rectifyPainting(
     }
   }
   return out;
+}
+
+/** The homography taking the unit square (0,0) (1,0) (1,1) (0,1) to `quad` TL TR BR BL (3x3, row-major). */
+export function squareToQuad(quad: Point[]): number[] {
+  const [p0, p1, p2, p3] = quad;
+  const sx = p0.x - p1.x + p2.x - p3.x, sy = p0.y - p1.y + p2.y - p3.y;
+  if (Math.abs(sx) < 1e-12 && Math.abs(sy) < 1e-12) return [p1.x - p0.x, p2.x - p1.x, p0.x, p1.y - p0.y, p2.y - p1.y, p0.y, 0, 0, 1];
+  const dx1 = p1.x - p2.x, dx2 = p3.x - p2.x, dy1 = p1.y - p2.y, dy2 = p3.y - p2.y;
+  const den = dx1 * dy2 - dx2 * dy1;
+  const g = (sx * dy2 - dx2 * sy) / den, h = (dx1 * sy - sx * dy1) / den;
+  return [p1.x - p0.x + g * p1.x, p3.x - p0.x + h * p3.x, p0.x, p1.y - p0.y + g * p1.y, p3.y - p0.y + h * p3.y, p0.y, g, h, 1];
 }

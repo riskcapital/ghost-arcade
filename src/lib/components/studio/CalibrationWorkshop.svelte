@@ -1,24 +1,24 @@
 <script lang="ts">
  import {onMount,onDestroy,tick} from 'svelte';
- import {detectSurfaces} from '../../mobile/studio/surfaceDetect';
+ import {autoMapSurfaces} from '../../mobile/studio/autoMapSurfaces';
  import {findPainting,paintingSize,rectifyPainting,clockwiseFromTopLeft} from '../../mobile/studio/painting';
- import {openAutoMapCamera,uprightTurn,mapSurface,type AutoMapCamera,type AutoMapProjector,type AutoMapResult} from '../../mobile/studio/autoMap';
+ import {openAutoMapCamera,uprightTurn,mapSurface,AUTO_MAP_STOPPED,type AutoMapCamera,type AutoMapProjector,type AutoMapResult} from '../../mobile/studio/autoMap';
  import {surfaceDepthQuality,homography,unitCorners,project,exportCalibration,grayPatternPlan,type Calibration,type UV,type Reference} from '../../mobile/studio/calibration';
  import {captureCalibrationReference,shareCalibrationPreparation} from '../../mobile/studio/captureToolkit';
  import {acquireNativeFeed} from '../../mobile/studio/nativeLive';
  export let onclose:()=>void;
  export let onsend:((json:string)=>void)|undefined=undefined;
- function sendDesktop(){try{const live=mapped.filter(m=>!skipped.has(m.surfaceId)&&surfaces.some(s=>s.id===m.surfaceId));const c=draft();let base:Record<string,unknown>;try{base=exportCalibration(c);}catch(e){if(!live.length)throw e;base={...c};}onsend?.(JSON.stringify({...base,mappedSurfaces:live.map(({name,screenId,screenName,points,rmsPx})=>({name,screenId,screenName,points,rmsPx}))}));message=live.length?`Sent ${live.length} mapped surface${live.length===1?'':'s'}. On the desktop, choose Create layers.`:"Sent for desktop review; output geometry is not changed until applied there.";}catch(e){message=(e as Error).message;}}
+ function sendDesktop(){try{const live=mapped.filter(m=>!skipped.has(m.surfaceId)&&surfaces.some(s=>s.id===m.surfaceId));const c=draft();let base:Record<string,unknown>;try{base=exportCalibration(c);}catch(e){if(!live.length)throw e;base={...c};}onsend?.(JSON.stringify({...base,mappedSurfaces:live.map(({surfaceId,name,screenId,screenName,points,rmsPx,edgePx})=>({surfaceId,name,screenId,screenName,points,rmsPx,...(edgePx!==undefined?{edgePx:Math.round(edgePx*100)/100}:{})}))}));message=live.length?`Sent ${live.length} mapped surface${live.length===1?'':'s'}. On the desktop, choose Create layers.`:"Sent for desktop review; output geometry is not changed until applied there.";}catch(e){message=(e as Error).message;}}
  export let lidar=false;
  /** Runs the stripe capture against a paired desktop. Only set when paired. */
- export let automap:((camera:AutoMapCamera,progress:(text:string,fraction?:number)=>void)=>Promise<AutoMapResult>)|undefined=undefined;
+ export let automap:((camera:AutoMapCamera,progress:(text:string,fraction?:number)=>void,options?:{signal?:AbortSignal})=>Promise<AutoMapResult>)|undefined=undefined;
  let fraction=0,found:HTMLDivElement;
  /** Lets the paired desktop take photos through this phone while the preview is open. */
  export let remote:((camera:AutoMapCamera)=>()=>void)|undefined=undefined;
  let stopRemote:(()=>void)|undefined;
  /** The last stripe scan, kept so each outlined surface can be fitted on its own. */
  let scan:AutoMapProjector[]=[];
- type Mapped={surfaceId:string;name:string;screenId:string;screenName:string;points:UV[];rmsPx:number};
+ type Mapped={surfaceId:string;name:string;screenId:string;screenName:string;points:UV[];rmsPx:number;edgePx?:number};
  let mapped:Mapped[]=[];
  /** Found surfaces the user has switched off: kept on the photo, not sent. */
  let skipped=new Set<string>();
@@ -59,12 +59,13 @@
    const image=new Image();image.src=reference.image;await image.decode();
    const canvas=document.createElement('canvas');canvas.width=projector.decoded.width;canvas.height=projector.decoded.height;
    const context=canvas.getContext('2d',{willReadFrequently:true})!;context.drawImage(image,0,0,canvas.width,canvas.height);
-   const cut=rectifyPainting(context.getImageData(0,0,canvas.width,canvas.height),fit.toProjector,quad,size);
+   // Cut for the desktop's true-perspective pin, and say so (an older desktop's bilinear pin is not asked for here: this page comes from the desktop).
+   const cut=rectifyPainting(context.getImageData(0,0,canvas.width,canvas.height),fit.toProjector,quad,size,'perspective');
    const out=document.createElement('canvas');out.width=size.width;out.height=size.height;
    const pixels=out.getContext('2d')!.createImageData(size.width,size.height);pixels.data.set(cut);out.getContext('2d')!.putImageData(pixels,0,0);
    const surface={id:crypto.randomUUID(),name:'Painting',points:outline};
    onsend(JSON.stringify({schema:'ghost-calibration',version:1,id:crypto.randomUUID(),name,created:new Date().toISOString(),status:'prepared',reference,surfaces:[surface],projectors:[],
-    mappedSurfaces:[{name:'Painting',screenId:projector.id,screenName:projector.name,points:fit.points,rmsPx:fit.rmsPx,image:out.toDataURL('image/jpeg',.92)}]}));
+    mappedSurfaces:[{surfaceId:surface.id,name:'Painting',screenId:projector.id,screenName:projector.name,points:fit.points,rmsPx:fit.rmsPx,image:out.toDataURL('image/jpeg',.92),imageWarp:'perspective'}]}));
    message=`Painting sent (fit ${fit.rmsPx.toFixed(1)} px). On the desktop, choose Create layers.`;
   }catch(e){message=e instanceof Error?e.message:'The painting could not be sent.';}
   finally{paintingBusy=false;}
@@ -79,27 +80,46 @@
  function mapOutline(outline:UV[]){let best:{projector:AutoMapProjector;points:UV[];rmsPx:number;agree:number;toProjector:number[]}|undefined,why='';
   for(const projector of scan){try{const m=mapSurface(projector,outline);if(!best||m.agree>best.agree)best={projector,...m};}catch(e){why=e instanceof Error?e.message:'';}}
   if(!best)throw new Error(why||'This surface could not be mapped.');return best;}
- let framing=false,preview:HTMLVideoElement,autoCamera:(AutoMapCamera&{stop():void})|undefined;
- async function openAuto(){framing=true;message='Starting the camera…';const held=await uprightTurn();await tick();try{autoCamera=await openAutoMapCamera(preview,held.turn);stopRemote=remote?.(autoCamera);message='';}catch(e){framing=false;message=e instanceof Error?e.message:'The camera could not start.';}}
- function closeAuto(){stopRemote?.();stopRemote=undefined;autoCamera?.stop();autoCamera=undefined;framing=false;}
+ let framing=false,preview:HTMLVideoElement,autoCamera:(AutoMapCamera&{stop():void;setTurn?(turn:0|90|180|270):void})|undefined;
+ async function openAuto(){clearTimeout(verifyTimer);verifyUntil=0;if(autoCamera)closeAuto();framing=true;message='Starting the camera…';const held=await uprightTurn();await tick();try{autoCamera=await openAutoMapCamera(preview,held.turn);stopRemote=remote?.(autoCamera);message='';}catch(e){framing=false;message=e instanceof Error?e.message:'The camera could not start.';}}
+ function closeAuto(){clearTimeout(verifyTimer);clearInterval(verifyTick);verifyUntil=0;stopRemote?.();stopRemote=undefined;autoCamera?.stop();autoCamera=undefined;framing=false;}
+ /** The scan in progress, so Stop can end it between photos. */
+ let running:AbortController|undefined;
+ // After a scan the camera stays on for a few minutes while the results show, so the desktop can
+ // photograph its verification pattern from the same pose (Calibration → Verify with the phone).
+ // A pill says so with the time left; leaving the results or tapping Done lets it go.
+ const VERIFY_MS=5*60_000;
+ let verifyTimer:ReturnType<typeof setTimeout>|undefined,verifyTick:ReturnType<typeof setInterval>|undefined,verifyUntil=0,now=Date.now();
+ function keepForVerify(){clearTimeout(verifyTimer);clearInterval(verifyTick);verifyUntil=Date.now()+VERIFY_MS;now=Date.now();verifyTimer=setTimeout(closeAuto,VERIFY_MS);verifyTick=setInterval(()=>now=Date.now(),1000);}
+ $: verifyLeft=verifyUntil&&autoCamera?Math.max(0,Math.ceil((verifyUntil-now)/1000)):0;
  async function startAuto(){
   if(!autoCamera||!automap)return;busy=true;
+  // Which way is up, now: the phone may have been turned since the preview opened (straight from the tap, for the motion permission).
+  const held=await uprightTurn();if(held.gravity&&autoCamera?.setTurn)autoCamera.setTurn(held.turn);
+  running=new AbortController();
   try{
-   fraction=0;const result=await automap(autoCamera,(text,part)=>{message=text;if(part!==undefined)fraction=part;});
+   fraction=0;const result=await automap(autoCamera!,(text,part)=>{message=text;if(part!==undefined)fraction=part;},{signal:running.signal});
    reference=result.reference;surfaces=[];points=[];mode='surface';
    projectors=result.projectors.map(p=>({id:crypto.randomUUID(),name:p.name,width:p.width,height:p.height,corners:p.corners}));
    scan=result.projectors;mapped=[];skipped=new Set();painting=null;
-   // Find the flat surfaces in the scan; nobody has to tap corners.
-   for(const projector of scan)for(const found of detectSurfaces(projector,{photo:projector.white})){
-    const surface={id:crypto.randomUUID(),name:`Surface ${surfaces.length+1}`,points:found.outline.map(p=>({x:Math.max(0,Math.min(1,p.x)),y:Math.max(0,Math.min(1,p.y))}))};
+   // Find the flat surfaces in the scan, as the phone app does (nobody has to tap corners); slivers and scraps listed last and off.
+   const found=autoMapSurfaces(scan.map(p=>({id:p.id,width:p.width,height:p.height,plan:p.plan,decoded:p.decoded,white:p.white})));
+   for(const item of found){
+    const projector=scan[item.scan];
+    const surface={id:crypto.randomUUID(),name:`Surface ${surfaces.length+1}`,points:item.outline.map(p=>({x:Math.max(0,Math.min(1,p.x)),y:Math.max(0,Math.min(1,p.y))}))};
     surfaces=[...surfaces,surface];
-    mapped=[...mapped,{surfaceId:surface.id,name:surface.name,screenId:projector.id,screenName:projector.name,points:found.points,rmsPx:found.rmsPx}];
+    mapped=[...mapped,{surfaceId:surface.id,name:surface.name,screenId:projector.id,screenName:projector.name,points:item.points,rmsPx:item.rmsPx,...(item.edgePx!==undefined?{edgePx:item.edgePx}:{})}];
+    if(item.minor)skipped.add(surface.id);
    }
    skipped=skipped;
    message=surfaces.length?'':'No flat surface was found in the scan. Dim the room and try again, or trace a surface by hand.';
-  }catch(e){message=e instanceof Error?e.message:'Auto map failed.';}
-  finally{busy=false;closeAuto();}
+  }catch(e){message=e instanceof Error?(e.message===AUTO_MAP_STOPPED?'Scan stopped.':e.message):'Auto map failed.';}
+  finally{busy=false;running=undefined;
+   if(surfaces.length&&scan.length&&autoCamera){framing=false;keepForVerify();}else closeAuto();}
  }
+ function stopAuto(){running?.abort();}
+ /** Done with the results: the camera goes off now rather than when its time runs out. */
+ function doneWithResults(){closeAuto();}
  onDestroy(closeAuto);
  let name='Stage calibration',reference:Reference|undefined,mode:'corners'|'surface'='corners',points:UV[]=[],surfaces:Calibration['surfaces']=[],projectors:Calibration['projectors']=[];
  let projectorName='Projector 1',width=1080,height=1920,message='',busy=false,saved:Calibration[]=[],photo:HTMLDivElement;
@@ -132,6 +152,7 @@
   {#if busy}
    <div class="am-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow={Math.round(fraction*100)}><i style:width={`${fraction*100}%`}></i></div>
    <p class="am-hint">Keep the phone still and stay out of the beam.</p>
+   <div class="am-actions"><button class="quiet" onclick={stopAuto}>Stop</button></div>
   {:else}
    <ul class="am-check"><li>Every surface you want is in the picture</li><li>The phone is propped so it cannot move</li><li>The room is dim</li></ul>
    <div class="am-actions"><button class="primary" onclick={startAuto} disabled={!autoCamera}>Start scan</button><button class="quiet" onclick={closeAuto}>Cancel</button></div>
@@ -153,6 +174,7 @@
    {#each scanned as s,i}{@const c=centre(s.points)}<b class="am-tag" class:off={skipped.has(s.id)} style:left={`${c.x/10}%`} style:top={`${c.y/10}%`}>{i+1}</b>{/each}
   </div>
   <div class="am-summary"><strong>{sending} of {scanned.length} surfaces</strong><span>Tap a surface to switch it off</span></div>
+  {#if verifyLeft}<p class="am-live" role="status"><i aria-hidden="true"></i>Camera live for Verify · {Math.floor(verifyLeft/60)}:{String(verifyLeft%60).padStart(2,'0')}<button class="quiet" onclick={doneWithResults}>Done</button></p>{/if}
   <div class="am-chips">{#each scanned as s,i}<button class="am-chip" class:on={!skipped.has(s.id)} aria-pressed={!skipped.has(s.id)} onclick={()=>toggle(s.id)}><b>{i+1}</b>{skipped.has(s.id)?'Off':'On'}</button>{/each}</div>
   <div class="am-actions">{#if onsend}<button class="primary" onclick={sendDesktop} disabled={!sending}>Send {sending} to desktop</button>{/if}<button class="quiet" onclick={openAuto}>Scan again</button></div>
   <button class="am-painting" onclick={startPainting}><b>Painting on this wall?</b><span>Outline it and send its photo, already lined up and cropped.</span></button>
@@ -238,6 +260,9 @@
  .am-veil strong{font:600 34px/1 system-ui;font-variant-numeric:tabular-nums}.am-veil span{font-size:12px;color:#fffc}
  .am-bar{height:4px;margin:12px 0 0;border-radius:2px;background:var(--ga-line-3);overflow:hidden}.am-bar i{display:block;height:100%;background:var(--ga-blue,#5278ff);transition:width .25s linear}
  .am-hint{margin:10px 0 0;text-align:center;font-size:12px}
+ .am-live{display:flex;align-items:center;gap:8px;margin:10px 0 0;padding:6px 6px 6px 12px;border-radius:999px;background:var(--ga-raise,#1b1f26);font-size:12px;font-variant-numeric:tabular-nums}
+ .am-live i{width:8px;height:8px;border-radius:50%;background:#ff5a4f;box-shadow:0 0 0 3px #ff5a4f33}
+ .am-live button{margin-left:auto;min-height:28px;padding:0 12px}
  .am-check{list-style:none;margin:14px 0 0;padding:0;display:grid;gap:8px}.am-check li{position:relative;padding-left:22px;color:var(--ga-ink-1,var(--ga-ink-0));font-size:13px}.am-check li::before{content:"";position:absolute;left:4px;top:7px;width:6px;height:6px;border-radius:50%;background:var(--ga-blue,#5278ff)}
  .am-actions{display:flex;gap:10px;margin-top:16px}.am-actions .primary{flex:1;min-height:50px;font-weight:600;font-size:14px;border-radius:10px;background:var(--ga-blue,#5278ff);border-color:transparent;color:#fff}.am-actions .primary:disabled{opacity:.35}
  .quiet{background:transparent;border-color:var(--ga-line-3);border-radius:10px;padding:10px 16px}

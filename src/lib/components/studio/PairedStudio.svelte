@@ -64,7 +64,7 @@
      <FluxPanel value={flux} onchange={fluxChanged}/>
     </section>
    {:else if page==='feeds'}<DesktopFeedWorkshop {lidar} {dual} onsend={send} {onclose}/>
-   {:else}<CalibrationWorkshop {lidar} {onclose} onsend={sendCalibration} automap={(camera,progress)=>runAutoMap(socketAutoMapLink(socket),camera,progress)} remote={camera=>serveRemoteCapture(socket,camera)}/>{/if}
+   {:else}<CalibrationWorkshop {lidar} {onclose} onsend={sendCalibration} automap={(camera,progress,options)=>runAutoMap(socketAutoMapLink(socket),camera,progress,options)} remote={camera=>serveRemoteCapture(socket,camera)}/>{/if}
   </div>
  </div>
 </div>

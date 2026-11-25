@@ -251,10 +251,17 @@ export async function openAutoMapCamera(preview?: HTMLVideoElement, turn: 0 | 90
     context.drawImage(video, -rawWidth / 2, -rawHeight / 2, rawWidth, rawHeight);
     context.setTransform(1, 0, 0, 1, 0, 0);
   };
-  const nextFrame = () => new Promise<void>(resolve => {
-    const v = video as HTMLVideoElement & { requestVideoFrameCallback?: (cb: () => void) => number };
-    if (v.requestVideoFrameCallback) v.requestVideoFrameCallback(() => resolve()); else setTimeout(resolve, 45);
-  });
+  const nextFrame = async () => {
+    // The preview leaves the page while the results show (the camera kept for Verify), and a video
+    // taken out of the page pauses: play it again, and never wait on a frame for long.
+    if (video.paused) await video.play().catch(() => {});
+    await new Promise<void>(resolve => {
+      const v = video as HTMLVideoElement & { requestVideoFrameCallback?: (cb: () => void) => number };
+      const frames = typeof v.requestVideoFrameCallback === 'function';
+      const timer = setTimeout(resolve, frames ? 250 : 45);
+      if (frames) v.requestVideoFrameCallback!(() => { clearTimeout(timer); resolve(); });
+    });
+  };
   return {
     get turn() { return turn; },
     setTurn,

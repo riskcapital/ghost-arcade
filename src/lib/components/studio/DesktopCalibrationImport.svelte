@@ -11,20 +11,34 @@
  import {createShapeLayers,picturePixels} from '../../painting/paintingShapes';
  import {phoneMeshLayer} from '../../output/mobileMeshImport';
  import {lastAutoMapRun} from '../../output/autoMapDiagnostics';
+ import {rasterToComposition,placementCaveats,type OutputPath} from '../../output/autoMapPlacement';
+ import {settings,masterWarpIsActive} from '../../stores/settings';
+ import type {Layer,MeshWarpGrid} from '../../types';
  import {invoke} from '../../bridge';
  // Surfaces the phone measured with the stripe scan: each outline is already
  // in its projector's own picture, so it becomes a layer pinned to that face.
  // A curved surface (measured with LiDAR) also brings a mesh and its edge in the layer's picture.
- type MappedSurface={name:string;screenId:string;screenName:string;points:{x:number;y:number}[];rmsPx:number;edgePx?:number;image?:string;mesh?:unknown;contentOutline?:unknown};
+ // `surfaceId` (newer phones) names the outline on the photo; older ones only its name.
+ // `imageWarp: 'perspective'` (newer phones): a painting's photo is cut for a true-perspective pin; without it, for the bilinear one.
+ type MappedSurface={surfaceId?:string;name:string;screenId:string;screenName:string;points:{x:number;y:number}[];rmsPx:number;edgePx?:number;image?:string;imageWarp?:string;mesh?:unknown;contentOutline?:unknown};
+ /** Layers an auto map made carry this, so a new scan replaces them whatever they are called now. */
+ const PHONE_AUTO_MAP='phone-auto-map';
+ /** Made by the last scan: tagged, or (from before the tag) named so. */
+ const mappedLayer=(l:Layer)=>l.autoMap===PHONE_AUTO_MAP||(!l.autoMap&&l.name.endsWith('(mapped)'));
+ const surfaceKey=(m:{surfaceId?:unknown;name:unknown})=>typeof m.surfaceId==='string'&&m.surfaceId?`id:${m.surfaceId}`:`name:${String(m.name)}`;
  // A painting's photo travels as a JPEG or PNG data URL: nothing else is accepted, and not above 6 MB.
  const pictureOf=(m:MappedSurface)=>typeof m.image==='string'&&m.image.length<8_500_000&&/^data:image\/(jpeg|png);base64,[A-Za-z0-9+/=]+$/.test(m.image)?m.image:'';
  $: mappedSurfaces=(()=>{try{const list=JSON.parse(incoming||'{}').mappedSurfaces;return Array.isArray(list)?list.filter((m:any)=>Array.isArray(m?.points)&&m.points.length>=3&&m.points.every((p:any)=>Number.isFinite(p?.x)&&Number.isFinite(p?.y))) as MappedSurface[]:[];}catch{return [] as MappedSurface[];}})();
  let createdFor='';
  // The photo and each surface's outline on it, for showing what was found.
  $: scene=(()=>{try{const c=JSON.parse(incoming||'{}');const image=typeof c?.reference?.image==='string'&&/^data:image\/(jpeg|png);base64,/.test(c.reference.image)?c.reference.image:'';
-   const outlines=new Map<string,{x:number;y:number}[]>((Array.isArray(c?.surfaces)?c.surfaces:[]).filter((s:any)=>Array.isArray(s?.points)).map((s:any)=>[String(s.name),s.points]));
+   // Each outline under both its id and its name: a surface sent with its id is matched by id, an older one by name.
+   const outlines=new Map<string,{x:number;y:number}[]>();
+   for(const o of (Array.isArray(c?.surfaces)?c.surfaces:[]).filter((s:any)=>Array.isArray(s?.points))){outlines.set(`name:${String(o.name)}`,o.points);if(typeof o.id==='string')outlines.set(`id:${o.id}`,o.points);}
    return{image,width:Number(c?.reference?.width)||16,height:Number(c?.reference?.height)||9,outlines};}catch{return{image:'',width:16,height:9,outlines:new Map<string,{x:number;y:number}[]>()};}})();
  let off=new Set<number>(),hover=-1,replaceOld=true,pickedFor='';
+ /** Each layer the last Create made, and the outline on the photo it was measured from (for Verify). */
+ let verifyKeys=new Map<string,string>();
  $: if(incoming!==pickedFor){pickedFor=incoming;off=new Set();hover=-1;}
  const flip=(i:number)=>{if(off.has(i))off.delete(i);else off.add(i);off=off;};
  $: chosen=mappedSurfaces.filter((_,i)=>!off.has(i)).length;
@@ -58,32 +72,72 @@
   if(creating)return;creating=true;
   try{await createLayersNow();}finally{creating=false;}
  }
+ /** The output a surface was measured on, as the picture reaches it: the main output's crop and turn, or the Screen's crop, turn and warp, under the Master Warp. */
+ function outputPathOf(surface:MappedSurface):{path:OutputPath;screen?:typeof $screens[number]}{
+  const out=$settings.output;
+  const masterWarp=out?.masterWarp&&masterWarpIsActive(out.masterWarp)?{enabled:true,mode:out.masterWarp.mode??'corners',corners:out.masterWarp.corners??null,meshGrid:out.masterWarp.meshGrid??null}:null;
+  // Measured on the main output (no Screen was open): the composition through the output's own crop and turn.
+  const screen=surface.screenId===MAIN_OUTPUT_ID?undefined:$screens.find(s=>s.id===surface.screenId)??$screens.find(s=>s.name===surface.screenName)??($screens.length===1?$screens[0]:undefined);
+  if(!screen)return{path:{crop:{x:out?.outputCropX??0,y:out?.outputCropY??0,w:out?.outputCropWidth??1,h:out?.outputCropHeight??1},rotation:out?.outputRotation??0,masterWarp}};
+  return{screen,path:{crop:{x:screen.cropX??0,y:screen.cropY??0,w:screen.cropW??1,h:screen.cropH??1},rotation:screen.rotation??0,warpMode:screen.warpMode??'rect',corners:screen.corners??null,meshGrid:screen.meshGrid??null,masterWarp}};
+ }
+ /** True when the output shows the composition straight (crop only): the old placement, and a curved mesh is placed as before. */
+ const plainPath=(p:OutputPath)=>!((((p.rotation??0)%360)+360)%360)&&(p.warpMode??'rect')==='rect'&&!p.masterWarp?.enabled;
+ /** A curved surface's mesh carried through a turned or warped output: every point and handle moved into the composition. */
+ function meshThrough(fields:NonNullable<ReturnType<typeof phoneMeshLayer>>,path:OutputPath):NonNullable<ReturnType<typeof phoneMeshLayer>>|null{
+  const to=(p:{x:number;y:number})=>rasterToComposition({x:p.x,y:1-p.y},path);
+  const grid=fields.meshGrid;
+  const points=grid.points.map(row=>row.map(to));
+  if(points.some(row=>row.some(p=>!p)))return null;
+  const meshGrid:MeshWarpGrid={...grid,points:points as {x:number;y:number}[][]};
+  // Handles are offsets: carry the point and the point plus the handle, and keep the difference.
+  if(grid.tangents)meshGrid.tangents=grid.tangents.map((row,r)=>row.map((t,c)=>{if(!t)return t;const base=points[r][c]!,moved=(o?:{x:number;y:number})=>{if(!o)return undefined;const q=to({x:grid.points[r][c].x+o.x,y:grid.points[r][c].y+o.y});return q?{x:q.x-base.x,y:q.y-base.y}:undefined;};return{...t,right:moved(t.right),down:moved(t.down),left:moved(t.left),up:moved(t.up)};}));
+  return{...fields,corners:{topLeft:{x:0,y:1},topRight:{x:1,y:1},bottomRight:{x:1,y:0},bottomLeft:{x:0,y:0}},meshGrid};
+ }
  async function createLayersNow(){
-  let made=0,skipped=0,straightened=false,pictures=0,pictureFailed=false,meshes=0;
+  let made=0,skipped=0,straightened=false,pictures=0,pictureFailed=false,meshes=0,shaped=0,outside=0;
+  const caveats=new Set<string>();
   // A new scan replaces the layers the last one made, unless asked to keep them.
-  if(replaceOld)for(const layer of $project.layers.filter(l=>l.name.endsWith('(mapped)')))project.removeLayer(layer.id);
+  if(replaceOld)for(const layer of $project.layers.filter(mappedLayer))project.removeLayer(layer.id);
   for(const [index,surface] of mappedSurfaces.entries()){
    if(off.has(index))continue;
-   if(surface.points.length!==4){skipped++;continue;}
-   // Projector picture -> composition, through the part of it the Screen shows.
-   // Measured on the main output (no Screen was open): the composition itself, no crop.
-   const screen=surface.screenId===MAIN_OUTPUT_ID?undefined:$screens.find(s=>s.id===surface.screenId)??$screens.find(s=>s.name===surface.screenName)??($screens.length===1?$screens[0]:undefined);
+   const {path,screen}=outputPathOf(surface);
+   for(const note of placementCaveats(path))caveats.add(`${screen?.name??'The output'}: ${note}`);
    // The surfaces were measured in the projector's own picture. A whole-Screen
    // corner correction would move every layer off its surface, so it goes off.
    if(screen?.projectorCalibration?.enabled){screenActions.update(screen.id,{projectorCalibration:{...screen.projectorCalibration,enabled:false}});straightened=true;}
-   const crop={x:screen?.cropX??0,y:screen?.cropY??0,w:screen?.cropW??1,h:screen?.cropH??1};
-   const [topLeft,topRight,bottomRight,bottomLeft]=surface.points.map(p=>({x:crop.x+p.x*crop.w,y:1-(crop.y+p.y*crop.h)}));
-   const id=project.addLayer(`${surface.name} (mapped)`,'media');
-   const layerId=id;if(!layerId){skipped++;continue;}
+   // Projector picture -> composition, through the output's crop, turn and warps (layer corners, y up).
+   const placed=surface.points.map(p=>rasterToComposition(p,path));
+   if(placed.some(p=>!p)){outside++;continue;}
+   const at=placed as {x:number;y:number}[];
    // A curved surface: the picture follows it through a mesh and is masked to its edge
    // ('fill' keeps the native mask a plain cut). Anything malformed falls back to the corners.
-   const curved=phoneMeshLayer(surface,crop);
+   const crop=path.crop;
+   let curved=phoneMeshLayer(surface,plainPath(path)?crop:{x:0,y:0,w:1,h:1});
+   if(curved&&!plainPath(path))curved=meshThrough(curved,path);
+   const picture=pictureOf(surface);
+   if(!curved&&at.length!==4&&at.length<3){skipped++;continue;}
+   const id=project.addLayer(`${surface.name} (mapped)`,'media');
+   const layerId=id;if(!layerId){skipped++;continue;}
+   project.updateLayer(layerId,{autoMap:PHONE_AUTO_MAP});
    if(curved){project.updateLayer(layerId,{warpMode:'mesh',...curved,contentFit:'fill'});meshes++;}
-   // A flat face: a plain four-corner pin (four handles), drawn as a true perspective so the inside lands too.
-   else project.updateLayer(layerId,{warpMode:'corners',corners:{topLeft,topRight,bottomRight,bottomLeft},cornerPerspective:true});
+   else if(at.length===4){
+    const [topLeft,topRight,bottomRight,bottomLeft]=at;
+    // A flat face: a plain four-corner pin (four handles), drawn as a true perspective so the inside lands too.
+    // A painting's photo from an older phone was cut for the bilinear pin: it keeps that pin, or it would be warped twice.
+    const perspective=!picture||surface.imageWarp==='perspective';
+    project.updateLayer(layerId,{warpMode:'corners',corners:{topLeft,topRight,bottomRight,bottomLeft},cornerPerspective:perspective});
+   }else{
+    // Not four corners (a traced outline): the layer covers the outline's box and is masked to the outline.
+    const xs=at.map(p=>p.x),ys=at.map(p=>p.y),x0=Math.min(...xs),x1=Math.max(...xs),y0=Math.min(...ys),y1=Math.max(...ys);
+    const w=Math.max(1e-6,x1-x0),h=Math.max(1e-6,y1-y0);
+    const step=Math.ceil(at.length/32);
+    project.updateLayer(layerId,{warpMode:'corners',corners:{topLeft:{x:x0,y:y1},topRight:{x:x1,y:y1},bottomRight:{x:x1,y:y0},bottomLeft:{x:x0,y:y0}},
+     layerShape:{type:'custom',enabled:true,params:{customPoints:at.filter((_,i)=>i%step===0).map(p=>({x:(p.x-x0)/w,y:(p.y-y0)/h})),customClosed:true,customShapeFit:'mask',feather:0.002,rotation:0}}} as Partial<Layer>);
+    shaped++;
+   }
    made++;
    // A painting arrives with its own photo, cut to land exactly on it: put that on the layer.
-   const picture=pictureOf(surface);
    if(picture){
     try{
      const blob=await (await fetch(picture)).blob();
@@ -95,9 +149,11 @@
      pictures++;paintingLayer=layerId;paintingSrc=picture;
     }catch{pictureFailed=true;}
    }
+   verifyKeys.set(layerId,surfaceKey(surface));
   }
+  verifyKeys=verifyKeys;
   recordDiscreteAction();createdFor=incoming;
-  message=`${made} layer${made===1?'':'s'} created and pinned in place.${meshes?` ${meshes===made?(meshes===1?'It follows':'They follow'):meshes===1?'One follows':`${meshes} follow`} a curved surface with a mesh, masked to its edge.`:''}${skipped?` ${skipped} skipped: only four-corner surfaces can be pinned.`:''} ${pictures?`The painting’s photo is on its layer, lined up and cropped: add effects to it.`:'Drop a shader or video on each one.'}${pictureFailed?' The photo could not be saved; the layer is in place without it.':''}${straightened?' The Screen’s own corner correction was turned off so the layers sit where they were measured.':''}`;
+  message=`${made} layer${made===1?'':'s'} created and pinned in place.${meshes?` ${meshes===made?(meshes===1?'It follows':'They follow'):meshes===1?'One follows':`${meshes} follow`} a curved surface with a mesh, masked to its edge.`:''}${shaped?` ${shaped===1?'One outline that is not four corners is':`${shaped} outlines that are not four corners are`} masked to ${shaped===1?'its':'their'} shape.`:''}${skipped?` ${skipped} skipped.`:''}${outside?` ${outside} left out: ${outside===1?'it falls':'they fall'} outside what the output shows of the composition.`:''} ${pictures?`The painting’s photo is on its layer, lined up and cropped: add effects to it.`:'Drop a shader or video on each one.'}${pictureFailed?' The photo could not be saved; the layer is in place without it.':''}${straightened?' The Screen’s own corner correction was turned off so the layers sit where they were measured.':''}${caveats.size?` Approximate: ${[...caveats].join('; ')}.`:''}`;
  }
  // Verification: each mapped layer shows a checker in its own colour with a white edge, the phone
  // photographs it from where it scanned, and both photos (plain and with the measured outlines) are kept
@@ -110,34 +166,41 @@
   g.strokeStyle='#fff';g.lineWidth=16;g.strokeRect(8,8,496,496);
   return new Promise((ok,no)=>c.toBlob(b=>b?ok(b):no(new Error('No picture')),'image/png'));
  }
- async function outlined(image:string,width:number,height:number):Promise<string>{
+ // The checkers are made once and reused, outside the media library: they are a passing test picture, not media.
+ const checkerSources=new Map<string,{src:string;assetRef:unknown}>();
+ async function checkerSource(colour:string){
+  let made=checkerSources.get(colour);
+  if(!made){const blob=await checker(colour);const ref=await createAssetRefFromGeneratedBlob(blob,`auto-map-verify-${colour.slice(1)}.png`,'image/png');made={src:ref.runtimeUrl,assetRef:ref.assetRef};checkerSources.set(colour,made);}
+  return made;
+ }
+ /** The phone's photo with each verified layer's measured outline, in that layer's checker colour. */
+ async function outlined(image:string,width:number,height:number,shown:{key:string;colour:string}[]):Promise<string>{
   const img=new Image();img.src=image;await img.decode();
   const c=document.createElement('canvas');c.width=img.naturalWidth||width;c.height=img.naturalHeight||height;const g=c.getContext('2d')!;g.drawImage(img,0,0,c.width,c.height);
   g.lineWidth=Math.max(2,c.width/500);
-  mappedSurfaces.forEach((m,i)=>{const o=scene.outlines.get(m.name);if(!o)return;g.strokeStyle=VERIFY_COLOURS[i%VERIFY_COLOURS.length];g.beginPath();o.forEach((p,k)=>k?g.lineTo(p.x*c.width,p.y*c.height):g.moveTo(p.x*c.width,p.y*c.height));g.closePath();g.stroke();});
+  for(const {key,colour} of shown){const o=scene.outlines.get(key);if(!o)continue;g.strokeStyle=colour;g.beginPath();o.forEach((p,k)=>k?g.lineTo(p.x*c.width,p.y*c.height):g.moveTo(p.x*c.width,p.y*c.height));g.closePath();g.stroke();}
   return c.toDataURL('image/jpeg',0.88);
  }
  async function verifyWithPhone(){
   const remote=(window as any).__gaAutoMap;
   if(verifying)return;
   if(!remote?.camera){verifyNote='Keep the phone where it scanned, on its results screen (its camera stays on for 5 minutes), then try again.';return;}
+  // Only the layers this scan made that are still there; each with the outline it was measured from.
+  const layers=$project.layers.filter(l=>verifyKeys.has(l.id));
+  if(!layers.length){verifyNote='None of the layers from this scan are left to verify.';return;}
   verifying=true;verifyNote='Showing the checkers…';
-  const layers=$project.layers.filter(l=>l.name.endsWith('(mapped)'));
   const before=new Map(layers.map(l=>[l.id,(l as any).source??null]));
+  const shown=layers.map((l,i)=>({key:verifyKeys.get(l.id)!,colour:VERIFY_COLOURS[i%VERIFY_COLOURS.length]}));
   try{
    for(const [i,layer] of layers.entries()){
-    const blob=await checker(VERIFY_COLOURS[i%VERIFY_COLOURS.length]);
-    const name=`verify-${i+1}.png`;
-    const ref=await createAssetRefFromGeneratedBlob(blob,name,'image/png');
-    const item={id:crypto.randomUUID(),name,src:ref.runtimeUrl,type:'image' as const,thumbnail:ref.runtimeUrl,_assetRef:ref.assetRef};
-    mediaLibrary.addItem(item);
-    project.setLayerSource(layer.id,{id:item.id,type:'image',src:item.src,name:item.name,_assetRef:item._assetRef},{history:false});
+    const checker=await checkerSource(shown[i].colour);
+    project.setLayerSource(layer.id,{id:`auto-map-verify-${i}`,type:'image',src:checker.src,name:'Verify checker',_assetRef:checker.assetRef as any},{history:false});
    }
    await new Promise(r=>setTimeout(r,1200));
    verifyNote='Photographing from the phone…';
    const frame=await remote.grab();
    if(typeof frame?.image!=='string')throw new Error('The phone sent no photo.');
-   const overlay=await outlined(frame.image,Number(frame.width)||0,Number(frame.height)||0);
+   const overlay=await outlined(frame.image,Number(frame.width)||0,Number(frame.height)||0,shown);
    verifyShot=overlay;
    const stamp=$lastAutoMapRun?.stamp??new Date().toISOString().replace(/[:.]/g,'-');
    await invoke('save_automap_diagnostics',{stamp,files:{'verify.jpg':frame.image,'verify-overlay.jpg':overlay},summary:`verification shot: ${layers.length} mapped layers as checkers`}).catch(()=>{});
@@ -162,8 +225,8 @@
  <div class="am-body">
   {#if scene.image}<div class="am-photo" style:aspect-ratio={`${scene.width}/${scene.height}`}>
    <img src={scene.image} alt="The scanned scene"/>
-   <svg viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">{#each mappedSurfaces as m,i}{@const o=scene.outlines.get(m.name)}{#if o}<polygon class:off={off.has(i)} class:hot={hover===i} points={o.map(p=>`${p.x*100},${p.y*100}`).join(' ')}/>{/if}{/each}</svg>
-   {#each mappedSurfaces as m,i}{@const o=scene.outlines.get(m.name)}{#if o}{@const c=centre(o)}<button class="am-tag" class:off={off.has(i)} class:hot={hover===i} style:left={`${c.x}%`} style:top={`${c.y}%`} onclick={()=>flip(i)} onmouseenter={()=>hover=i} onmouseleave={()=>hover=-1} aria-pressed={!off.has(i)} aria-label={`${m.name}: ${off.has(i)?'off':'on'}`}>{i+1}</button>{/if}{/each}
+   <svg viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">{#each mappedSurfaces as m,i}{@const o=scene.outlines.get(surfaceKey(m))}{#if o}<polygon class:off={off.has(i)} class:hot={hover===i} points={o.map(p=>`${p.x*100},${p.y*100}`).join(' ')}/>{/if}{/each}</svg>
+   {#each mappedSurfaces as m,i}{@const o=scene.outlines.get(surfaceKey(m))}{#if o}{@const c=centre(o)}<button class="am-tag" class:off={off.has(i)} class:hot={hover===i} style:left={`${c.x}%`} style:top={`${c.y}%`} onclick={()=>flip(i)} onmouseenter={()=>hover=i} onmouseleave={()=>hover=-1} aria-pressed={!off.has(i)} aria-label={`${m.name}: ${off.has(i)?'off':'on'}`}>{i+1}</button>{/if}{/each}
   </div>{/if}
   <div class="am-side">
    <ul>{#each mappedSurfaces as m,i}<li class:off={off.has(i)} class:hot={hover===i} onmouseenter={()=>hover=i} onmouseleave={()=>hover=-1}>

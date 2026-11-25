@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { findPainting, paintingSize, rectifyPainting, clockwiseFromTopLeft } from './painting';
+import { findPainting, paintingSize, rectifyPainting, squareToQuad, clockwiseFromTopLeft } from './painting';
 import { applyHomography, invertHomography } from './structuredLight';
 
 const W = 480, H = 360;
@@ -74,5 +74,33 @@ describe('cutting the painting out', () => {
       worst = Math.max(worst, Math.abs(cut[o] - want.x), Math.abs(cut[o + 1] - want.y));
     }
     expect(worst).toBeLessThan(2.5);
+  });
+
+  it('cuts for a true-perspective pin too, so a desktop that pins in perspective does not warp it twice', () => {
+    const photo = { width: 200, height: 150, data: new Uint8ClampedArray(200 * 150 * 4) };
+    for (let y = 0; y < 150; y++) for (let x = 0; x < 200; x++) { const i = (y * 200 + x) * 4; photo.data[i] = x; photo.data[i + 1] = y; photo.data[i + 3] = 255; }
+    const toProjector = [4.1, 0.6, 120, -0.3, 4.4, 60, 0.0009, 0.0004, 1];
+    // A strongly slanted painting, so the bilinear and perspective pins differ.
+    const quad = [[30, 20], [170, 40], [150, 130], [50, 110]].map(([x, y]) => applyHomography(toProjector, x, y));
+    const size = { width: 120, height: 90 };
+    const pinned = squareToQuad(quad);
+    for (const [k, [u, v]] of [[0, 0], [1, 0], [1, 1], [0, 1]].entries()) {
+      const q = applyHomography(pinned, u, v), want = quad[k];
+      expect(Math.hypot(q.x - want.x, q.y - want.y)).toBeLessThan(1e-6);
+    }
+    const perspective = rectifyPainting(photo, toProjector, quad, size, 'perspective');
+    const bilinear = rectifyPainting(photo, toProjector, quad, size, 'bilinear');
+    const toPhoto = invertHomography(toProjector);
+    let worst = 0, apart = 0;
+    for (const [u, v] of [[0.5, 0.5], [0.2, 0.8], [0.85, 0.3], [0.3, 0.3], [0.7, 0.7]]) {
+      // Where a perspective pin draws texture point (u, v).
+      const p = applyHomography(pinned, u, v), want = applyHomography(toPhoto, p.x, p.y);
+      const o = (Math.floor(v * size.height) * size.width + Math.floor(u * size.width)) * 4;
+      worst = Math.max(worst, Math.abs(perspective[o] - want.x), Math.abs(perspective[o + 1] - want.y));
+      apart = Math.max(apart, Math.abs(bilinear[o] - want.x), Math.abs(bilinear[o + 1] - want.y));
+    }
+    expect(worst).toBeLessThan(2.5);
+    // The bilinear cut is several photo pixels off under a perspective pin: the double warp this avoids.
+    expect(apart).toBeGreaterThan(3);
   });
 });
