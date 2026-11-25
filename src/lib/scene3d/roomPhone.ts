@@ -301,6 +301,66 @@ export type SolvedProjector = {
  */
 export function solveProjector(pairs: CaptureSample[], aspect: number): SolvedProjector {
   if (pairs.length < 6) throw new Error('Depth capture: fewer than six points to place the projector.');
+  if (coplanar(pairs.map((s) => s.p))) throw new Error('Depth capture: every point lies on one flat surface, so the projector cannot be placed from it. Scan with something standing in front of the wall (a box), or a corner of the room in view.');
+  // Robustly: a few bad samples (a stripe misread, a LiDAR edge) must not pull the lens. Projections
+  // from six-point fits are scored against every sample; the best one's inliers are fitted together.
+  let P = dlt(pairs);
+  if (pairs.length >= 24) {
+    const random = seeded(pairs.length);
+    let best = { inliers: inliersOf(P, pairs), P };
+    for (let round = 0; round < RANSAC_ROUNDS && best.inliers.length < pairs.length; round++) {
+      const pick: CaptureSample[] = [];
+      for (let k = 0; k < 6; k++) pick.push(pairs[Math.floor(random() * pairs.length)]);
+      let candidate: number[][];
+      try { candidate = dlt(pick); } catch { continue; }
+      const inliers = inliersOf(candidate, pairs);
+      if (inliers.length > best.inliers.length) best = { inliers, P: candidate };
+    }
+    if (best.inliers.length >= 6) P = dlt(best.inliers);
+  }
+  return decompose(P, pairs, aspect);
+}
+
+/** Six-point fits tried; the share of the points that must agree within INLIER of a projection. */
+const RANSAC_ROUNDS = 160;
+/** On the output, x and y from −1 to 1: 0.012 is about 11 px across a 1920 picture. */
+const INLIER = 0.012;
+
+function seeded(seed: number): () => number {
+  let x = (seed * 2654435761) >>> 0 || 1;
+  return () => { x ^= x << 13; x >>>= 0; x ^= x >> 17; x ^= x << 5; x >>>= 0; return x / 4294967296; };
+}
+
+/** Where P puts a point on the output (x right, y up, −1..1), or null behind it. */
+function projectWith(P: number[][], p: Vec3): Point | null {
+  const w = P[2][0] * p[0] + P[2][1] * p[1] + P[2][2] * p[2] + P[2][3];
+  if (!(Math.abs(w) > 1e-12)) return null;
+  return { x: (P[0][0] * p[0] + P[0][1] * p[1] + P[0][2] * p[2] + P[0][3]) / w, y: (P[1][0] * p[0] + P[1][1] * p[1] + P[1][2] * p[2] + P[1][3]) / w };
+}
+function inliersOf(P: number[][], pairs: CaptureSample[]): CaptureSample[] {
+  // In front of the projector: the same sign of depth as most points.
+  let front = 0;
+  for (const s of pairs) front += Math.sign(P[2][0] * s.p[0] + P[2][1] * s.p[1] + P[2][2] * s.p[2] + P[2][3]);
+  const side = front >= 0 ? 1 : -1;
+  return pairs.filter((s) => {
+    if (Math.sign(P[2][0] * s.p[0] + P[2][1] * s.p[1] + P[2][2] * s.p[2] + P[2][3]) !== side) return false;
+    const q = projectWith(P, s.p);
+    return !!q && Math.hypot(q.x - (s.uv.x * 2 - 1), q.y - (1 - s.uv.y * 2)) < INLIER;
+  });
+}
+
+/** True when the points lie on one plane (a single wall): the projector's place is then undetermined. */
+function coplanar(points: Vec3[]): boolean {
+  const at = scale(points.reduce((a, p) => add(a, p), [0, 0, 0] as Vec3), 1 / points.length);
+  const c = [[0, 0, 0], [0, 0, 0], [0, 0, 0]];
+  for (const p of points) { const d = sub(p, at); for (let i = 0; i < 3; i++) for (let j = 0; j < 3; j++) c[i][j] += d[i] * d[j] / points.length; }
+  const values = symmetricEigen(c).values.map((v) => Math.max(0, v)).sort((a, b) => a - b);
+  // Thinner than a hundredth of its next spread (a centimetre of relief on a metre of wall).
+  return Math.sqrt(values[0]) < 0.01 * Math.sqrt(values[1]);
+}
+
+/** The 3x4 projection through the points, by the direct linear transform on conditioned coordinates. */
+function dlt(pairs: CaptureSample[]): number[][] {
   // Condition the points: centered, unit spread.
   const mid = scale(pairs.reduce((a, s) => add(a, s.p), [0, 0, 0] as Vec3), 1 / pairs.length);
   const spread = Math.sqrt(pairs.reduce((a, s) => a + dot(sub(s.p, mid), sub(s.p, mid)), 0) / pairs.length) || 1;
@@ -315,9 +375,14 @@ export function solveProjector(pairs: CaptureSample[], aspect: number): SolvedPr
     addRow([0, 0, 0, 0, X, Y, Z, 1, -y * X, -y * Y, -y * Z, -y]);
   }
   const h = smallest(ata);
-  let P = [h.slice(0, 4), h.slice(4, 8), h.slice(8, 12)];
+  if (!h.every(Number.isFinite)) throw new Error('Depth capture: the projector could not be placed from these points.');
+  const P = [h.slice(0, 4), h.slice(4, 8), h.slice(8, 12)];
   // Undo the conditioning: P·[(X − mid)/spread; 1].
-  P = P.map((r) => [r[0] / spread, r[1] / spread, r[2] / spread, r[3] - (r[0] * mid[0] + r[1] * mid[1] + r[2] * mid[2]) / spread]);
+  return P.map((r) => [r[0] / spread, r[1] / spread, r[2] / spread, r[3] - (r[0] * mid[0] + r[1] * mid[1] + r[2] * mid[2]) / spread]);
+}
+
+function decompose(input: number[][], pairs: CaptureSample[], aspect: number): SolvedProjector {
+  let P = input;
   // In front of it: depth (the third row) positive.
   const depth = pairs.reduce((a, s) => a + P[2][0] * s.p[0] + P[2][1] * s.p[1] + P[2][2] * s.p[2] + P[2][3], 0);
   if (depth < 0) P = P.map((r) => r.map((x) => -x));
@@ -333,12 +398,17 @@ export function solveProjector(pairs: CaptureSample[], aspect: number): SolvedPr
   const r1 = sub(sub(m[0], scale(up, k01)), scale(fwd, k02));
   const k00 = length(r1);
   const right = scale(r1, 1 / k00);
+  // A real projector is not a mirror: right x up points back at the viewer (it looks down -Z, as
+  // the room is built). A fit that comes out mirrored is a sign the points disagree.
+  if (dot(cross(right, up), fwd) > 0) throw new Error('Depth capture: the projector came out mirrored, so these points do not fit one projector. Scan again with the phone held still.');
   const fx = k00 / k22, fy = k11 / k22;
+  if (![fx, fy, k02, k12].every(Number.isFinite) || !(fx > 0) || !(fy > 0)) throw new Error('Depth capture: the projector could not be placed from these points.');
   // The lens is taken square-pixeled: the field of view from both axes.
   const tanHalf = (1 / fy + 1 / (fx * aspect)) / 2;
   const inv = invert3(m.map((r) => [...r]));
   const p4 = [P[0][3], P[1][3], P[2][3]];
   const position: Vec3 = [0, 1, 2].map((i) => -(inv[i][0] * p4[0] + inv[i][1] * p4[1] + inv[i][2] * p4[2])) as Vec3;
+  if (!position.every(Number.isFinite)) throw new Error('Depth capture: the projector could not be placed from these points.');
   return { position, right, up, fwd, fov: (2 * Math.atan(tanHalf) * 180) / Math.PI, shift: { x: k02 / k22, y: k12 / k22 } };
 }
 
@@ -393,13 +463,22 @@ export function roomFromCapture(capture: DepthCapture, aspect: number, surfaceId
     // Facing the projector (at the origin).
     const n = dot(fit.n, fit.at) > 0 ? scale(fit.n, -1) : fit.n;
     const d = dot(n, fit.at);
+    // How far a corner may be: a little beyond the face's farthest sample. A ray that grazes the
+    // plane (or misses it behind) would put a corner metres away; it stops there instead, on the plane.
+    const reach = 1.5 * Math.max(...s.samples.map((q) => length(into(q.p))));
     const pts = s.outline.map((p) => {
       const r = rayDirection(basis, p);
-      return scale(r, d / Math.min(dot(n, r), -1e-6));
+      const along = dot(n, r);
+      const t = along < -0.02 ? d / along : reach;
+      const q = scale(r, Math.min(reach, Math.max(0, t)));
+      return sub(q, scale(n, dot(n, q) - d));
     });
     const origin = scale(pts.reduce((a, p) => add(a, p), [0, 0, 0] as Vec3), 1 / pts.length);
-    let u = normalize(sub(pts[1], pts[0]));
-    u = normalize(sub(u, scale(n, dot(u, n))));
+    // The face's own axis along its longest side (two corners at one place would leave no direction).
+    let longest = 0, u: Vec3 = [1, 0, 0];
+    pts.forEach((p, i) => { const e = sub(pts[(i + 1) % pts.length], p), along = sub(e, scale(n, dot(e, n))), size = length(along); if (size > longest) { longest = size; u = along; } });
+    if (!(longest > 1e-9)) continue;
+    u = normalize(u);
     const v = cross(n, u);
     const flat = pts.map((p) => ({ x: dot(sub(p, origin), u), y: dot(sub(p, origin), v) }));
     const extent = Math.max(...flat.map((p) => Math.hypot(p.x, p.y)));

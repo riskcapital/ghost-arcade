@@ -276,11 +276,19 @@
   /** A phone scan: its surfaces become the solid objects, the room is as measured. One undo step. */
   function applyCaptureData(capture: DepthCapture, world: ReliefWorld): { ok: true; message: string } | { ok: false; message: string } {
     try {
-      const { room, report } = roomFromCapture(capture, safeAspect, (id) => `scan:${id}`);
+      const { room: solved, report } = roomFromCapture(capture, safeAspect, (id) => `scan:${id}`);
       const kept = scene.surfaces.filter((s) => !s.id.startsWith('scan:') && !(s.behavior === 'solid' && s.id.startsWith('mapped:')));
-      const scanned = capture.surfaces.map((s) => ({ id: `scan:${s.id}`, name: s.name, behavior: 'solid' as const, points: s.outline.map((p) => ({ x: Math.max(0, Math.min(1, p.x)), y: Math.max(0, Math.min(1, p.y)) })) }));
-      apply({ ...edit.setSceneWorld(scene, { ...world, source: 'room', look: 'effects', room }), surfaces: [...kept, ...scanned].slice(0, 32) });
-      return { ok: true, message: `Scanned ${room.faces.length} faces. Lens ${Math.round(report.fov)}°, off by ${report.pixelError.toFixed(1)} px on average.` };
+      // A scene holds 32 surfaces and a scan may bring 48: the largest faces stay, and the room keeps
+      // only the faces that have a surface, so nothing solid is left without one.
+      const area = (o: { x: number; y: number }[]) => Math.abs(o.reduce((t, p, i) => t + p.x * o[(i + 1) % o.length].y - o[(i + 1) % o.length].x * p.y, 0)) / 2;
+      const free = Math.max(0, 32 - kept.length);
+      const chosen = [...capture.surfaces].sort((a, b) => area(b.outline) - area(a.outline)).slice(0, free);
+      const scanned = capture.surfaces.filter((s) => chosen.includes(s)).map((s) => ({ id: `scan:${s.id}`, name: s.name, behavior: 'solid' as const, points: s.outline.map((p) => ({ x: Math.max(0, Math.min(1, p.x)), y: Math.max(0, Math.min(1, p.y)) })) }));
+      const ids = new Set(scanned.map((s) => s.id));
+      const room = { ...solved, faces: solved.faces.filter((f) => ids.has(f.surfaceId)) };
+      const left = capture.surfaces.length - scanned.length;
+      apply({ ...edit.setSceneWorld(scene, { ...world, source: 'room', look: 'effects', room }), surfaces: [...kept, ...scanned] });
+      return { ok: true, message: `Scanned ${room.faces.length} faces. Lens ${Math.round(report.fov)}°, off by ${report.pixelError.toFixed(1)} px on average.${left ? ` ${left} smaller face${left === 1 ? ' was' : 's were'} left out: a scene holds 32 surfaces.` : ''}` };
     } catch (e) {
       return { ok: false, message: (e as Error).message };
     }

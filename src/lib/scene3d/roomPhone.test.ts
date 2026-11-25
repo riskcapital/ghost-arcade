@@ -67,6 +67,45 @@ describe('the room from a phone scan', () => {
     });
   }
 
+  it('keeps the projector through a few badly misread samples', () => {
+    const truth = boxPyramid([0.9, 1.1, 4.8], [0.1, 1.4, 0], 26, ASPECT, 0, [0, 0.8]);
+    const pairs = pyramidCapture(truth).surfaces.flatMap((s) => s.samples);
+    // One in twelve points misread far off (a stripe bit wrong, a LiDAR edge).
+    let seed = 3;
+    const random = () => ((seed = (seed * 1103515245 + 12345) >>> 0) / 4294967296);
+    const bad = pairs.map((s, i) => (i % 12 === 5 ? { ...s, uv: { x: random(), y: random() } } : s));
+    const pr = solveProjector(bad, ASPECT);
+    expect(length(sub(pr.position, truth.pr.pos))).toBeLessThan(0.01);
+    expect(Math.abs(pr.fov - 26)).toBeLessThan(0.05);
+    expect(deg(pr.fwd, truth.pr.fwd)).toBeLessThan(0.1);
+  });
+
+  it('says plainly when the scan is one flat wall, and when it would be a mirror', () => {
+    const truth = boxPyramid([0.9, 1.1, 4.8], [0.1, 1.4, 0], 26, ASPECT, 0, [0, 0.8]);
+    const pairs = pyramidCapture(truth).surfaces.flatMap((s) => s.samples);
+    // Every point squashed onto one plane (z = 0): the projector's place is then anyone's guess.
+    const flat = pairs.map((s) => ({ ...s, p: [s.p[0], s.p[1], 0] as [number, number, number] }));
+    expect(() => solveProjector(flat, ASPECT)).toThrow(/one flat surface/);
+    // The same scene seen in a mirror (x flipped in the world, not in the picture) fits no real projector.
+    const mirrored = pairs.map((s) => ({ ...s, p: [-s.p[0], s.p[1], s.p[2]] as [number, number, number] }));
+    expect(() => solveProjector(mirrored, ASPECT)).toThrow(/mirrored/);
+  });
+
+  it('keeps a face whose outline grazes or misses its plane near the face, and gives it a direction with two corners at one place', () => {
+    const truth = boxPyramid([1.2, 1.0, 5], [0.1, 1.2, 0], 28, ASPECT, 7, [0, 0.6]);
+    const capture = pyramidCapture(truth);
+    const surface = capture.surfaces[0];
+    // Its first corner twice, and one corner dragged far out across the picture (a ray nearly along the face).
+    const outline = [surface.outline[0], ...surface.outline];
+    outline[2] = { x: outline[2].x < 0.5 ? -3 : 4, y: outline[2].y };
+    const { room } = roomFromCapture({ ...capture, surfaces: [{ ...surface, outline }, ...capture.surfaces.slice(1)] }, ASPECT);
+    const face = room.faces.find((f) => f.surfaceId === surface.id)!;
+    expect(face).toBeTruthy();
+    expect([...face.u, ...face.v, ...face.origin].every(Number.isFinite)).toBe(true);
+    // No corner metres away: within a couple of face sizes of the face's samples.
+    for (const p of face.points) expect(Math.hypot(p.x, p.y)).toBeLessThan(20);
+  });
+
   it('refuses a capture it cannot use', () => {
     expect(() => validateDepthCapture({ down: [0, 0, 0], surfaces: [] })).toThrow(/down/);
     expect(() => validateDepthCapture({ down: [0, -1, 0], surfaces: [] })).toThrow(/surfaces/);
