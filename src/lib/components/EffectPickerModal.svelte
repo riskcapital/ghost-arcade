@@ -22,9 +22,18 @@
     open: boolean;
     onAdd: (types: EffectType[]) => void;
     onClose: () => void;
+    /** Opened from a popover that sits on <body> above everything (the macro
+     *  editor): the picker moves to <body> too and stacks above it. */
+    inFront?: boolean;
   }
 
-  let { open = $bindable(false), onAdd, onClose }: Props = $props();
+  let { open = $bindable(false), onAdd, onClose, inFront = false }: Props = $props();
+
+  /** Moves the overlay to <body> when `on`, so it can stack above a body-level popover. */
+  function toBody(node: HTMLElement, on: boolean) {
+    if (on) document.body.appendChild(node);
+    return { destroy() { if (on) node.remove(); } };
+  }
 
   let searchQuery = $state('');
   let selected = $state<Set<EffectType>>(new Set());
@@ -249,9 +258,12 @@
 </script>
 
 {#if open}
+  <div class="modal-host">
   <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
   <div data-help-page="effects"
     class="modal-overlay"
+    class:in-front={inFront}
+    use:toBody={inFront}
     onclick={handleOverlayClick}
     onkeydown={handleKeydown}
     role="dialog"
@@ -399,9 +411,13 @@
       </div>
     </div>
   </div>
+  </div>
 {/if}
 
 <style>
+  .modal-host { display: contents; }
+  /* Above the macro editor popover (z-index 10000 on <body>). */
+  .modal-overlay.in-front { z-index: 10050; }
   .modal-overlay {
     position: fixed;
     inset: 0;

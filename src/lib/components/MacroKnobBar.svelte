@@ -180,7 +180,11 @@
   }
   function onWindowClick(e: MouseEvent) {
     if (!editPopoverFor) return;
+    // The effect picker opens over the popover: picking in it must not close the editor.
+    if (showEffectPicker) return;
     const t = e.target as Node;
+    // A click that just closed the picker (Cancel, Add, its backdrop) lands on a node it removed.
+    if (!t.isConnected || (t as HTMLElement).closest?.('[aria-label="Effect picker"]')) return;
     if (popoverEl && !popoverEl.contains(t)) {
       // Don't close if the click was on the knob itself (right-click reopens)
       const knob = (t as HTMLElement).closest?.('.macro-knob');
@@ -556,6 +560,7 @@
      the macro's effect bundle in order. -->
 <EffectPickerModal
   bind:open={showEffectPicker}
+  inFront
   onAdd={(types: EffectType[]) => {
     if (effectPickerForMacro) {
       for (const t of types) macros.addEffect(effectPickerForMacro, t);
