@@ -687,7 +687,7 @@ export function createLiveTakeover(initialDeps: Partial<TakeoverDeps> = {}): Liv
         ? { ...o, phase: 'live', release: undefined }
         : held
           ? { ...o, phase: 'in', release: undefined, engagedAtMs: nowMs, fromLevel: level, fadeInSeconds: Math.max(0.05, o.fadeInSeconds * (1 - level)) }
-        : { ...o, phase: 'in', release: undefined, engagedAtMs: nowMs, fromLevel: level, fadeInSeconds: Math.max(0.05, o.release?.spec.fadeSeconds ?? 0) * (1 - level) };
+        : { ...o, phase: 'in', release: undefined, engagedAtMs: nowMs, fromLevel: level, fadeInSeconds: Math.max(0.05, (o.release?.spec.fadeSeconds ?? 0) * (1 - level)) };
       set({ ...s, surfaces: { ...s.surfaces, [surfaceId]: back } });
       return true;
     },
@@ -726,7 +726,10 @@ export function createLiveTakeover(initialDeps: Partial<TakeoverDeps> = {}): Liv
         const surfaces = { ...s.surfaces };
         delete surfaces[surfaceId];
         set({ ...s, surfaces });
-        afterEvaluation(cur(), evaluate(deps.now()));
+        const ev = evaluate(deps.now());
+        afterEvaluation(cur(), ev);
+        // Gone without a release: the cues held back for the takeover still run.
+        if (!ev.released.length && Object.keys(cur().surfaces).length === 0) deps.onAllReleased?.();
         return;
       }
       set({ ...s, surfaces: { ...s.surfaces, [surfaceId]: { ...o, effects } } });

@@ -26,6 +26,7 @@ import { cueList, type CueAction, type CueFireSource } from '../cueList';
 import type { ShowControlAction, ShowTakeoverSourceSpec } from '../../control/showControlPaths';
 import {
   liveTakeover,
+  sameTakeoverSource,
   takeoverAnimating,
   takeoverFrameSignature,
   takeoverSummary,
@@ -163,7 +164,7 @@ export function handleTakeoverControl(action: ShowControlAction, value: number, 
     const current = liveTakeover.state.surfaces[track.layerId];
     // A latched pad pressed again on the same source hands back.
     if (!momentary && current && current.phase !== 'releasing' && current.phase !== 'pendingRelease'
-      && JSON.stringify(current.source) === JSON.stringify(source)) {
+      && sameTakeoverSource(current.source, source)) {
       returnTrack(track);
       return true;
     }
@@ -231,14 +232,17 @@ export function installTakeoverRuntime(): () => void {
   // asks on every evaluation while it is live).
   let markerSource: unknown = null;
   let markerTimes: readonly number[] = [];
+  let markerDoc: unknown = null;
   liveTakeover.configure({
     now,
     show: () => {
       const s = get(showTimeline);
       const markers = cueList.state.markers;
-      if (markers !== markerSource) {
+      if (markers !== markerSource || s.doc !== markerDoc) {
         markerSource = markers;
-        markerTimes = markers.map((m) => m.time);
+        markerDoc = s.doc;
+        // Only the playing document's markers (each fires only while its document plays).
+        markerTimes = markers.filter((m) => (m.doc === 'timeline') === (s.doc === 'timeline')).map((m) => m.time);
       }
       return { showTime: s.currentTime, playing: s.isPlaying, tempo: s.tempo, markers: markerTimes };
     },
