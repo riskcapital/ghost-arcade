@@ -9267,9 +9267,15 @@ impl App {
             // A 3D world inside an Interactive layer: like a scene, only its
             // frame block is the core's.
             if graph_layer.kind == NativeGraphLayerKind::PerformerWorld && buffer.id.starts_with(scene_frame::SCENE_BUFFER_PREFIX) {
-                if let Some(frame) = scene_frame.as_ref() {
-                    if buffer.id.ends_with(scene_frame::BUFFER_SUFFIX) {
-                        frame.write(&mut buffer.initial_bytes);
+                if buffer.id.ends_with(scene_frame::BUFFER_SUFFIX) {
+                    match scene_frame.as_ref() {
+                        Some(frame) => {
+                            frame.write(&mut buffer.initial_bytes);
+                        }
+                        // Paused: hold the world still (no delta, no hits).
+                        None => {
+                            scene_frame::hold(&mut buffer.initial_bytes);
+                        }
                     }
                 }
                 continue;

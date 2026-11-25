@@ -112,6 +112,20 @@ impl SceneFrame {
     }
 }
 
+/// A paused layer's block: time and everything else stay where they were, but
+/// nothing advances. The block is persistent, so without this the last live
+/// delta stayed in it and a paused 3D world kept simulating; the kick and snare
+/// impulses are dropped too, so a held hit doesn't fire every frame.
+pub(crate) fn hold(bytes: &mut [u8]) -> bool {
+    if bytes.len() < BYTES {
+        return false;
+    }
+    for slot in [1usize, 9, 10] {
+        bytes[slot * 4..slot * 4 + 4].copy_from_slice(&0f32.to_le_bytes());
+    }
+    true
+}
+
 /// Beats and bar position from the beat phase the app sends. The app may also
 /// send where it is in the bar (`bar_phase`, from the Timeline's tempo map or
 /// Live); without that, bars are counted from the first beat the core saw.
@@ -209,6 +223,22 @@ mod tests {
         }
         // Bytes past the block are not touched.
         assert_eq!(&bytes[BYTES..], &[0u8; 8]);
+    }
+
+    #[test]
+    fn hold_stops_the_clock_but_keeps_the_rest() {
+        let frame = SceneFrame { time: 4.0, delta: 0.016, kick: 1.0, snare: 0.5, bass: 0.3, tempo: 120.0, ..SceneFrame::default() };
+        let mut bytes = vec![0u8; BYTES];
+        frame.write(&mut bytes);
+        assert!(hold(&mut bytes));
+        assert_eq!(float_at(&bytes, 0), 4.0);
+        assert_eq!(float_at(&bytes, 1), 0.0);
+        assert_eq!(float_at(&bytes, 4), 0.3);
+        assert_eq!(float_at(&bytes, 9), 0.0);
+        assert_eq!(float_at(&bytes, 10), 0.0);
+        assert_eq!(float_at(&bytes, 12), 120.0);
+        let mut short = vec![7u8; BYTES - 4];
+        assert!(!hold(&mut short));
     }
 
     #[test]
