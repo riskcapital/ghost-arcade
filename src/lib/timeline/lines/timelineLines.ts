@@ -13,8 +13,8 @@
  *   and pieces that are off the stage; the sound rows are a registered scope.
  */
 import { get, writable } from 'svelte/store';
-import { heldEdits, heldTouches, holdContentEdit, holdParamEdit, installLiveEditHooks, resetLiveEdit, setLiveEditArmed, type HeldEdit } from '../liveEdit';
-import { planDiscard } from '../liveEditRevert';
+import { heldEdits, heldTouches, holdContentEdit, holdParamEdit, installLiveEditHooks, resetLiveEdit, setLiveEditArmed, type HeldEdit, type RevertResult } from '../liveEdit';
+import { planDiscard, putBackParams } from '../liveEditRevert';
 import {
   onShowDocChange,
   onShowTimelineReset,
@@ -474,19 +474,31 @@ function layerOf(id: string): Layer | null {
  * else moves. Written as a restore, so Follow edits and the content
  * recorder take it as no one's edit (nothing new is held or recorded).
  */
-function discardEdits(edits: readonly HeldEdit[]): { ok: true } | { ok: false; reason: string } {
+function discardEdits(edits: readonly HeldEdit[]): RevertResult {
   const before = get(project) as Project;
   const plan = planDiscard(before, edits);
   if (!plan.ok) return { ok: false, reason: cantDiscard(plan.edit) };
   beginHistoryRestore();
   try {
-    if (plan.project !== before) project.update((p) => (p === before ? plan.project : p));
+    // The content first, then the settings on it (a setting held before a
+    // swap belongs to the content it was changed on).
     for (const s of plan.sources) project.setLayerSource(s.layerId, s.source, { history: false });
+    if (plan.params.length) {
+      const now = get(project) as Project;
+      const put = putBackParams(now, plan.params);
+      if (put !== now) project.update((p) => (p === now ? put : p));
+    }
   } finally {
     endHistoryRestore();
   }
   recordDiscreteAction();
-  return { ok: true };
+  return plan.kept.length ? { ok: true, kept: plan.kept, reason: cantDiscardKept(plan.kept[0]) } : { ok: true };
+}
+
+function cantDiscardKept(edit: HeldEdit): string {
+  if (edit.kind === 'content') return "The rest was put back. Discard can't put back what one piece showed: it is gone. Press Update to keep it, or Stop.";
+  const label = describeLineParam(edit.target, edit.key)?.label ?? 'a setting whose piece is gone';
+  return `The rest was put back. Discard can't put back ${label}: Undo it, or press Update to keep it.`;
 }
 
 function cantDiscard(edit: HeldEdit): string {

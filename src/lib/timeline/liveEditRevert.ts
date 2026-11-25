@@ -4,9 +4,12 @@
  * pieces whose content goes back. Nothing else in the project is touched,
  * so an edit made while changes were held (and not held itself) stays.
  *
- * All or nothing: when one held change cannot be put back (its piece is
- * gone, or its setting lives somewhere Discard cannot write) the plan says
- * which, and the caller changes nothing.
+ * Each held change on its own: one that cannot be put back (its piece is
+ * gone, or its setting lives somewhere Discard cannot write, such as a sound
+ * fader) is kept held and named, and the rest are put back. Only when none
+ * can be does the plan refuse. A piece's content goes back before its
+ * settings, so a setting held before the swap is put back on the content
+ * it was changed on.
  */
 import type { Layer, MediaSource, Project } from '../types';
 import type { HeldContentEdit, HeldEdit, HeldParamEdit } from './liveEdit';
@@ -17,7 +20,16 @@ import { applyLedControllerOverrides, applyLedEffectOverrides, applyStageOverrid
 type ProjectData = Pick<Project, 'layers'> & Partial<Pick<Project, 'mappingComposition' | 'wledControllers' | 'wledEffects'>>;
 
 export type DiscardPlan<P extends ProjectData> =
-  | { ok: true; project: P; sources: Array<{ layerId: string; source: MediaSource | null }> }
+  | {
+    ok: true;
+    /** The project with the content and settings put back. */
+    project: P;
+    sources: Array<{ layerId: string; source: MediaSource | null }>;
+    /** The settings put back (to apply once the sources are in). */
+    params: HeldParamEdit[];
+    /** Held changes that cannot be put back: they stay held. */
+    kept: HeldEdit[];
+  }
   | { ok: false; edit: HeldEdit };
 
 const same = (a: number | boolean | undefined, b: number | boolean): boolean => {
@@ -69,18 +81,38 @@ function putBack<P extends ProjectData>(p: P, edit: HeldParamEdit): P | null {
 export function planDiscard<P extends ProjectData>(project: P, edits: readonly HeldEdit[]): DiscardPlan<P> {
   let next = project;
   const sources: Array<{ layerId: string; source: MediaSource | null }> = [];
+  const params: HeldParamEdit[] = [];
+  const kept: HeldEdit[] = [];
+  // Content first: each piece goes back to what it showed.
   for (const edit of edits) {
-    if (edit.kind === 'param') {
-      const put = putBack(next, edit);
-      if (!put) return { ok: false, edit };
-      next = put;
-      continue;
-    }
+    if (edit.kind !== 'content') continue;
     const piece = (edit as HeldContentEdit).piece;
     // Held for a row only (nothing in the editor changed): nothing to put back.
     if (!piece) continue;
-    if (!next.layers.some((l) => l.id === piece.layerId)) return { ok: false, edit };
+    const at = next.layers.findIndex((l) => l.id === piece.layerId);
+    if (at < 0) { kept.push(edit); continue; }
     sources.push({ layerId: piece.layerId, source: piece.previous });
+    const layers = next.layers.slice();
+    layers[at] = { ...layers[at], source: piece.previous } as Layer;
+    next = { ...next, layers };
   }
-  return { ok: true, project: next, sources };
+  for (const edit of edits) {
+    if (edit.kind !== 'param') continue;
+    const put = putBack(next, edit);
+    if (!put) { kept.push(edit); continue; }
+    next = put;
+    params.push(edit);
+  }
+  const refused = kept.length > 0 && kept.length === edits.filter((e) => e.kind === 'param' || (e as HeldContentEdit).piece).length;
+  if (refused) return { ok: false, edit: kept[0] };
+  // Keep the original order for the bar's notice.
+  kept.sort((a, b) => edits.indexOf(a) - edits.indexOf(b));
+  return { ok: true, project: next, sources, params, kept };
+}
+
+/** The held settings put back on `project` (after the sources went back). */
+export function putBackParams<P extends ProjectData>(project: P, edits: readonly HeldParamEdit[]): P {
+  let next = project;
+  for (const edit of edits) next = putBack(next, edit) ?? next;
+  return next;
 }
