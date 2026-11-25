@@ -79,7 +79,8 @@ describe('verifyCodeManifest', () => {
     expect(cu.verifyCodeManifest(good, { 'code-test': other.publicHex }).reason).toBe('signature');
   });
   it('refuses unsafe file names and a manifest without index.html', () => {
-    for (const files of [{ 'index.html': 'a', '../evil.js': 'b' }, { 'index.html': 'a', '/abs.js': 'b' }, { 'main.js': 'a' }]) {
+    const cases: Files[] = [{ 'index.html': 'a', '../evil.js': 'b' }, { 'index.html': 'a', '/abs.js': 'b' }, { 'main.js': 'a' }];
+    for (const files of cases) {
       const env = envelopeFor({ version: '2.2.1', shellId: SHELL, archive: { name: 'a.zip', size: 10, sha256: sha('x') }, files: filesEntry(files) });
       expect(cu.verifyCodeManifest(env, KEYS).reason).toBe('format');
     }

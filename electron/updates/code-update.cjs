@@ -552,9 +552,11 @@ function createCodeUpdates({
   function ready() {
     readySeen = true;
     clearTimeout(readyTimer);
-    if (!loaded) return status();
-    state = planReady(state);
-    saveState();
+    if (loaded) {
+      state = planReady(state);
+      saveState();
+    }
+    // Folders no state entry names any more (replaced, given up, reverted).
     removeUnused();
     return status();
   }

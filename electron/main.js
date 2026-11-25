@@ -198,7 +198,6 @@ ipcMain.handle('code_update_restart', () => {
   app.quit();
   return true;
 });
-app.on('will-quit', () => { if (codeUpdateRelaunch) app.relaunch(); });
 
 /** Audio Lab usable in this run (its recording and My loops writes ask). */
 function audioLabUsable() {
@@ -11345,6 +11344,9 @@ function cleanupAndQuit() {
     scheduleHardExit(250);
     return;
   }
+  // "Restart now" for a code update: the quit is going ahead (nothing held
+  // it), and it ends in app.exit(), which skips will-quit.
+  if (codeUpdateRelaunch) app.relaunch();
   isQuitting = true;
   console.log('[Main] Cleaning up before quit...');
   runCleanupStep('installMode', () => installMode.markCleanExit());
