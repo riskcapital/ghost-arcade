@@ -136,6 +136,10 @@ jobs:
 
       - name: Build frontend
         run: npm run build
+        env:
+          # The bundle (with Audio Lab and Analog Synth in it) outgrows Node's
+          # default heap on the 7 GB macOS runner.
+          NODE_OPTIONS: --max-old-space-size=6144
 
       - name: Check the add-ons and their licence check are in the build
         run: node scripts/check-release-content.mjs dist
@@ -256,6 +260,10 @@ jobs:
 
       - name: Build frontend
         run: npm run build
+        env:
+          # The bundle (with Audio Lab and Analog Synth in it) outgrows Node's
+          # default heap on the 7 GB macOS runner.
+          NODE_OPTIONS: --max-old-space-size=6144
 
       - name: Check the add-ons and their licence check are in the build
         run: node scripts/check-release-content.mjs dist
@@ -414,6 +422,10 @@ jobs:
 
       - name: Build frontend
         run: npm run build
+        env:
+          # The bundle (with Audio Lab and Analog Synth in it) outgrows Node's
+          # default heap on the 7 GB macOS runner.
+          NODE_OPTIONS: --max-old-space-size=6144
 
       - name: Check the add-ons and their licence check are in the build
         run: node scripts/check-release-content.mjs dist
