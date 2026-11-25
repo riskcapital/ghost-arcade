@@ -2,14 +2,23 @@
   /**
    * UpdateModal — shown when a newer release is available.
    *
-   * The app no longer downloads installers internally. Signed installers,
-   * notarized DMGs, platform notes, and fallback links all live on the public
-   * download page, which is the most reliable handoff from inside Electron.
+   * When the release is a signed code update for this app (same shell, see
+   * electron/updates/code-update.cjs), it installs in place: download,
+   * check, then "Restart now" or "Later" — never a restart on its own.
+   * Otherwise the installers stay on the public download page, the most
+   * reliable handoff from inside Electron.
   */
 
   import { openExternalUrl } from '../bridge';
   import { CHANGELOG_PAGE_URL, DOWNLOAD_PAGE_URL } from '../releaseNotes';
   import { updateInfo } from '../stores/updateChecker';
+  import {
+    codeUpdate,
+    installCodeUpdate,
+    cancelCodeUpdate,
+    restartForCodeUpdate,
+    formatMegabytes,
+  } from '../stores/codeUpdate';
 
   export let open = false;
   export let onClose: () => void = () => {};
@@ -24,6 +33,27 @@
 
   function close() {
     onClose();
+  }
+
+  // The code update for the release this modal shows, when there is one.
+  $: code = $codeUpdate?.latest && $codeUpdate.latest.version === $updateInfo.latestVersion ? $codeUpdate.latest : null;
+  $: installable = !!code?.installable;
+  $: installed = !!code?.installed || ($codeUpdate?.pending != null && $codeUpdate.pending === $updateInfo.latestVersion);
+  $: busy = !!$codeUpdate?.installing;
+  $: progress = $codeUpdate?.progress;
+  $: percent = progress && progress.total > 0 ? Math.min(100, Math.floor((progress.received / progress.total) * 100)) : 0;
+  $: sizeLabel = formatMegabytes(code?.size);
+  let restarting = false;
+
+  async function install() {
+    await installCodeUpdate();
+  }
+
+  async function restartNow() {
+    restarting = true;
+    await restartForCodeUpdate();
+    // A quit the user called off (unsaved work, show mode) leaves the app running.
+    setTimeout(() => { restarting = false; }, 1500);
   }
 
   function handleKey(e: KeyboardEvent) {
@@ -60,15 +90,47 @@
           <p class="update-no-notes">Open the download page for the latest signed installers and release notes.</p>
         {/if}
 
-        <p class="update-page-copy">
-          The download page always points at the current signed installers and notarized macOS builds.
-        </p>
+        {#if installed}
+          <p class="update-page-copy update-code-state">
+            The update is installed. It starts the next time Ghost Arcade opens: restart now, or keep working and it loads on the next launch.
+          </p>
+        {:else if busy}
+          <div class="update-progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow={percent}>
+            <div class="update-progress-bar" style="width: {percent}%"></div>
+          </div>
+          <p class="update-page-copy update-code-state">Downloading and checking the update… {percent}%</p>
+        {:else if installable}
+          <p class="update-page-copy">
+            This update replaces the app's code only ({sizeLabel}), so there is no full download. It is checked against its signature before it installs, and nothing restarts until you choose.
+          </p>
+        {:else if code?.reason === 'needs-full-download'}
+          <p class="update-page-copy">
+            This update changes the app itself, so it needs the full download from the download page.
+          </p>
+        {:else}
+          <p class="update-page-copy">
+            The download page always points at the current signed installers and notarized macOS builds.
+          </p>
+        {/if}
+        {#if $codeUpdate?.lastError && (installable || installed)}
+          <p class="update-page-copy update-code-error">{$codeUpdate.lastError}</p>
+        {/if}
       </div>
 
       <div class="update-modal-footer">
         <button class="update-link" onclick={openChangelog}>Full changelog</button>
-        <button class="update-secondary secondary-btn" onclick={close}>Maybe later</button>
-        <button class="update-primary primary-btn" onclick={openDownloadPage}>Open download page</button>
+        {#if installed}
+          <button class="update-secondary secondary-btn" onclick={close}>Later</button>
+          <button class="update-primary primary-btn" onclick={restartNow} disabled={restarting}>Restart now</button>
+        {:else if busy}
+          <button class="update-secondary secondary-btn" onclick={() => cancelCodeUpdate()}>Cancel</button>
+        {:else if installable}
+          <button class="update-secondary secondary-btn" onclick={openDownloadPage}>Download page</button>
+          <button class="update-primary primary-btn" onclick={install}>Install ({sizeLabel})</button>
+        {:else}
+          <button class="update-secondary secondary-btn" onclick={close}>Maybe later</button>
+          <button class="update-primary primary-btn" onclick={openDownloadPage}>Open download page</button>
+        {/if}
       </div>
     </div>
   </div>
@@ -275,6 +337,21 @@
   .update-primary:hover:not(:disabled) { filter: brightness(1.06); }
   .update-secondary:disabled,
   .update-primary:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  .update-progress {
+    height: 4px;
+    margin-top: 14px;
+    overflow: hidden;
+    border-radius: 2px;
+    background: var(--ga-raise, #26221c);
+  }
+  .update-progress-bar {
+    height: 100%;
+    background: var(--ga-selection-line, #5278ff);
+    transition: width 0.15s linear;
+  }
+  .update-code-state { color: var(--ga-ink-1, #ada9a2); }
+  .update-code-error { color: var(--ga-danger, #e5654b); }
 
   @media (max-width: 620px) {
     .update-modal-footer {

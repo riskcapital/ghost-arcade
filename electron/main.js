@@ -135,6 +135,70 @@ ipcMain.handle('addons_free_seat', (_, args) => addonEntitlements.freeSeatAndAct
 ipcMain.handle('addons_refresh', () => addonEntitlements.refresh());
 ipcMain.handle('addons_deactivate', () => addonEntitlements.deactivate());
 ipcMain.handle('addons_extend', () => addonEntitlements.useEmergencyExtension());
+// App-code updates (electron/updates/code-update.cjs): a signed renderer
+// from a release whose shell matches this app, installed into
+// userData/updates/ and loaded instead of the built-in dist/. Decided once,
+// here, before any window loads. Every window loads the same folder, the
+// same way (file://, as the built-in code), so origins, Local Storage and
+// the security settings are unchanged. GA_RENDERER_FROM_DIST=1 makes a
+// development run load dist/ the way a packaged app does (to test builds
+// and code updates with the development key).
+const { createCodeUpdates, readShellId } = require('./updates/code-update.cjs');
+const BUILTIN_RENDERER_DIR = path.join(__dirname, '..', 'dist');
+const RENDERER_FROM_DIST = app.isPackaged || process.env.GA_RENDERER_FROM_DIST === '1';
+const codeUpdates = createCodeUpdates({
+  userDataDir: app.getPath('userData'),
+  builtinDir: BUILTIN_RENDERER_DIR,
+  builtinVersion: app.getVersion(),
+  shellId: RENDERER_FROM_DIST ? readShellId(__dirname) : null,
+  isPackaged: app.isPackaged,
+});
+let rendererDir = isPrimaryInstance ? codeUpdates.boot() : BUILTIN_RENDERER_DIR;
+/** Windows load from the vite dev server (development) rather than a built folder. */
+function useRendererDevServer() { return !RENDERER_FROM_DIST; }
+function rendererIndexHtml() { return path.join(rendererDir, 'index.html'); }
+/** The update was given up during this run: reload every window that showed it. */
+function reloadRendererWindowsFrom(nextDir) {
+  const { pathToFileURL } = require('url');
+  const from = pathToFileURL(rendererDir + path.sep).href;
+  const to = pathToFileURL(nextDir + path.sep).href;
+  rendererDir = nextDir;
+  for (const win of BrowserWindow.getAllWindows()) {
+    try {
+      const url = win.webContents.getURL();
+      if (url.startsWith(from)) win.webContents.loadURL(to + url.slice(from.length));
+    } catch { /* closing */ }
+  }
+}
+let codeUpdateRelaunch = false;
+let codeUpdateProgressAt = 0;
+ipcMain.handle('code_update_status', () => codeUpdates.status());
+ipcMain.handle('code_update_check', () => codeUpdates.check());
+ipcMain.handle('code_update_install', (event) => {
+  const sender = event.sender;
+  return codeUpdates.install({
+    onProgress: (progress) => {
+      const now = Date.now();
+      if (now - codeUpdateProgressAt < 150 && progress.received < progress.total) return;
+      codeUpdateProgressAt = now;
+      try { if (!sender.isDestroyed()) sender.send('code-update-progress', progress); } catch { /* window gone */ }
+    },
+  }).catch(() => {}).then(() => codeUpdates.status());
+});
+ipcMain.handle('code_update_cancel', () => codeUpdates.cancel());
+ipcMain.handle('code_update_revert', () => codeUpdates.revert());
+// Only the editor window's word counts as "the new code started".
+ipcMain.handle('code_update_ready', (event) => (
+  mainWindow && !mainWindow.isDestroyed() && event.sender === mainWindow.webContents ? codeUpdates.ready() : codeUpdates.status()
+));
+// "Restart now": an ordinary quit (unsaved work and show mode still ask),
+// then the app starts again on the installed update.
+ipcMain.handle('code_update_restart', () => {
+  codeUpdateRelaunch = true;
+  app.quit();
+  return true;
+});
+
 /** Audio Lab usable in this run (its recording and My loops writes ask). */
 function audioLabUsable() {
   try {
@@ -237,8 +301,8 @@ ipcMain.handle('install_reveal_log', () => { try { shell.showItemInFolder(instal
 // frames to the core through the broker above (see js-source-host.js).
 const jsSourceHost = createJsSourceHost({
   broker: nativeRendererBroker,
-  libDir: app.isPackaged
-    ? path.join(__dirname, '..', 'dist', 'lib')
+  libDir: RENDERER_FROM_DIST
+    ? path.join(rendererDir, 'lib')
     : path.join(__dirname, '..', 'public', 'lib'),
   // A production dependency, so it ships inside the app package as well.
   threeDir: path.join(__dirname, '..', 'node_modules', 'three'),
@@ -4467,8 +4531,8 @@ function openPreviewMonitor(display, layout) {
   else showOnDisplayFullscreen(win, display);
   setCoreDeckMonitorWidth(PREVIEW_MONITOR_DECK_WIDTH);
   const devUrl = process.env.VITE_DEV_SERVER_URL || 'http://localhost:1420';
-  if (!app.isPackaged) win.loadURL(`${devUrl}?mode=preview-monitor`);
-  else win.loadFile(path.join(__dirname, '..', 'dist', 'index.html'), { query: { mode: 'preview-monitor' } });
+  if (useRendererDevServer()) win.loadURL(`${devUrl}?mode=preview-monitor`);
+  else win.loadFile(rendererIndexHtml(), { query: { mode: 'preview-monitor' } });
   win.webContents.once('did-finish-load', () => broadcastPreviewMonitorState());
   win.on('closed', () => {
     if (previewMonitorWindow === win) {
@@ -5232,11 +5296,11 @@ function createSpoutOsrWindow(width, height) {
     // probe so even a future bypass can't activate the pilot in the
     // OSR window.
     const devUrl = process.env.VITE_DEV_SERVER_URL || 'http://localhost:1420';
-    const isDev = !app.isPackaged;
+    const isDev = useRendererDevServer();
     if (isDev) {
       spoutOsrWindow.loadURL(`${devUrl}?mode=spout-output&webgpu-disable=1`);
     } else {
-      const filePath = path.join(__dirname, '..', 'dist', 'index.html');
+      const filePath = rendererIndexHtml();
       spoutOsrWindow.loadFile(filePath, { query: { mode: 'spout-output', 'webgpu-disable': '1' } });
     }
 
@@ -6001,10 +6065,10 @@ function createAtlasOsrWindow(width, height) {
     });
 
     const devUrl = process.env.VITE_DEV_SERVER_URL || 'http://localhost:1420';
-    if (!app.isPackaged) {
+    if (useRendererDevServer()) {
       atlasOsrWindow.loadURL(`${devUrl}?mode=slice-atlas&webgpu-disable=1`);
     } else {
-      const filePath = path.join(__dirname, '..', 'dist', 'index.html');
+      const filePath = rendererIndexHtml();
       atlasOsrWindow.loadFile(filePath, { query: { mode: 'slice-atlas', 'webgpu-disable': '1' } });
     }
 
@@ -6975,7 +7039,7 @@ function registerIpcHandlers() {
   // The editor's answer to app-quit-requested (see quit-guard.cjs).
   ipcMain.handle('app_quit_ack', () => { quitGuard.acknowledged(); });
   ipcMain.handle('app_quit_proceed', () => { quitGuard.proceed(); });
-  ipcMain.handle('app_quit_cancel', () => { quitGuard.cancel(); installMode.quitCalledOff(); });
+  ipcMain.handle('app_quit_cancel', () => { codeUpdateRelaunch = false; quitGuard.cancel(); installMode.quitCalledOff(); });
 
   ipcMain.handle('app_relaunch', () => {
     console.log('[IPC] app_relaunch — restarting');
@@ -7974,7 +8038,7 @@ function registerIpcHandlers() {
     }
 
     const devUrl = process.env.VITE_DEV_SERVER_URL || 'http://localhost:1420';
-    const isDev = !app.isPackaged;
+    const isDev = useRendererDevServer();
     // The slice window doesn't use the S4 WebGPU pilot (it runs the
     // legacy Three.js Canvas via state-sync). The webgpu-disable URL
     // flag keeps the capability probe from spinning up GPU resources
@@ -7983,7 +8047,7 @@ function registerIpcHandlers() {
     if (isDev) {
       win.loadURL(`${devUrl}?${queryParts.join('&')}`);
     } else {
-      const filePath = path.join(__dirname, '..', 'dist', 'index.html');
+      const filePath = rendererIndexHtml();
       win.loadFile(filePath, { query: { mode: 'slice-display', sliceId, 'webgpu-disable': '1' } });
     }
 
@@ -10183,13 +10247,17 @@ function createMainWindow() {
 
   // In development, load from Vite dev server
   const devUrl = process.env.VITE_DEV_SERVER_URL || 'http://localhost:1420';
-  const isDev = !app.isPackaged;
+  const isDev = useRendererDevServer();
 
   if (isDev) {
     mainWindow.loadURL(devUrl);
     mainWindow.webContents.openDevTools({ mode: 'detach' });
   } else {
-    mainWindow.loadFile(path.join(__dirname, '..', 'dist', 'index.html'));
+    mainWindow.loadFile(rendererIndexHtml());
+    // An installed code update has a minute to say it started (see
+    // electron/updates/code-update.cjs); on its second failed launch the
+    // windows go back to the previous good code at once.
+    codeUpdates.watchReady((dir) => reloadRendererWindowsFrom(dir));
   }
 
   // ── window.open() handler for the WebGPU zero-copy output window ──
@@ -10588,11 +10656,11 @@ function createStage3DWindow(targetDisplayId = null) {
   });
 
   const devUrl = process.env.VITE_DEV_SERVER_URL || 'http://localhost:1420';
-  const isDev = !app.isPackaged;
+  const isDev = useRendererDevServer();
   if (isDev) {
     stage3dWindow.loadURL(`${devUrl}?mode=stage-3d`);
   } else {
-    stage3dWindow.loadFile(path.join(__dirname, '..', 'dist', 'index.html'), {
+    stage3dWindow.loadFile(rendererIndexHtml(), {
       search: 'mode=stage-3d',
     });
   }
@@ -10651,11 +10719,11 @@ function createProjectionSimWindow(targetDisplayId = null) {
   projectionSimWindow.setMenuBarVisibility(false);
 
   const devUrl = process.env.VITE_DEV_SERVER_URL || 'http://localhost:1420';
-  const isDev = !app.isPackaged;
+  const isDev = useRendererDevServer();
   if (isDev) {
     projectionSimWindow.loadURL(`${devUrl}?mode=projection-sim`);
   } else {
-    projectionSimWindow.loadFile(path.join(__dirname, '..', 'dist', 'index.html'), {
+    projectionSimWindow.loadFile(rendererIndexHtml(), {
       search: 'mode=projection-sim',
     });
   }
@@ -10886,7 +10954,7 @@ function createOutputWindow(width, height, x, y, fullscreen = false, displayId =
   else outputMode = 'output';
   console.log(`[Output] Selected mode "${outputMode}" (zeroCopy=${experimentalZeroCopy} webRTC=${experimentalWebRTC})`);
   const devUrl = process.env.VITE_DEV_SERVER_URL || 'http://localhost:1420';
-  const isDev = !app.isPackaged;
+  const isDev = useRendererDevServer();
   // The webgpu-disable URL flag is a belt-and-suspenders guard for
   // legacy / WebRTC display modes where we don't want the S4 pilot
   // capability probe to trip. The new webgpu-display mode requires
@@ -10906,7 +10974,7 @@ function createOutputWindow(width, height, x, y, fullscreen = false, displayId =
       try { win.webContents.openDevTools({ mode: 'detach' }); } catch {}
     }
   } else {
-    const filePath = path.join(__dirname, '..', 'dist', 'index.html');
+    const filePath = rendererIndexHtml();
     const fileQuery = { mode: outputMode };
     if (wantWebgpuDisable) fileQuery['webgpu-disable'] = '1';
     win.loadFile(filePath, { query: fileQuery });
@@ -11276,6 +11344,9 @@ function cleanupAndQuit() {
     scheduleHardExit(250);
     return;
   }
+  // "Restart now" for a code update: the quit is going ahead (nothing held
+  // it), and it ends in app.exit(), which skips will-quit.
+  if (codeUpdateRelaunch) app.relaunch();
   isQuitting = true;
   console.log('[Main] Cleaning up before quit...');
   runCleanupStep('installMode', () => installMode.markCleanExit());

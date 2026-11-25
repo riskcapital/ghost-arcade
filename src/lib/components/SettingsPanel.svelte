@@ -57,6 +57,7 @@
     nativeRendererRuntime,
   } from '../stores/nativeRenderer';
   import { checkForUpdate, getCachedVersionResult, type VersionCheckResult } from '../utils/versionCheck';
+  import { codeUpdate, refreshCodeUpdate, revertCodeUpdate } from '../stores/codeUpdate';
   import { getNativeRendererStatus } from '../api/native-renderer';
   import { openExternalUrl, invoke as bridgeInvoke, isElectron as bridgeIsElectron } from '../bridge';
   import { mergeRecordingCodecAvailability, recordingCodecOption, type RecordingCodecId, type RecordingCodecOption } from '../recording/recordingSources';
@@ -79,6 +80,14 @@
     checkForUpdate({ force: false }).then(r => { versionInfo = r; }).catch(() => { /* silent */ });
   }
   let isCheckingUpdate = false;
+  // Which app code is running: the built-in code or an installed update
+  // (electron/updates/code-update.cjs).
+  if (bridgeIsElectron) void refreshCodeUpdate();
+  let codeReverted = false;
+  async function revertToBuiltinCode() {
+    await revertCodeUpdate();
+    codeReverted = true;
+  }
   import { midiStore } from '../midi/midiStore';
   import ControllerLightsSettings from './ControllerLightsSettings.svelte';
   import MidiInputList from './MidiInputList.svelte';
@@ -1078,6 +1087,36 @@
               >{isCheckingUpdate ? 'Checking…' : 'Check for updates'}</button>
             </div>
           </div>
+          {#if $codeUpdate?.enabled}
+            <div class="setting-row">
+              <div class="setting-label">
+                <span class="label-text">App code</span>
+                <span class="label-hint">
+                  {#if $codeUpdate.source === 'update'}
+                    Running code update v{$codeUpdate.codeVersion} on app v{$codeUpdate.builtinVersion}.
+                  {:else}
+                    Running the built-in code (v{$codeUpdate.builtinVersion}).
+                  {/if}
+                  {#if codeReverted}
+                    The built-in code loads the next time the app opens.
+                  {:else if $codeUpdate.pending}
+                    Update v{$codeUpdate.pending} is installed and starts the next time the app opens.
+                  {/if}
+                  {#if $codeUpdate.rolledBack}
+                    Update v{$codeUpdate.rolledBack.from} did not start, so the app went back to its earlier code.
+                  {/if}
+                  {#if $codeUpdate.lastError}
+                    {$codeUpdate.lastError}
+                  {/if}
+                </span>
+              </div>
+              {#if ($codeUpdate.source === 'update' || $codeUpdate.pending) && !codeReverted}
+                <div class="button-group">
+                  <button class="btn-check-update" onclick={revertToBuiltinCode}>Revert to built-in</button>
+                </div>
+              {/if}
+            </div>
+          {/if}
         </section>
 
         {/if}

@@ -675,6 +675,7 @@
   import { recentFiles } from './lib/stores/recentFiles';
   import { initLicense, destroyLicense } from './lib/stores/license';
   import { startUpdateChecker, stopUpdateChecker } from './lib/stores/updateChecker';
+  import { signalCodeReady } from './lib/stores/codeUpdate';
   import { startAutoEngine, stopAutoEngine } from './lib/audio/autoEngine';
   import { startMusicMotionEngine, stopMusicMotionEngine } from './lib/audio/musicMotionEngine';
   import { linesStore, linesDrawingModeForTool } from './lib/stores/lines';
@@ -2384,6 +2385,10 @@
         showWelcome = true;
       }
     });
+
+    // The editor came up: an installed code update counts as started, so
+    // main stops counting this launch towards giving it up.
+    signalCodeReady();
 
     // Check for app updates (compares against latest GitHub release)
     if (!promptsSuppressed()) startUpdateChecker();
