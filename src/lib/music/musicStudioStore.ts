@@ -313,37 +313,32 @@ function clampGain(v: unknown, fallback: number): number {
 }
 
 /**
- * A new project's studio: the blank studio with the starter set on it. The
- * starter songs are whole songs (demoSongs.ts), each with its own clip grid
- * and arrangement, in one set list; the first is up, so its rows are the grid.
+ * A new project's studio starts empty: no songs, no clips. The demo set is
+ * one press away (loadDemoSet), and Clear songs takes it away again.
  */
 export function defaultProjectState(): MusicStudioProjectState {
-  const base = blankProjectState();
+  return blankProjectState();
+}
+
+/**
+ * The demo set as songs for a studio set up as `base`: whole songs
+ * (demoSongs.ts), each with its own clip grid, arrangement and look. Calling
+ * one up brings its clips, key, tempo and look, and leaves the sound and the
+ * band alone.
+ */
+export function demoSetSongs(base: MusicStudioProjectState): Song[] {
   const setup = pickSetup(base);
-  const songs: Song[] = buildDemoSongs(generateUUID).map((demo) => ({
+  return buildDemoSongs(generateUUID).map((demo) => ({
     id: generateUUID(),
     name: demo.name,
     bpm: demo.bpm,
     sceneId: null,
-    notes: '',
+    notes: demo.notes,
     setup: { ...JSON.parse(JSON.stringify(setup)), key: { ...demo.key } },
-    visuals: { voices: null, sceneId: null, vjBlockId: null, vjColumn: null, stagePresetId: null },
-    // A starter song brings its clips, key and tempo and leaves the sound, the band and the looks alone.
-    recall: { sound: false, band: false, visuals: false },
+    visuals: { voices: [], sceneId: null, vjBlockId: null, vjColumn: null, stagePresetId: null, look: { ...demo.look } },
+    recall: { sound: false, band: false, visuals: true },
     grid: { session: demo.session, key: { ...demo.key }, sections: demo.sections },
   }));
-  const first = songs[0];
-  const setlist: Setlist = { id: generateUUID(), name: 'Starter set', songIds: songs.map((s) => s.id) };
-  return {
-    ...base,
-    key: { ...first.grid!.key },
-    session: JSON.parse(JSON.stringify(first.grid!.session)),
-    songs,
-    setlists: [setlist],
-    activeSetlistId: setlist.id,
-    currentSongId: first.id,
-    setlistCursor: 0,
-  };
 }
 
 /** The studio with nothing of the user's or the starter set's on it: what saved data is read against. */
@@ -800,6 +795,33 @@ function createMusicStudioStore() {
         const currentSongId = s.currentSongId === id ? null : s.currentSongId;
         return { ...s, songs: s.songs.filter((song) => song.id !== id), setlists, currentSongId, setlistCursor: keptCursor(setlists, s.activeSetlistId, s.setlistCursor, currentSongId) };
       }),
+    /**
+     * Add the demo set: its songs after any already here, and a set list of
+     * them that becomes the one played. Returns the songs, or null when there
+     * is no room for them.
+     */
+    loadDemoSet: (): Song[] | null => {
+      const now = get(store);
+      const songs = demoSetSongs(now);
+      if (now.songs.length + songs.length > MAX_SONGS || now.setlists.length >= MAX_SETLISTS) return null;
+      const setlist: Setlist = { id: generateUUID(), name: 'Demo set', songIds: songs.map((x) => x.id) };
+      update((s) => ({ ...s, songs: [...s.songs, ...songs], setlists: [...s.setlists, setlist], activeSetlistId: setlist.id, setlistCursor: -1 }));
+      return songs;
+    },
+    /** Start clean: every song, set list, clip and scene goes. Sounds, takes, loops and the beat stay. */
+    clearSongs: () =>
+      update((s) => ({
+        ...s,
+        songs: [],
+        setlists: [],
+        activeSetlistId: null,
+        currentSongId: null,
+        setlistCursor: -1,
+        session: emptySession(),
+        scenes: [],
+        sceneId: null,
+        queuedSceneId: null,
+      })),
     /** Start a set list; it becomes the one being played. False when there are too many. */
     addSetlist: (setlist: Setlist): boolean => {
       if (get(store).setlists.length >= MAX_SETLISTS) return false;

@@ -10,7 +10,7 @@ import { SCALES } from './studioSets';
 let n = 0;
 const songs = buildDemoSongs(() => `id${n++}`);
 
-describe('starter songs', () => {
+describe('demo songs', () => {
   it('is a set of ten songs, each with eight rows and an arrangement over them', () => {
     expect(songs).toHaveLength(10);
     for (const song of songs) {
@@ -68,7 +68,7 @@ describe('starter songs', () => {
   });
 });
 
-describe('the starter set\'s pictures', () => {
+describe("the demo set's pictures", () => {
   it('uses only shaders the library has, and no song shares one with another', () => {
     const looks = demoLooks();
     for (const file of looks) expect(voiceShaderByFile(file), file).toBeDefined();

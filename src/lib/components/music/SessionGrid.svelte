@@ -18,6 +18,7 @@
   import { clipEditorId, insertEditorChannel, loopBrowser, stackEditor } from '../../music/studioUi';
   import { loopById } from '../../music/loops';
   import { launchClockTempo } from '../../stores/launchClock';
+  import { loadDemoSongs } from '../../music/songRuntime';
   import { showToast } from '../../stores/errorToast';
   import { generateUUID } from '../../utils/uuid';
 
@@ -27,6 +28,12 @@
   const s = $derived($musicStudio);
   const t = $derived($musicTransport);
   const rows = $derived(Array.from({ length: sessionRows(s.session) }, (_, i) => i));
+  /** A studio with no clips and no songs: offer the demo set. */
+  const blank = $derived(!s.songs.length && TRACKS.every((track) => s.session[track.id].every((c) => !c)));
+
+  function loadDemos() {
+    if (!loadDemoSongs()) showToast('There is no room for the demo songs: delete some songs or set lists first.', 'error');
+  }
   /** Each row's section in the song up now (its timeline names the rows). */
   const sectionNames = $derived.by(() => {
     const names: Record<number, string> = {};
@@ -161,6 +168,13 @@
     </div>
   {/each}
 
+  {#if blank}
+    <p class="start">
+      <span>Nothing here yet. Fill a slot with +, or</span>
+      <button class="mini-btn studio-btn" onclick={loadDemos} title="Ten finished songs with their own looks, to play and pull apart. Clear songs takes them away again.">Load the demo songs</button>
+    </p>
+  {/if}
+
   {#each rows as row (row)}
     {@const section = sectionNames[row]}
     <button class="row-go" onclick={() => launchRow(row)} data-midi-path="studio:row.{row + 1}" data-midi-label="Launch row {row + 1}" data-midi-mode="toggle" aria-label="Launch row {row + 1}{section ? `, ${section}` : ''}" title="Launch {section ? `${section} (row ${row + 1})` : `row ${row + 1}`} on the next bar">
@@ -227,6 +241,15 @@
     align-content: start;
   }
   .corner { position: sticky; top: 0; z-index: 2; background: var(--studio-panel); }
+  .start {
+    grid-column: 1 / -1;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 0;
+    color: var(--studio-muted);
+    font-size: var(--ga-text-meta, 11px);
+  }
   .head {
     position: sticky;
     top: 0;

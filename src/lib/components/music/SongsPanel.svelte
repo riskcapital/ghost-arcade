@@ -12,7 +12,9 @@
   import {
     activeSetlist,
     callSong,
+    clearAllSongs,
     currentSetlistCursor,
+    loadDemoSongs,
     goToSong,
     queuedSong,
     saveSong,
@@ -22,6 +24,7 @@
     updateSongFromNow,
   } from '../../music/songRuntime';
   import { confirmPrompt } from '../../stores/confirmPrompt';
+  import { showToast } from '../../stores/errorToast';
   import { launchClockTempo } from '../../stores/launchClock';
   import { abletonLink } from '../../sync/abletonLink';
   import { generateUUID } from '../../utils/uuid';
@@ -79,6 +82,17 @@
     musicStudio.removeSong(song.id);
   }
 
+  function loadDemos() {
+    if (!loadDemoSongs()) showToast('There is no room for the demo songs: delete some songs or set lists first.', 'error');
+  }
+  async function clearAll(e: MouseEvent) {
+    const songs = s.songs.length;
+    const lists = s.setlists.length;
+    const what = `${songs} song${songs === 1 ? '' : 's'}${lists ? ` and ${lists} set list${lists === 1 ? '' : 's'}` : ''}`;
+    if (!(await ask(e, 'Clear every song?', `${what}, and every clip in the grid, go. Your sounds, takes and loops stay. This cannot be undone.`, 'Clear'))) return;
+    notesOpen = null;
+    clearAllSongs();
+  }
   function newSetlist() {
     musicStudio.addSetlist({ id: generateUUID(), name: nextSetlistName(s.setlists), songIds: [] });
   }
@@ -145,6 +159,10 @@
       <span class="ga-eyebrow">Songs</span>
       {#if $songNotice}<span class="notice" role="status">{$songNotice}</span>{/if}
       <span class="spacer"></span>
+      <button class="text-btn small" onclick={loadDemos} title="Add ten finished songs with their own looks, in a set list of their own, and call the first one up">Load demo songs</button>
+      {#if s.songs.length}
+        <button class="text-btn small" onclick={clearAll} title="Start clean: every song, set list and clip goes">Clear songs</button>
+      {/if}
       <button class="text-btn small" onclick={() => saveSong()} title="Keep everything set up now as a new song: sounds, key, tempo, band settings and visuals. It goes on the end of the set list.">+ Save as song</button>
     </div>
     <div class="rows">
@@ -198,7 +216,7 @@
           {/if}
         </div>
       {:else}
-        <p class="empty">Set up a song's sounds, band and visuals, then press Save as song.</p>
+        <p class="empty">Set up a song's sounds, band and visuals, then press Save as song. Or load the demo songs to hear what the studio can do.</p>
       {/each}
     </div>
   </section>

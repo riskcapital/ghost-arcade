@@ -21,6 +21,9 @@ import { unchoppedFxPads } from './sounds/chops';
 import { SONG_SETUP_GROUPS } from './songGroups';
 import { MAX_SESSION_ROWS, normalizeSession, type Session } from './session';
 import { SCALES, type MusicKey, type ScaleId } from './studioSets';
+import { normalizeMix, type StudioMix } from './studioMix';
+import { normalizeFinish, type StudioFinish } from './studioFinish';
+import { AUTO_PALETTE, isPaletteId } from './studioPalettes';
 
 export { SONG_SETUP_GROUPS };
 
@@ -44,6 +47,26 @@ export interface SongVisuals {
   vjColumn: number | null;
   /** The stage preset to call up, by id. */
   stagePresetId: string | null;
+  /** How the studio's picture is put together for this song; none leaves it as it is. */
+  look?: SongLook | null;
+}
+
+/** A song's own look: how its visuals take turns, the colors they draw in and the finish over them. */
+export interface SongLook {
+  mix: StudioMix;
+  /** A studio palette id (studioPalettes.ts). */
+  palette: string;
+  finish: StudioFinish;
+}
+
+function normalizeSongLook(raw: unknown): SongLook | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const r = raw as Partial<Record<keyof SongLook, unknown>>;
+  return {
+    mix: normalizeMix(r.mix),
+    palette: isPaletteId(r.palette) ? r.palette : AUTO_PALETTE,
+    finish: normalizeFinish(r.finish),
+  };
 }
 
 /** One stretch of a song's arrangement: a row of its clip grid, played for some bars. */
@@ -228,6 +251,7 @@ function normalizeSongVisuals(raw: unknown): SongVisuals {
     vjBlockId: optionalId(r.vjBlockId),
     vjColumn: r.vjColumn !== null && Number.isInteger(column) && column >= 0 && column < 1000 ? column : null,
     stagePresetId: optionalId(r.stagePresetId),
+    ...(normalizeSongLook(r.look) ? { look: normalizeSongLook(r.look) } : {}),
   };
 }
 

@@ -7,6 +7,7 @@ import { musicStudio, isStudioPlaying } from './musicStudioStore';
 import { autoPlaceStudio } from './studioTarget';
 import { VISUAL_SCENES } from './visualScenes';
 import { showToast } from '../stores/errorToast';
+import { showCurrentSongVisuals } from './songRuntime';
 
 let watching = false;
 
@@ -23,7 +24,10 @@ export function watchAutoVisuals(): void {
     // After the store write that started the music has finished.
     queueMicrotask(() => {
       const row = autoPlaceStudio(s.set, (set) => VISUAL_SCENES.find((scene) => scene.set === set));
-      if (row !== null) showToast(`The visuals are on deck A, row ${row + 1}.`, 'info');
+      if (row === null) return;
+      // A song up now with visuals of its own shows those, not the set's scene.
+      showCurrentSongVisuals();
+      showToast(`The visuals are on deck A, row ${row + 1}.`, 'info');
     });
   });
 }

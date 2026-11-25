@@ -27,6 +27,9 @@ import {
   type SongVisuals,
 } from './songs';
 import { dominantColumn } from './scenes';
+import { normalizeMix } from './studioMix';
+import { normalizeFinish } from './studioFinish';
+import { AUTO_PALETTE } from './studioPalettes';
 import { editStudio, placeStudio, studioTargetNow } from './studioTarget';
 import type { StudioVoice } from './studioPlugin';
 import { registerStudioControls } from './studioControls';
@@ -113,6 +116,9 @@ function captureVisuals(): SongVisuals {
     vjBlockId: vj.activeBlockId ?? null,
     vjColumn: dominantColumn(vj.layerStates.map((ls) => (ls?.activeClip ? ls.activeColumn : null))),
     stagePresetId,
+    look: target
+      ? { mix: normalizeMix(target.source.musicMix), palette: target.source.musicPalette || AUTO_PALETTE, finish: normalizeFinish(target.source.musicFinish) }
+      : null,
   };
 }
 
@@ -297,16 +303,53 @@ function showVisuals(visuals: SongVisuals, history: boolean): boolean {
   // After the column and the preset: either can bring a different studio instance up.
   if (visuals.voices) {
     const voices = visuals.voices;
-    const target = studioTargetNow() ?? (voices.length ? placeStudio() : null);
+    const look = visuals.look ?? null;
+    // A song with a look of its own puts the visuals up for it; otherwise only voices do.
+    const target = studioTargetNow() ?? (voices.length || look ? placeStudio() : null);
     if (target) {
       const musicSet = get(musicStudio).set;
-      const next = { musicSet, musicSceneId: visuals.sceneId, musicVoices: copyVoices(voices) };
-      const same = JSON.stringify({ musicSet: target.source.musicSet, musicSceneId: target.source.musicSceneId, musicVoices: target.source.musicVoices }) === JSON.stringify(next);
-      // The looks come in the studio's own palette, as a scene's do.
+      const next = {
+        musicSet,
+        musicSceneId: visuals.sceneId,
+        musicVoices: copyVoices(voices),
+        ...(look ? { musicMix: { ...look.mix }, musicPalette: look.palette, musicFinish: { ...look.finish } } : {}),
+      };
+      const now = Object.fromEntries(Object.keys(next).map((k) => [k, target.source[k as keyof typeof target.source]]));
+      const same = JSON.stringify(now) === JSON.stringify(next);
+      // Without a look of its own, the looks come in the studio's own palette, as a scene's do.
       if (!same && editStudio((src) => ({ ...src, ...next }))) mapChanged ||= target.kind === 'layer';
     }
   }
   return mapChanged;
+}
+
+/**
+ * The song up now puts its visuals back (when it brings them back at all):
+ * for when the visuals have just been put on the deck after it was called up.
+ */
+export function showCurrentSongVisuals(): void {
+  const s = get(musicStudio);
+  const song = s.songs.find((x) => x.id === s.currentSongId);
+  if (song?.recall.visuals) showVisuals(song.visuals, false);
+}
+
+/**
+ * Add the demo set and call its first song up. Returns false when there was
+ * no room for it (too many songs or set lists).
+ */
+export function loadDemoSongs(): boolean {
+  const songs = musicStudio.loadDemoSet();
+  if (!songs?.length) return false;
+  stopSongPlay();
+  return goToSong(0, { now: true, history: true });
+}
+
+/** Start clean: stop what plays, and every song, set list and clip goes. */
+export function clearAllSongs(): void {
+  cancelQueuedSong();
+  stopSongPlay();
+  stopAll();
+  musicStudio.clearSongs();
 }
 
 // ── The set list ────────────────────────────────────────────────────────
