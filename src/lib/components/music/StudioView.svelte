@@ -76,6 +76,7 @@
   import LoopVisualsList from './LoopVisualsList.svelte';
   import QuickClipEditor from './QuickClipEditor.svelte';
   import { loopStationView, selectLoopTrack, setLooperFocus } from '../../music/loopStation';
+  import { machineTransport } from '../../music/drumMachine/machineRuntime';
   import SongStrip from './SongStrip.svelte';
   import SceneBar from './SceneBar.svelte';
   import LiveSessionGrid from './LiveSessionGrid.svelte';
@@ -180,7 +181,7 @@
   });
 
   // An atmosphere or a latched arp counts: Stop is the way to stop it.
-  const playing = $derived(s.liveControl ? $abletonBridge.playing : s.sequencerPlaying || Object.keys(s.playingLoops).length > 0 || Object.keys(s.queuedLoops).length > 0 || !!s.playingTakeId || !!$musicTransport.sustaining);
+  const playing = $derived(s.liveControl ? $abletonBridge.playing : s.sequencerPlaying || $machineTransport.playing || $loopStationView.tracks.some((t) => t.phase === 'play' || t.phase === 'overdub') || Object.keys(s.playingLoops).length > 0 || Object.keys(s.queuedLoops).length > 0 || !!s.playingTakeId || !!$musicTransport.sustaining);
 
   ensureLiveFeed();
 

@@ -78,7 +78,11 @@ import { normalizeDress, type DressMap, type InstrumentDress } from './instrumen
 import { DEFAULT_OCTAVE, KEYBOARD_SIZES, clampOctave, type KeyboardSize } from './keyboardLayout';
 import { KEYS_PATCHES, SYNTH_PATCHES, type KeysPatch, type SynthPatch } from './instruments';
 import { toneById } from './tone/tones';
-import { normalizeBeat, starterBeat, type Beat } from './drumMachine/machineBeat';
+import { MAX_PARTS, normalizeBeat, starterBeat, type Beat } from './drumMachine/machineBeat';
+import { partFromPattern } from './drumMachine/machineImport';
+import { BASE_PADS, extendedPads, findKit } from './drumMachine/machineKits';
+/** The part an older project's step pattern became. */
+export const TABS_PART_ID = 'part-tabs';
 import { DEFAULT_MACHINE_KIT } from './drumMachine/machineKits';
 import { KEY_MODES, type KeyMode } from './keyMode';
 import { defaultDubShots, normalizeDubShots, type DubShot } from './dubShots';
@@ -132,7 +136,8 @@ import {
 } from './songs';
 import { buildDemoSongs } from './demoSongs';
 
-export const MUSIC_STUDIO_SCHEMA = 1;
+/** 2: one beat in every set (the drum machine's); see `withTabsBeat`. */
+export const MUSIC_STUDIO_SCHEMA = 2;
 
 export interface MusicStudioProjectState {
   instrument: InstrumentId;
@@ -421,6 +426,23 @@ function normalizeVisual(raw: unknown, fallback: NoteVisualSettings): NoteVisual
 }
 
 /** Read the saved section back, filling in anything missing or out of range. */
+/**
+ * A project from before one beat played in every set: the other sets had
+ * their own step pattern. The drum machine's beat is the beat now; that
+ * pattern, when it had anything beyond the starter, stays as a part of it
+ * ("Tabs beat"), to pick or delete.
+ */
+export function withTabsBeat(machine: Beat, pattern: unknown, schema: number): Beat {
+  if (schema >= 2 || !pattern || machine.parts.length >= MAX_PARTS || machine.parts.some((p) => p.id === TABS_PART_ID)) return machine;
+  const old = normalizePattern(pattern);
+  const hits = (p: DrumPattern) => JSON.stringify(DRUM_VOICES.map((v) => p.tracks[v]));
+  if (!DRUM_VOICES.some((v) => old.tracks[v].some((x) => x > 0)) || hits(old) === hits(starterPattern()) || hits(old) === hits(changePatternGrid(starterPattern(), 32))) return machine;
+  const kit = findKit(machine.kitId, machine.kits);
+  const base = extendedPads(kit, Math.max(BASE_PADS, kit.pads.length));
+  const pads = machine.trackPads.map((index) => ({ index, role: (machine.padSounds[index] ?? base[index])?.role ?? 'tom' }));
+  return { ...machine, parts: [...machine.parts, partFromPattern(old, pads, 'Tabs beat', TABS_PART_ID)] };
+}
+
 export function normalizeProjectState(raw: unknown): MusicStudioProjectState {
   if (!raw || typeof raw !== 'object') return defaultProjectState();
   const d = blankProjectState();
@@ -448,7 +470,7 @@ export function normalizeProjectState(raw: unknown): MusicStudioProjectState {
     synthTone: toneById(input.synthTone as string) ? (input.synthTone as string) : null,
     keysTone: toneById(input.keysTone as string) ? (input.keysTone as string) : null,
     drumKit: kitById(input.drumKit as string) ? (input.drumKit as string) : null,
-    machine: normalizeBeat((input as { machine?: unknown }).machine, DEFAULT_MACHINE_KIT),
+    machine: withTabsBeat(normalizeBeat((input as { machine?: unknown }).machine, DEFAULT_MACHINE_KIT), input.pattern, Number(input.schemaVersion) || 0),
     volumes: perInstrument((id) => clampGain(volumes[id], d.volumes[id])),
     masterVolume: clampGain(input.masterVolume, d.masterVolume),
     returns: Object.fromEntries(RETURN_IDS.map((id) => [id, clamp01((input as { returns?: Record<string, unknown> }).returns?.[id], d.returns[id])])) as Record<ReturnId, number>,

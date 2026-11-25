@@ -24,7 +24,7 @@
   import {
     addRandomPart, bringInLibraryBeat, bringInPlayingBeat, bringInSessionBeat,
     addPad, addTrack, deleteSavedBeat, loadSavedBeat, padChannel, editBeat, editPart, loadBeat, machinePicker, machineTransport, moveTrack, newBeat, playPad,
-    playingKit, removeTrack, saveBeatAs, savedBeats, savedKits, selectPart, setMachineMode, toggleMachine,
+    playingKit, removeTrack, saveBeatAs, savedBeats, savedKits, selectPart, setMachineMode, stopBeat, toggleMachine,
   } from '../../music/drumMachine/machineRuntime';
   import { audioBpm } from '../../stores/audio';
   import { insertEditorChannel } from '../../music/studioUi';
@@ -199,7 +199,9 @@
 
   /** Start or stop. Started on a part that came from the session, the machine takes over from the session's beat. */
   function play() {
-    if (!t.playing && part?.id.startsWith(CLIP_PART_PREFIX) && $musicStudio.sequencerPlaying) stopTrack('beats');
+    // Stop stops the beat in every set, a session beat on the step sequencer too.
+    if (t.playing) return stopBeat();
+    if (part?.id.startsWith(CLIP_PART_PREFIX) && $musicStudio.sequencerPlaying) stopTrack('beats');
     toggleMachine();
   }
 

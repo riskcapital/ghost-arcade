@@ -301,6 +301,9 @@ export interface MachineHooks {
   flashPad(pad: number, velocity: number, delayMs: number): void;
   padLevel(name: string): number;
   stop(): void;
+  /** The drum machine beat is playing / start it (Play brings back what Stop stopped). */
+  playing?(): boolean;
+  start?(): void;
 }
 
 let machineHooks: MachineHooks | null = null;
@@ -453,14 +456,15 @@ function syncPadLoops(): void {
 // ── Transport ───────────────────────────────────────────────────────────
 
 /** What Stop stopped, so Play brings the same music back. */
-let resumable: { beat: boolean; loops: string[]; loopTracks: number[] } | null = null;
+let resumable: { beat: boolean; machine: boolean; loops: string[]; loopTracks: number[] } | null = null;
 
 /** Stop every part (beat, loops, the looper's tracks, take, held notes); effect tails ring out. */
 export function stopAll(): void {
   const s = get(musicStudio);
   const loops = Object.values(s.playingLoops).filter((id): id is string => !!id);
   const loopTracks = get(loopStationView).tracks.flatMap((t, i) => (t.phase === 'play' || t.phase === 'overdub' ? [i] : []));
-  if (sequencer || loops.length || loopTracks.length) resumable = { beat: !!sequencer, loops, loopTracks };
+  const machine = machineHooks?.playing?.() ?? false;
+  if (sequencer || machine || loops.length || loopTracks.length) resumable = { beat: !!sequencer, machine, loops, loopTracks };
   cancelQueuedScene();
   stopAllLoopTracks(true);
   stopAllLoops();
@@ -476,7 +480,12 @@ export function playAll(): void {
   ensureMusicRuntime();
   const back = resumable;
   resumable = null;
-  if (!back || back.beat || (!back.loops.length && !back.loopTracks.length)) startSequencer();
+  // Nothing to bring back: the beat (the drum machine) starts.
+  if (back?.beat) startSequencer();
+  if (back?.machine || !back || (!back.beat && !back.loops.length && !back.loopTracks.length)) {
+    if (machineHooks?.start) machineHooks.start();
+    else if (!back?.machine) startSequencer();
+  }
   for (const id of back?.loops ?? []) launchLoop(id, true);
   for (const i of back?.loopTracks ?? []) startLoopTrack(i);
 }

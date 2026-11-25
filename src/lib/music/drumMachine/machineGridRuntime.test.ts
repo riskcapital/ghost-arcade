@@ -60,3 +60,20 @@ describe('fine-grid recording on the running drum machine', () => {
     expect(normalizeProjectState({ acidSteps: project.acidSteps }).acidRate).toBe(16);
   });
 });
+
+describe('recording a pad the sequencer does not show', () => {
+  it('adds its row, so the hits can be seen and edited', () => {
+    const b = starterBeat('mk.boom-box');
+    b.parts = [emptyPart('Loop', 'loop', 1, 16)];
+    b.song = [];
+    b.trackPads = [0, 1];
+    loadBeat(b);
+    startMachine();
+    machineTransport.update(t => ({ ...t, record: true }));
+    clock.beat = 1;
+    playPad(5, 0.8);
+    const m = get(musicStudio).machine;
+    expect(m.trackPads).toContain(5);
+    expect(m.parts[0].tracks[5].vel[4]).toBeCloseTo(0.8, 6);
+  });
+});

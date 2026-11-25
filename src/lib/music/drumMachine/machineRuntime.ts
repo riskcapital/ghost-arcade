@@ -17,7 +17,7 @@ import { registerStudioControl } from '../studioControls';
 import { beatPattern, loopById } from '../loops';
 import type { DrumPattern } from '../drumPattern';
 import { CLIP_PART_PREFIX, RANDOM_PART_PREFIX, partFromPattern, randomPart, type RandomStyle } from './machineImport';
-import { auditionMachineSound, musicNow, sendMachineHit, setMachineHooks, setMachineSound } from '../musicRuntime';
+import { auditionMachineSound, musicNow, sendMachineHit, setMachineHooks, setMachineSound, stopSequencer } from '../musicRuntime';
 import { normalizeMacroFx, type MacroFxInstance } from '../macroFx';
 import type { NoteSource } from '../noteEvents';
 import type { DrumKit, DrumSound, DrumTweak } from '../tone/toneTypes';
@@ -128,6 +128,8 @@ export function ensureMachine(): void {
     flashPad: markHit,
     padLevel,
     stop: stopMachine,
+    playing: () => get(machineTransport).playing,
+    start: startMachine,
   });
   musicStudio.subscribe((s) => syncSound(s.machine));
   savedKits.subscribe(() => syncSound(currentBeat()));
@@ -278,6 +280,25 @@ export function toggleMachine(): void {
   else startMachine();
 }
 
+/**
+ * The beat, as every set shows it: one drum machine beat, one play and stop.
+ * Stop stops the beat wherever it comes from (a session beat clip playing on
+ * the step sequencer too); Play starts the drum machine.
+ */
+export function beatIsPlaying(): boolean {
+  return get(machineTransport).playing || get(musicStudio).sequencerPlaying;
+}
+
+export function stopBeat(): void {
+  stopMachine();
+  if (get(musicStudio).sequencerPlaying) stopSequencer();
+}
+
+export function toggleBeat(): void {
+  if (beatIsPlaying()) stopBeat();
+  else startMachine();
+}
+
 // The sequencer's Play button, for a controller: it answers on the VJ deck too.
 registerStudioControl({ id: 'machine.toggle', label: 'Drum machine play or stop', group: 'Drum machine', kind: 'trigger', run: toggleMachine });
 
@@ -392,6 +413,8 @@ export function playPad(pad: number, velocity: number, source: NoteSource = 'scr
   }
   const part = b.parts[partIndex];
   if (!part) return;
+  // A pad recorded that the sequencer does not show gets its row, so the hits can be seen and edited.
+  addTrack(pad);
   const g = nearestGridStep(beat - partOrigin, part.grid, part.swing);
   const step = g % trackOf(part, pad).length;
   editPart(p => setStep(p, pad, step, { vel: v }), partIndex);
