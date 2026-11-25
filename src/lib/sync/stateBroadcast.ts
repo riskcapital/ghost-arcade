@@ -12,7 +12,7 @@
 import { get } from 'svelte/store';
 import { project } from '$lib/stores/layers';
 import { settings } from '$lib/stores/settings';
-import { vjClipLauncher, vjCrossfader, vjClipLauncherNow } from '$lib/stores/vjClipLauncher';
+import { vjClipLauncher, vjCrossfader, vjClipLauncherNow, vjGridStructureId } from '$lib/stores/vjClipLauncher';
 import { vjLayerSequencer } from '$lib/stores/vjLayerSequencer';
 import { stage3dScene } from '$lib/stage3d/store';
 import { DEFAULT_ATMOSPHERE, DEFAULT_LIGHTING } from '$lib/stage3d/types';
@@ -98,7 +98,23 @@ function stripLayerSourceForSignature(source: any): any {
   return rest;
 }
 
+// The project store replaces a layer object when it changes, so a layer
+// object seen before has the signature it had then. Every project tick
+// with an output window open diffs every layer: without this each one
+// JSON-stringified every layer, shader code and effects included.
+const layerPatchSignatures = new WeakMap<object, string>();
+
 function layerPatchSignature(layer: any): string {
+  if (!layer || typeof layer !== 'object') return computeLayerPatchSignature(layer);
+  let signature = layerPatchSignatures.get(layer);
+  if (signature === undefined) {
+    signature = computeLayerPatchSignature(layer);
+    layerPatchSignatures.set(layer, signature);
+  }
+  return signature;
+}
+
+function computeLayerPatchSignature(layer: any): string {
   const {
     corners: _corners,
     opacity: _opacity,
@@ -579,18 +595,19 @@ function stripLayerStates(layerStates: any[] | undefined): any[] | undefined {
   }));
 }
 
-// Identity snapshot of the last grids/blocks sent. Grid arrays only get
-// a new identity on structural ops (trigger/set/remove clip, bank or
+// Structure snapshot of the last grids/blocks sent. Grid arrays only get
+// a new structure id on structural ops (trigger/set/remove clip, bank or
 // block changes) — per-tick value churn (faders, modulated shader
-// params) reuses the same arrays — so an O(1) identity compare decides
+// params, and value edits on a playing clip, which copy the arrays but
+// keep their id: vjGridStructureId) does not — so an O(1) compare decides
 // whether this broadcast needs to carry the full grids or just the slim
 // live state. Serializing all grids on every tick (the old behavior)
 // cost a full stripClipGrid + JSON round-trip of every clip at 30Hz
 // whenever an output window was open.
 let lastSentVJStructure: {
-  blocks: any;
-  clipGrid: any;
-  bankBClipGrid: any;
+  blocks: number;
+  clipGrid: number;
+  bankBClipGrid: number;
   activeBlockId: any;
   numLayers: number;
   numColumns: number;
@@ -602,10 +619,13 @@ function doBroadcastVJState() {
   try {
     const vjState = vjClipLauncherNow() as any;
 
+    const blocks = vjGridStructureId(vjState.blocks);
+    const clipGrid = vjGridStructureId(vjState.clipGrid);
+    const bankBClipGrid = vjGridStructureId(vjState.bankBClipGrid);
     const structuralChanged = !lastSentVJStructure
-      || lastSentVJStructure.blocks !== vjState.blocks
-      || lastSentVJStructure.clipGrid !== vjState.clipGrid
-      || lastSentVJStructure.bankBClipGrid !== vjState.bankBClipGrid
+      || lastSentVJStructure.blocks !== blocks
+      || lastSentVJStructure.clipGrid !== clipGrid
+      || lastSentVJStructure.bankBClipGrid !== bankBClipGrid
       || lastSentVJStructure.activeBlockId !== vjState.activeBlockId
       || lastSentVJStructure.numLayers !== vjState.numLayers
       || lastSentVJStructure.numColumns !== vjState.numColumns;
@@ -622,9 +642,9 @@ function doBroadcastVJState() {
     } satisfies StateMessage);
     if (structuralChanged) {
       lastSentVJStructure = {
-        blocks: vjState.blocks,
-        clipGrid: vjState.clipGrid,
-        bankBClipGrid: vjState.bankBClipGrid,
+        blocks,
+        clipGrid,
+        bankBClipGrid,
         activeBlockId: vjState.activeBlockId,
         numLayers: vjState.numLayers,
         numColumns: vjState.numColumns,

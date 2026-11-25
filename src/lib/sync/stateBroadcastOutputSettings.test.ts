@@ -16,7 +16,7 @@ vi.mock('$lib/stores/layers', async () => {
 });
 vi.mock('$lib/stores/vjClipLauncher', async () => {
   const { writable } = await import('svelte/store');
-  return { vjClipLauncher: writable({}), vjCrossfader: writable(0), vjClipLauncherNow: () => ({}) };
+  return { vjClipLauncher: writable({}), vjCrossfader: writable(0), vjClipLauncherNow: () => ({}), vjGridStructureId: () => 0 };
 });
 vi.mock('$lib/stores/vjLayerSequencer', async () => {
   const { writable } = await import('svelte/store');
