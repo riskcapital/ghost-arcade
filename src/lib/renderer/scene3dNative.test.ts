@@ -37,6 +37,9 @@ describe('Interactive 3D graph data', () => {
     const before = bounds(scene);
     scene.nodes.push(node({ id: 'backdrop', kind: 'mesh', shape: 'plane', material: material('matte'), collider: 'none', catcher: true, receiverOnly: true, transform: { ...identityTransform(), position: [0, 0, -20], scale: [60, 1, 60] } }));
     expect(bounds(scene)).toEqual(before);
+    // ...but its depth still reaches the backdrop, 20 m back, so the shadows land on it.
+    expect(scene3dData(scene, 1920, 1080, SCENE3D_TIERS.default).settings[31]).toBeGreaterThan(20);
+    expect(scene3dData(world(), 1920, 1080, SCENE3D_TIERS.default).settings[31]).toBe(0);
     // The same wall as an ordinary mesh does count.
     scene.nodes[scene.nodes.length - 1] = { ...scene.nodes[scene.nodes.length - 1], receiverOnly: false } as SceneNode;
     expect(bounds(scene)[3]).toBeGreaterThan(before[3] * 3);

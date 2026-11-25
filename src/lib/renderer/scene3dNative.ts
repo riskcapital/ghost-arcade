@@ -150,15 +150,20 @@ export function scene3dData(scene: Scene3D, width: number, height: number, quali
   // catch shadows (a world's backdrop and ground) are left out, unless they
   // are all there is.
   let lo: Vec3 = [Infinity, Infinity, Infinity], hi: Vec3 = [-Infinity, -Infinity, -Infinity];
+  // Everything, receivers too: the shadow map's depth must still reach them.
+  const allLo: Vec3 = [Infinity, Infinity, Infinity], allHi: Vec3 = [-Infinity, -Infinity, -Infinity];
   const receiverOnly = new Set(meshes.filter((n) => n.receiverOnly).map((n) => n.id));
   const casting = geometry.meshIds.some((id) => !receiverOnly.has(id));
   let first = 0;
   geometry.meshIds.forEach((id, part) => {
     const count = geometry.meshVertices[part];
-    if (!casting || !receiverOnly.has(id)) {
-      for (let i = first; i < first + count; i++) {
-        for (let k = 0; k < 3; k++) {
-          const v = geometry.vertices[i * VERTEX_FLOATS + k];
+    const fits = !casting || !receiverOnly.has(id);
+    for (let i = first; i < first + count; i++) {
+      for (let k = 0; k < 3; k++) {
+        const v = geometry.vertices[i * VERTEX_FLOATS + k];
+        allLo[k] = Math.min(allLo[k], v);
+        allHi[k] = Math.max(allHi[k], v);
+        if (fits) {
           lo[k] = Math.min(lo[k], v);
           hi[k] = Math.max(hi[k], v);
         }
@@ -172,6 +177,12 @@ export function scene3dData(scene: Scene3D, width: number, height: number, quali
   }
   const centre: Vec3 = [(lo[0] + hi[0]) / 2, (lo[1] + hi[1]) / 2, (lo[2] + hi[2]) / 2];
   const radius = Math.max(2, Math.hypot(hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]) / 2);
+  // How far past the centre the shadow map's depth reaches (0: the usual 2r),
+  // so a backdrop left out of the bounds still receives the shadows.
+  const far = (p: Vec3) => Math.hypot(p[0] - centre[0], p[1] - centre[1], p[2] - centre[2]);
+  const shadowReach = casting && receiverOnly.size && geometry.count
+    ? Math.max(radius * 2, far(allLo), far(allHi), far([allLo[0], allHi[1], allLo[2]]), far([allHi[0], allLo[1], allHi[2]]))
+    : 0;
 
   const lightNodes = visible.filter((n): n is SceneNode & LightNode => n.kind === 'light');
   const key = lightNodes.find((n) => n.light === 'key');
@@ -229,7 +240,7 @@ export function scene3dData(scene: Scene3D, width: number, height: number, quali
     key?.shadows ? 1 : 0, key ? 1 : 0, quality.shadow, 0,
     ['void', 'studio', 'night'].indexOf(scene.environment.sky), scene.environment.intensity, scene.environment.fog, width / Math.max(1, height),
     scene.post.bloom, scene.post.exposure, scene.post.contrast, scene.post.saturation,
-    scene.post.temperature, scene.post.grain, 0, 0,
+    scene.post.temperature, scene.post.grain, 0, shadowReach,
     scene.react.light, scene.react.particles, scene.react.bloom, scene.react.camera,
     geometry.count, particleCount, emitterNodes.length, fieldNodes.length,
     points.length, colliderNodes.length, 0, 0,

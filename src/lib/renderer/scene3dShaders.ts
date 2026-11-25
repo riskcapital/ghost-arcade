@@ -42,7 +42,7 @@ struct Settings {
   key_opts: vec4f,     // shadows, present, shadow map size, swing about Z (degrees either side)
   env: vec4f,          // sky (0 void, 1 studio, 2 night), intensity, fog, aspect
   post_a: vec4f,       // bloom, exposure, contrast, saturation
-  post_b: vec4f,       // temperature, grain, projected light gain (relief), spare
+  post_b: vec4f,       // temperature, grain, projected light gain (relief), shadow depth reach past the centre (0: 2 x radius)
   react: vec4f,        // light, particles, bloom, camera
   counts: vec4f,       // vertices, particles, emitters, fields
   counts_b: vec4f,     // point lights, colliders, the camera's lens shift (x, y: halves of the picture)
@@ -201,7 +201,8 @@ fn cs_frame() {
   let r = max(settings.bounds.w, 0.5);
   // A light straight overhead looks along +Y, so it takes another up.
   let light_up = select(vec3f(0.0, 1.0, 0.0), vec3f(0.0, 0.0, 1.0), abs(dir.y) > 0.95);
-  view.light_view_proj = ortho(r, 0.05, r * 4.0) * look_at(c + dir * r * 2.0, c, light_up);
+  let reach = max(settings.post_b.w, r * 2.0);
+  view.light_view_proj = ortho(r, 0.05, r * 2.0 + reach) * look_at(c + dir * r * 2.0, c, light_up);
 
   // Sky, top and horizon.
   let sky = settings.env.x;
