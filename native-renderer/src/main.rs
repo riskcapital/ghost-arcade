@@ -169,6 +169,23 @@ const LAYER_TILE_CELLS: usize = LAYER_TILES * LAYER_TILES;
 const LAYER_TILE_HEADER: usize = 4;
 const LAYER_TILE_INDEX_CAP: usize = 262_144;
 const LAYER_TILE_BUFFER_WORDS: usize = LAYER_TILE_HEADER + LAYER_TILE_CELLS + 1 + LAYER_TILE_INDEX_CAP;
+// Mesh cell bounds, in the same buffer after the tile bins (heartbeat.wgsl
+// MESH_CELL_BOUNDS_BASE). A mesh search rejects a cell by the box around
+// it before building the cell; the shader worked that box out again for
+// every cell it tried, per pixel (twelve reads and a dozen control points
+// for a Bezier cell). These are the same boxes, worked out once, padded a
+// little further, so a cell they reject is one the shader rejects too.
+// Layout (u32): one word per layer slot (where its boxes start, 0 = none),
+// then each meshed layer's cells row by row, (min.xy, max.xy) as f32 bits.
+// Past MESH_CELL_BOUNDS_LAYERS full meshes the rest search as before.
+const MESH_CELL_BOUNDS_BASE: usize = LAYER_TILE_BUFFER_WORDS;
+const MESH_CELL_BOUNDS_LAYERS: usize = 256;
+const MESH_CELL_WORDS_PER_LAYER: usize = (MAX_LAYER_MESH_SIDE - 1) * (MAX_LAYER_MESH_SIDE - 1) * 4;
+const MESH_CELL_BOUNDS_WORDS: usize = MAX_SCENE_LAYERS + MESH_CELL_BOUNDS_LAYERS * MESH_CELL_WORDS_PER_LAYER;
+/// Extra pad on the stored boxes over the shader's own (scaled by the size
+/// of the coordinates), so float rounding on either side can never make a
+/// stored box the smaller one.
+const MESH_CELL_BOUNDS_SLACK: f64 = 1e-5;
 const MAX_LAYER_MESH_SIDE: usize = 16;
 const MAX_LAYER_MESH_POINTS: usize = MAX_LAYER_MESH_SIDE * MAX_LAYER_MESH_SIDE;
 const MAX_LAYER_MESH_VEC4S: usize = MAX_LAYER_MESH_POINTS / 2;
@@ -1771,6 +1788,98 @@ fn build_layer_tiles(culls: &[[f32; 4]], out: &mut Vec<u32>) {
     }
     out[2] = 1;
     out[3] = total as u32;
+}
+
+/// Fill `out` with the mesh cell bounds for these layers (see
+/// MESH_CELL_BOUNDS_BASE): the boxes `layer_mesh_straight_cell` and
+/// `layer_mesh_bezier_cell` in heartbeat.wgsl test, from the same packed
+/// points and tangents, padded by MESH_CELL_BOUNDS_SLACK more.
+fn build_mesh_cell_bounds(layers: &[LayerGpu], out: &mut Vec<u32>) {
+    out.clear();
+    out.resize(MAX_SCENE_LAYERS, 0);
+    let mut budget = MESH_CELL_BOUNDS_LAYERS * MESH_CELL_WORDS_PER_LAYER;
+    for (index, layer) in layers.iter().enumerate().take(MAX_SCENE_LAYERS) {
+        // Same rounding as layer_mesh_uv.
+        let side = |v: f32| (v + 0.5).floor().clamp(0.0, 16.0) as usize;
+        let rows = side(layer.style[2]);
+        let cols = side(layer.style[3]);
+        if rows < 2 || cols < 2 {
+            continue;
+        }
+        let words = (rows - 1) * (cols - 1) * 4;
+        if words > budget {
+            continue;
+        }
+        budget -= words;
+        out[index] = (MESH_CELL_BOUNDS_BASE + out.len()) as u32;
+        let bezier = layer.fast_flags[1] == 1;
+        let point = |i: usize| -> [f64; 2] {
+            let packed = layer.mesh[i / 2];
+            if i % 2 == 0 { [packed[0] as f64, packed[1] as f64] } else { [packed[2] as f64, packed[3] as f64] }
+        };
+        // layer_mesh_tangent: side 0 right, 1 down, 2 left, 3 up.
+        let tangent = |i: usize, side: usize| -> [f64; 2] {
+            let packed = layer.mesh_tangents[i * 2 + (side >> 1)];
+            if side & 1 == 0 { [packed[0] as f64, packed[1] as f64] } else { [packed[2] as f64, packed[3] as f64] }
+        };
+        let add = |p: [f64; 2], t: [f64; 2]| [p[0] + t[0], p[1] + t[1]];
+        let mix = |a: [f64; 2], b: [f64; 2], t: f64| [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
+        for row in 0..rows - 1 {
+            for col in 0..cols - 1 {
+                let ia = row * cols + col;
+                let ib = ia + 1;
+                let id = ia + cols;
+                let ic = id + 1;
+                let (a, b, c, d) = (point(ia), point(ib), point(ic), point(id));
+                let mut pts = vec![a, b, c, d];
+                let pad = if bezier {
+                    // mesh_patch_build, then mesh_patch_contains_bounds.
+                    let ab1 = add(a, tangent(ia, 0));
+                    let ab2 = add(b, tangent(ib, 2));
+                    let dc1 = add(d, tangent(id, 0));
+                    let dc2 = add(c, tangent(ic, 2));
+                    let ad1 = add(a, tangent(ia, 1));
+                    let ad2 = add(d, tangent(id, 3));
+                    let bc1 = add(b, tangent(ib, 1));
+                    let bc2 = add(c, tangent(ic, 3));
+                    pts.extend([ab1, ab2, dc1, dc2, ad1, ad2, bc1, bc2]);
+                    for j in 1..=2usize {
+                        for i in 1..=2usize {
+                            let (fu, fv) = (i as f64 / 3.0, j as f64 / 3.0);
+                            let top = if i == 1 { ab1 } else { ab2 };
+                            let bottom = if i == 1 { dc1 } else { dc2 };
+                            let left = if j == 1 { ad1 } else { ad2 };
+                            let right = if j == 1 { bc1 } else { bc2 };
+                            let sheet = mix(mix(a, b, fu), mix(d, c, fu), fv);
+                            let tb = mix(top, bottom, fv);
+                            let lr = mix(left, right, fu);
+                            pts.push([tb[0] + lr[0] - sheet[0], tb[1] + lr[1] - sheet[1]]);
+                        }
+                    }
+                    0.002
+                } else {
+                    0.000001
+                };
+                let mut lo = [f64::INFINITY; 2];
+                let mut hi = [f64::NEG_INFINITY; 2];
+                for p in &pts {
+                    for k in 0..2 {
+                        lo[k] = lo[k].min(p[k]);
+                        hi[k] = hi[k].max(p[k]);
+                    }
+                }
+                let reach = lo.iter().chain(hi.iter()).fold(0.0f64, |m, v| m.max(v.abs()));
+                let grow = pad + MESH_CELL_BOUNDS_SLACK * (1.0 + reach);
+                let mut cell = [(lo[0] - grow) as f32, (lo[1] - grow) as f32, (hi[0] + grow) as f32, (hi[1] + grow) as f32];
+                // A point the shader could not bound (NaN, infinite) keeps
+                // the whole plane: the shader's own test decides there.
+                if cell.iter().any(|v| !v.is_finite()) {
+                    cell = [f32::MIN, f32::MIN, f32::MAX, f32::MAX];
+                }
+                out.extend(cell.iter().map(|v| v.to_bits()));
+            }
+        }
+    }
 }
 
 /// See `LayerGpu::cull`. Mirrors the compositor's own reject in
@@ -4942,6 +5051,9 @@ struct RenderState {
     layer_tile_buffer: wgpu::Buffer,
     layer_tile_scratch: Vec<u32>,
     layer_tile_last: Vec<u32>,
+    /// Mesh cell bounds (MESH_CELL_BOUNDS_BASE), rebuilt when the layers change.
+    mesh_cell_bounds_scratch: Vec<u32>,
+    mesh_cell_bounds_last: Vec<u32>,
     /// Picture slots (source_frames.rs): one shared array, or a texture per slot.
     slots: SourceFrameStore,
     /// Compositor binding-array length (PerSource), the per-source slot ceiling.
@@ -22368,9 +22480,11 @@ impl RenderState {
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
         });
         // Starts with binning off (enabled = 0): every pixel walks the layers.
+        // Mesh cell bounds follow the tiles; their directory starts at zero
+        // (no layer has boxes) as the buffer does.
         let layer_tile_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Ghost Render Core Layer Tiles"),
-            size: (LAYER_TILE_BUFFER_WORDS * std::mem::size_of::<u32>()) as u64,
+            size: ((LAYER_TILE_BUFFER_WORDS + MESH_CELL_BOUNDS_WORDS) * std::mem::size_of::<u32>()) as u64,
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -23011,6 +23125,8 @@ impl RenderState {
             layer_tile_buffer,
             layer_tile_scratch: Vec::with_capacity(LAYER_TILE_HEADER + LAYER_TILE_CELLS + 1),
             layer_tile_last: Vec::new(),
+            mesh_cell_bounds_scratch: Vec::with_capacity(MAX_SCENE_LAYERS),
+            mesh_cell_bounds_last: Vec::new(),
             source_frame_bind_generation: source_frame_store.generation(),
             slots: source_frame_store,
             source_frame_bindings,
@@ -28083,6 +28199,15 @@ impl RenderState {
         }
         let layer_bytes: &[u8] = bytemuck::cast_slice(&self.layer_upload_scratch[..upload_len]);
         if self.layer_upload_last != layer_bytes {
+            build_mesh_cell_bounds(&self.layer_upload_scratch[..filled], &mut self.mesh_cell_bounds_scratch);
+            if self.mesh_cell_bounds_last != self.mesh_cell_bounds_scratch {
+                self.queue.write_buffer(
+                    &self.layer_tile_buffer,
+                    (MESH_CELL_BOUNDS_BASE * std::mem::size_of::<u32>()) as u64,
+                    bytemuck::cast_slice(&self.mesh_cell_bounds_scratch),
+                );
+                std::mem::swap(&mut self.mesh_cell_bounds_last, &mut self.mesh_cell_bounds_scratch);
+            }
             self.queue.write_buffer(&self.layer_buffer, 0, layer_bytes);
             self.layer_upload_last.clear();
             self.layer_upload_last.extend_from_slice(layer_bytes);
@@ -37274,6 +37399,89 @@ mod tests {
         let crowd = vec![[0.0, 0.0, 1.0, 1.0]; LAYER_TILE_INDEX_CAP / LAYER_TILE_CELLS + 1];
         build_layer_tiles(&crowd, &mut out);
         assert_eq!(out[2], 0);
+    }
+
+    #[test]
+    fn mesh_cell_bounds_hold_the_boxes_the_compositor_tests() {
+        let wgsl = include_str!("heartbeat.wgsl");
+        assert!(wgsl.contains(&format!("const MESH_CELL_BOUNDS_BASE: u32 = {MESH_CELL_BOUNDS_BASE}u;")));
+        // A 4 x 3 Bezier mesh with bent tangents, and a straight 2 x 2 one.
+        let mut bezier = LayerGpu::zeroed();
+        bezier.style[2] = 4.0;
+        bezier.style[3] = 3.0;
+        bezier.fast_flags[1] = 1;
+        let (rows, cols) = (4usize, 3usize);
+        let mut seed = 11u32;
+        let mut rnd = || { seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223); (seed >> 8) as f32 / 16_777_216.0 - 0.5 };
+        let mut pts = vec![[0.0f32; 2]; rows * cols];
+        for r in 0..rows {
+            for c in 0..cols {
+                pts[r * cols + c] = [c as f32 / 2.0 + rnd() * 0.1, 1.0 - r as f32 / 3.0 + rnd() * 0.1];
+            }
+        }
+        for (i, p) in pts.iter().enumerate() {
+            let slot = &mut bezier.mesh[i / 2];
+            let o = (i % 2) * 2;
+            slot[o] = p[0];
+            slot[o + 1] = p[1];
+            for half in 0..2 {
+                bezier.mesh_tangents[i * 2 + half] = [rnd() * 0.2, rnd() * 0.2, rnd() * 0.2, rnd() * 0.2];
+            }
+        }
+        let mut straight = LayerGpu::zeroed();
+        straight.style[2] = 2.0;
+        straight.style[3] = 2.0;
+        straight.mesh[0] = [0.0, 1.0, 1.1, 0.9];
+        straight.mesh[1] = [0.1, -0.05, 1.0, 0.0];
+        let plain = LayerGpu::zeroed();
+        let mut out = Vec::new();
+        build_mesh_cell_bounds(&[plain, bezier, straight], &mut out);
+        assert_eq!(out[0], 0, "a layer without a mesh has no boxes");
+        let boxes = |layer: usize, cell: usize| -> [f32; 4] {
+            let at = out[layer] as usize - MESH_CELL_BOUNDS_BASE + cell * 4;
+            [f32::from_bits(out[at]), f32::from_bits(out[at + 1]), f32::from_bits(out[at + 2]), f32::from_bits(out[at + 3])]
+        };
+        // The shader's own box (f32, as heartbeat.wgsl works it out) must sit
+        // inside the stored one, by the slack.
+        let pt = |l: &LayerGpu, i: usize| { let p = l.mesh[i / 2]; if i % 2 == 0 { [p[0], p[1]] } else { [p[2], p[3]] } };
+        let tan = |l: &LayerGpu, i: usize, side: usize| { let p = l.mesh_tangents[i * 2 + (side >> 1)]; if side & 1 == 0 { [p[0], p[1]] } else { [p[2], p[3]] } };
+        let add = |a: [f32; 2], b: [f32; 2]| [a[0] + b[0], a[1] + b[1]];
+        let mix = |a: [f32; 2], b: [f32; 2], t: f32| [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
+        for row in 0..rows - 1 {
+            for col in 0..cols - 1 {
+                let ia = row * cols + col;
+                let (ib, id) = (ia + 1, ia + cols);
+                let ic = id + 1;
+                let (a, b, c, d) = (pt(&bezier, ia), pt(&bezier, ib), pt(&bezier, ic), pt(&bezier, id));
+                let (ab1, ab2) = (add(a, tan(&bezier, ia, 0)), add(b, tan(&bezier, ib, 2)));
+                let (dc1, dc2) = (add(d, tan(&bezier, id, 0)), add(c, tan(&bezier, ic, 2)));
+                let (ad1, ad2) = (add(a, tan(&bezier, ia, 1)), add(d, tan(&bezier, id, 3)));
+                let (bc1, bc2) = (add(b, tan(&bezier, ib, 1)), add(c, tan(&bezier, ic, 3)));
+                let mut all = vec![a, b, c, d, ab1, ab2, dc1, dc2, ad1, ad2, bc1, bc2];
+                for j in 1..=2 {
+                    for i in 1..=2 {
+                        let (fu, fv) = (i as f32 / 3.0, j as f32 / 3.0);
+                        let sheet = mix(mix(a, b, fu), mix(d, c, fu), fv);
+                        let tb = mix(if i == 1 { ab1 } else { ab2 }, if i == 1 { dc1 } else { dc2 }, fv);
+                        let lr = mix(if j == 1 { ad1 } else { ad2 }, if j == 1 { bc1 } else { bc2 }, fu);
+                        all.push([tb[0] + lr[0] - sheet[0], tb[1] + lr[1] - sheet[1]]);
+                    }
+                }
+                let stored = boxes(1, row * (cols - 1) + col);
+                for k in 0..2 {
+                    let lo = all.iter().map(|p| p[k]).fold(f32::INFINITY, f32::min) - 0.002;
+                    let hi = all.iter().map(|p| p[k]).fold(f32::NEG_INFINITY, f32::max) + 0.002;
+                    assert!(stored[k] < lo - 5e-6 && stored[k] > lo - 1e-4, "cell {row},{col} axis {k}: {} vs {lo}", stored[k]);
+                    assert!(stored[k + 2] > hi + 5e-6 && stored[k + 2] < hi + 1e-4, "cell {row},{col} axis {k}: {} vs {hi}", stored[k + 2]);
+                }
+            }
+        }
+        let cell = boxes(2, 0);
+        assert!(cell[0] < 0.0 - 1e-6 && cell[1] < -0.05 - 1e-6 && cell[2] > 1.1 + 1e-6 && cell[3] > 1.0 + 1e-6);
+        // Directory entries point past the directory, one after the other.
+        assert_eq!(out[1] as usize, MESH_CELL_BOUNDS_BASE + MAX_SCENE_LAYERS);
+        assert_eq!(out[2] as usize, out[1] as usize + (rows - 1) * (cols - 1) * 4);
+        assert_eq!(out.len(), MAX_SCENE_LAYERS + ((rows - 1) * (cols - 1) + 1) * 4);
     }
 
     #[test]
