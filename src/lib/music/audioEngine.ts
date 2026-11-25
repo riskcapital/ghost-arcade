@@ -986,7 +986,8 @@ export class MusicAudioEngine {
       else if (this.acid?.note === event.note) this.acidOff(time);
       return;
     }
-    const key = `${event.instrument}:${event.note}`;
+    // A loop track's voice is its own: the same pitch played live (or on another loop) does not cut it.
+    const key = event.loopTrack === undefined ? `${event.instrument}:${event.note}` : `${event.instrument}:${event.note}@${event.loopTrack}`;
     if (event.type === 'off') {
       const voice = this.voices.get(key);
       const now = ctx.currentTime;

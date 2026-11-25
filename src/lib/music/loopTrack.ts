@@ -46,6 +46,9 @@ export const MIN_FREE_BEATS = 1;
 export type LoopTrackKind = 'midi' | 'audio';
 export type AfterRecord = 'play' | 'overdub';
 export type CountIn = 0 | 1 | 2;
+/** Where a MIDI take starts: on the first note played, or on the next bar after the press. */
+export type StartMode = 'note' | 'bar';
+export const START_MODES: readonly StartMode[] = ['note', 'bar'];
 export const COUNT_INS: readonly CountIn[] = [0, 1, 2];
 
 /** Where a track is. `armed` waits for its bar (counting in when the clock is idle). */
@@ -153,8 +156,9 @@ export function wrapBeat(x: number, length: number): number {
  * The notes of `instrument` played in [from, to), as a layer of a loop that
  * started on `origin` and repeats every `beats`: times wrap into the loop,
  * snapped to `grid` beats (0 leaves them). A note held past `to` ends there;
- * none is longer than the loop. Notes a beat early (EARLY_GRACE_BEATS) count
- * as on the punch-in.
+ * none is longer than the loop. Notes a hair early (EARLY_GRACE_BEATS) count
+ * as on the punch-in. A window longer than the loop (a take closed a beat
+ * late) wraps the notes past its end onto the loop's start.
  */
 export function notesForLayer(
   played: readonly PlayedNote[],
@@ -169,7 +173,9 @@ export function notesForLayer(
   if (!(to > from) || !(beats > 0)) return out;
   for (const n of played) {
     if (n.instrument !== instrument || n.beat < from - EARLY_GRACE_BEATS || n.beat >= to) continue;
-    const at = Math.max(n.beat, from - EARLY_GRACE_BEATS);
+    // A note a hair early lands on the punch-in (or the loop's start), not at the far end of the loop.
+    let at = Math.max(n.beat, from);
+    if (at < origin && at >= origin - EARLY_GRACE_BEATS) at = origin;
     const raw = wrapBeat(at - origin, beats);
     const snapped = grid > 0 ? wrapBeat(Math.round(raw / grid) * grid, beats) : raw;
     const heldTo = Math.min(n.end ?? to, to);
@@ -232,42 +238,47 @@ export function recordStart(beat: number, countIn: CountIn, clockRunning: boolea
   return clockRunning ? bar : bar + countIn * BEATS_PER_BAR;
 }
 
+/** How late a press may be and still close on the bar it just passed (the notes since wrap onto the loop's start). */
+export const LATE_CLOSE_BEATS = 1;
+
 /**
- * Where a free recording closes when stop is pressed at `beat`: the bar
- * line nearest the press (the one ahead when the press is in a bar's last
- * beat), and at least one bar after the start.
+ * Where a free recording closes when stop is pressed at `beat`: the bar line
+ * just passed when the press is at most a beat late (LATE_CLOSE_BEATS),
+ * otherwise the next one, so it never ends far in the past; and at least one
+ * bar after the start.
  */
 export function freeRecordEnd(startBeat: number, beat: number): number {
   const into = beat - startBeat;
-  const bars = Math.max(1, into % BEATS_PER_BAR >= BEATS_PER_BAR - 1 ? Math.ceil(into / BEATS_PER_BAR) : Math.round(into / BEATS_PER_BAR));
+  const past = Math.floor(into / BEATS_PER_BAR + 1e-9);
+  const bars = Math.max(1, into - past * BEATS_PER_BAR <= LATE_CLOSE_BEATS + 1e-9 ? past : past + 1);
   return startBeat + bars * BEATS_PER_BAR;
 }
 
 /**
- * Pass 0 of a loop of `beats` recorded from `start`, on the grid of the loops
- * already playing (pass 0 of one of them at `anchor`): the loop-length
- * boundary at or before the start, so the new loop sits in its section as
- * the others do and its notes keep the time they were played. With nothing
- * playing (null) the recording's start is the loop's start.
+ * Where a take that starts on its first note begins: the bar line nearest
+ * the note on the running grid (bar lines at `gridOrigin` + whole bars). A
+ * note a little early or late round a bar line is that bar's beat 1; one well
+ * inside a bar goes to the nearer line. The notes keep their offsets from it.
  */
-export function alignedOrigin(start: number, beats: number, anchor: number | null): number {
-  if (anchor === null || !(beats > 0)) return start;
-  return anchor + Math.floor((start - anchor) / beats + 1e-6) * beats + 0;
+export function firstNoteStart(firstBeat: number, gridOrigin: number): number {
+  return gridOrigin + Math.round((firstBeat - gridOrigin) / BEATS_PER_BAR) * BEATS_PER_BAR + 0;
 }
 
 /**
  * Where a free recording over loops already playing closes when stop is
- * pressed at `beat`: on the length nearest the press that fits the longest
- * of them (`masterBeats`): a half, quarter or eighth of it (at least a bar),
- * or a whole number of it. So it lines up with them pass after pass.
+ * pressed at `beat`: on the shortest length that fits the longest of them
+ * (`masterBeats`: a half, quarter or eighth of it, at least a bar, or a whole
+ * number of it) ending ahead of the press or at most a beat behind it. So it
+ * lines up with them pass after pass.
  */
 export function syncedFreeEnd(startBeat: number, beat: number, masterBeats: number): number {
   if (!(masterBeats >= BEATS_PER_BAR)) return freeRecordEnd(startBeat, beat);
   const into = beat - startBeat;
   const lengths = [masterBeats / 8, masterBeats / 4, masterBeats / 2].filter((l) => l >= BEATS_PER_BAR && Number.isInteger(l / BEATS_PER_BAR));
   for (let k = 1; k <= Math.max(1, Math.ceil(into / masterBeats) + 1); k++) lengths.push(k * masterBeats);
-  let best = lengths[0];
-  for (const l of lengths) if (Math.abs(l - into) < Math.abs(best - into)) best = l;
+  // The shortest that ends ahead of the press, or at most a beat behind it.
+  lengths.sort((a, b) => a - b);
+  const best = lengths.find((l) => l >= into - LATE_CLOSE_BEATS - 1e-9) ?? lengths[lengths.length - 1];
   return startBeat + best;
 }
 
@@ -463,6 +474,8 @@ export interface LoopStationData {
   tracks: LoopTrackData[];
   length: LoopLength;
   countIn: CountIn;
+  /** MIDI takes: start on the first note played (on the bar nearest it), or on the next bar. */
+  startMode: StartMode;
   /** Bars a stopped loop fades over, 0 = cut. */
   fadeBars: number;
   /** Manual latency offset for audio, ms (added to what the system reports). */
@@ -526,6 +539,7 @@ export function defaultStationData(): LoopStationData {
     tracks: Array.from({ length: LOOP_TRACK_COUNT }, (_, i) => blankTrack(i)),
     length: 4,
     countIn: 1,
+    startMode: 'note',
     fadeBars: 0,
     latencyMs: 0,
     sections: [],
@@ -601,6 +615,7 @@ export function normalizeStationData(raw: unknown): LoopStationData {
     tracks,
     length: (LOOP_LENGTHS as readonly number[]).includes(Number(r.length)) ? (Number(r.length) as LoopLength) : d.length,
     countIn: (COUNT_INS as readonly number[]).includes(Number(r.countIn)) ? (Number(r.countIn) as CountIn) : d.countIn,
+    startMode: START_MODES.includes(r.startMode as StartMode) ? (r.startMode as StartMode) : d.startMode,
     fadeBars: clamp(Math.round(finite(r.fadeBars, 0)), 0, 4),
     latencyMs: clamp(finite(r.latencyMs, 0), -200, 500),
     sections: sections.slice(0, 16),

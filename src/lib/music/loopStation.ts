@@ -67,7 +67,7 @@ import {
   loopFxChannel,
   setTrackSound,
   keysSound,
-  alignedOrigin,
+  firstNoteStart,
   syncedFreeEnd,
   soundValue,
   xyNotesForLayer,
@@ -86,6 +86,10 @@ import { createAssetRefFromGeneratedBlob, pathToFileUrl, resolveAssetRefForRunti
 /** What the music runtime lends the station. */
 export interface StationHost {
   send(event: NoteEvent): void;
+  /** A note-off from a stop, mute, clear or new sound: it always reaches the voices. */
+  cut?(event: NoteEvent): void;
+  /** The clock was re-based: move the live notes played so far by `delta` beats. */
+  shiftPlayed?(delta: number): void;
   /** The audio clock (starts the audio when it is not running). */
   now(): number;
   click(time: number, accent: boolean): void;
@@ -116,8 +120,13 @@ export interface TrackView {
   beats: number;
   layers: number;
   redo: number;
-  /** A stop or start waiting for its bar. */
-  pending: 'stop' | 'play' | null;
+  /** A stop, start, punch-in or punch-out waiting for its bar (MIDI and audio). */
+  pending: 'stop' | 'play' | 'punch-in' | 'punch-out' | null;
+  /** Armed on "first note": waiting for the first note (after any count-in). */
+  waiting: boolean;
+  /** While waiting over playing loops: the loop the playhead runs round (its start and length). */
+  waitOrigin: number;
+  waitBeats: number;
   /** Free first loop: it will set the tempo. */
   setsTempo: boolean;
   /** Audio: no input to record. */
@@ -129,7 +138,7 @@ export interface StationView {
   selected: number;
 }
 
-const EMPTY_VIEW: TrackView = { phase: 'empty', startBeat: 0, endBeat: null, origin: 0, beats: 0, layers: 0, redo: 0, pending: null, setsTempo: false, noInput: false };
+const EMPTY_VIEW: TrackView = { phase: 'empty', startBeat: 0, endBeat: null, origin: 0, beats: 0, layers: 0, redo: 0, pending: null, waiting: false, waitOrigin: 0, waitBeats: 0, setsTempo: false, noInput: false };
 
 export const loopStationView = writable<StationView>({ tracks: Array.from({ length: LOOP_TRACK_COUNT }, () => ({ ...EMPTY_VIEW })), selected: 0 });
 
@@ -148,7 +157,7 @@ interface Rt {
   playAt: number | null;
   stopAt: number | null;
   scheduledBeat: number;
-  pendingOffs: Array<{ note: number; offBeat: number; instrument: InstrumentId; tone?: string }>;
+  pendingOffs: Array<{ note: number; offBeat: number; instrument: InstrumentId; tone?: string; patch?: string }>;
   /** An XY track: note-offs not sent yet (XY notes go out in time order, so the pad glides as played). */
   xyOffs: Array<{ note: number; offBeat: number; tone?: string }>;
   /** An XY track has played a note since its last cut. */
@@ -165,17 +174,33 @@ interface Rt {
   clickBeat: number;
   /** The layers before the full editor changed them: one undo brings them back. */
   editBefore: MidiLayer[] | null;
+  /**
+   * Armed on "first note": notes from `from` on start the take. `grid` is a
+   * bar line of the running grid (the loops playing, the count-in, the beat),
+   * or null when nothing sets one (the first note is beat 1).
+   */
+  wait: { from: number; grid: number | null } | null;
+  /** A take started on its first note: notes before it (played before the press) stay out. */
+  noteFloor: number | null;
+  /** An audio take waiting for another audio track's recording to finish (one recorder). */
+  queued: boolean;
 }
 
 let host: StationHost | null = null;
 const rts: Rt[] = Array.from({ length: LOOP_TRACK_COUNT }, () => freshRt());
 
 function freshRt(): Rt {
-  return { phase: 'empty', recStart: 0, recEnd: null, freeSince: null, origin: 0, dubFrom: 0, dubTo: null, playAt: null, stopAt: null, scheduledBeat: 0, pendingOffs: [], xyOffs: [], xySounding: false, redo: [], redoXy: [], cleared: null, tab: null, armSound: null, clickBeat: 0, editBefore: null };
+  return { phase: 'empty', recStart: 0, recEnd: null, freeSince: null, origin: 0, dubFrom: 0, dubTo: null, playAt: null, stopAt: null, scheduledBeat: 0, pendingOffs: [], xyOffs: [], xySounding: false, redo: [], redoXy: [], cleared: null, tab: null, armSound: null, clickBeat: 0, editBefore: null, wait: null, noteFloor: null, queued: false };
 }
 
 export function attachLoopStation(h: StationHost): void {
   host = h;
+}
+
+/** The clock was resynced (a free first loop set the tempo): count-in clicks go on from the new beat. */
+function resetClicks(): void {
+  const beat = clockNow().beat;
+  for (const rt of rts) rt.clickBeat = Math.ceil(beat - 1e-6);
 }
 
 // ── Audio loops kept with the project ──
@@ -486,12 +511,12 @@ export function liveTakeNotes(i: number, beat: number): LiveNote[] {
   const rt = rts[i];
   if (rt.phase !== 'record' && rt.phase !== 'overdub') return [];
   const t = track(i);
-  const from = rt.phase === 'record' ? rt.recStart - EARLY_GRACE_BEATS : rt.dubFrom;
+  const from = rt.phase === 'record' ? (rt.noteFloor ?? rt.recStart) - EARLY_GRACE_BEATS : rt.dubFrom;
   if (!(beat > from)) return [];
   const window = (list: readonly PlayedNote[], instrument: InstrumentId): LiveNote[] =>
     list
       .filter((n) => n.instrument === instrument && n.beat >= from && n.beat < beat)
-      .map((n) => ({ at: Math.max(n.beat, rt.phase === 'record' ? rt.recStart : from), dur: Math.max(1 / 64, Math.min(n.end ?? beat, beat) - n.beat), note: n.note }));
+      .map((n) => ({ at: rt.phase === 'record' && n.beat < rt.recStart && n.beat >= rt.recStart - EARLY_GRACE_BEATS ? rt.recStart : n.beat, dur: Math.max(1 / 64, Math.min(n.end ?? beat, beat) - n.beat), note: n.note }));
   const played = host.played();
   if (t.source) return window(t.source === 'xy' ? played : hitsPlayed.all(), SOURCE_INSTRUMENT[t.source]);
   const candidates: Array<() => LiveNote[]> = [];
@@ -506,6 +531,95 @@ export function liveTakeNotes(i: number, beat: number): LiveNote[] {
     if (notes.length) return notes;
   }
   return [];
+}
+
+/**
+ * The first note played on the sound a waiting take will record (as
+ * takeLayer settles it) from `from` up to `to`, or null.
+ */
+function firstNote(i: number, from: number, to: number): number | null {
+  const rt = rts[i];
+  const t = track(i);
+  const played = host!.played();
+  const first = (list: readonly PlayedNote[], instrument: InstrumentId): number | null => {
+    let best: number | null = null;
+    for (const n of list) if (n.instrument === instrument && n.beat >= from && n.beat < to && (best === null || n.beat < best)) best = n.beat;
+    return best;
+  };
+  if (t.source) return first(t.source === 'xy' ? played : hitsPlayed.all(), SOURCE_INSTRUMENT[t.source]);
+  const found: number[] = [];
+  const src = rt.tab ? tabSource(rt.tab) : null;
+  if (src) {
+    const b = first(src === 'xy' ? played : hitsPlayed.all(), SOURCE_INSTRUMENT[src]);
+    if (b !== null) found.push(b);
+  }
+  const s = get(musicStudio);
+  for (const instrument of new Set([keysSound(s).instrument, rt.armSound?.instrument, t.instrument])) {
+    if (!instrument) continue;
+    const b = first(played, instrument);
+    if (b !== null) found.push(b);
+  }
+  return found.length ? Math.min(...found) : null;
+}
+
+/**
+ * Make `b` the clock's beat 0 (a first note with nothing playing and no
+ * count-in). Every beat the station holds moves with it. Returns how far
+ * the beats moved (0 when the clock follows Link or a show).
+ */
+function rebaseClockAt(b: number): number {
+  const { beat, beatMs } = clockNow();
+  const ms = performance.now() - (beat - b) * beatMs;
+  if (!resyncLaunchClock(ms)) return 0;
+  const delta = clockNow().beat - beat;
+  if (!delta) return 0;
+  host?.shiftPlayed?.(delta);
+  hitsPlayed.shift(delta);
+  xyMoves = xyMoves.map((p) => ({ ...p, beat: p.beat + delta }));
+  for (const rt of rts) {
+    rt.recStart += delta;
+    if (rt.recEnd !== null) rt.recEnd += delta;
+    rt.origin += delta;
+    rt.dubFrom += delta;
+    if (rt.dubTo !== null) rt.dubTo += delta;
+    if (rt.playAt !== null) rt.playAt += delta;
+    if (rt.stopAt !== null) rt.stopAt += delta;
+    rt.scheduledBeat += delta;
+    rt.clickBeat = Math.ceil(clockNow().beat - 1e-6);
+    if (rt.wait) rt.wait = { from: rt.wait.from + delta, grid: rt.wait.grid === null ? null : rt.wait.grid + delta };
+    if (rt.noteFloor !== null) rt.noteFloor += delta;
+    for (const o of rt.pendingOffs) o.offBeat += delta;
+    for (const o of rt.xyOffs) o.offBeat += delta;
+  }
+  return delta;
+}
+
+/** A waiting take heard its first note at `first`: it starts on the bar nearest it, or (nothing to line up with) on the note. */
+function startOnFirstNote(i: number, first: number): void {
+  const rt = rts[i];
+  const d = data();
+  const wait = rt.wait!;
+  rt.wait = null;
+  if (wait.grid !== null) {
+    rt.recStart = firstNoteStart(first, wait.grid);
+    rt.noteFloor = first;
+    rt.recEnd = d.length ? rt.recStart + d.length * BEATS_PER_BAR : null;
+    rt.freeSince = null;
+  } else if (!d.length) {
+    // Free, nothing playing, no count-in: the first note starts the loop that sets the tempo.
+    rt.recStart = first;
+    rt.noteFloor = first;
+    rt.recEnd = null;
+    rt.freeSince = performance.now() - (clockNow().beat - first) * clockNow().beatMs;
+  } else {
+    // A length, nothing playing, no count-in: the first note is beat 1.
+    const delta = rebaseClockAt(first);
+    rt.recStart = first + delta;
+    rt.noteFloor = rt.recStart;
+    rt.recEnd = rt.recStart + d.length * BEATS_PER_BAR;
+    rt.freeSince = null;
+  }
+  rt.phase = 'record';
 }
 
 function hasContent(i: number): boolean {
@@ -591,7 +705,9 @@ export function pressLoopTrack(i: number): void {
       arm(i, beat);
       break;
     case 'cancel':
-      if (isAudio(i)) audioEngine()?.cancel(i);
+      if (isAudio(i) && !rt.queued) audioEngine()?.cancel(i);
+      rt.wait = null;
+      rt.queued = false;
       rt.phase = hasContent(i) ? 'stopped' : 'empty';
       break;
     case 'close-record':
@@ -600,6 +716,9 @@ export function pressLoopTrack(i: number): void {
     case 'punch-in':
       if (isAudio(i)) {
         if (!audioEngine()?.overdub(i, true)) break;
+        // It records from the next bar: shown as waiting to punch in until then.
+        rt.dubFrom = punchAt(beat);
+        rt.dubTo = null;
         rt.phase = 'overdub';
         break;
       }
@@ -610,7 +729,8 @@ export function pressLoopTrack(i: number): void {
     case 'punch-out':
       if (isAudio(i)) {
         audioEngine()?.overdub(i, false);
-        rt.phase = 'play';
+        // The input stays live to the next bar: the track shows overdub, ending, until then.
+        rt.dubTo = Math.max(rt.dubFrom, punchAt(beat));
         break;
       }
       rt.dubTo = Math.max(rt.dubFrom, punchAt(beat));
@@ -630,9 +750,18 @@ function arm(i: number, beat: number): void {
   // Rec → next track: a track still recording closes on the next bar, and this one starts there.
   const recording = rts.findIndex((r, j) => j !== i && r.phase === 'record');
   let start = recordStart(beat, d.countIn, busy);
+  rt.wait = null;
+  rt.noteFloor = null;
+  rt.queued = false;
   if (recording >= 0) {
+    const setTempo = rts[recording].freeSince !== null;
     closeRecord(recording, beat);
-    start = rts[recording].recEnd ?? start;
+    if (setTempo) {
+      // A free first loop set the tempo and moved the clock: this take starts on its downbeat (now).
+      const other = rts[recording];
+      beat = clockNow().beat;
+      start = other.phase === 'play' || other.phase === 'overdub' ? other.scheduledBeat : recordStart(beat, d.countIn, busy);
+    } else start = rts[recording].recEnd ?? start;
   }
   if (isAudio(i)) {
     const audio = audioEngine();
@@ -641,13 +770,26 @@ function arm(i: number, beat: number): void {
       return;
     }
     const bars = d.length || 0;
-    const ok = audio.record(i, { startBeat: start, bars, free: bars === 0 && !busy });
+    // One recorder: while another audio track records its take, this one queues for the bar after it.
+    const other = rts.findIndex((r, j) => j !== i && isAudio(j) && (r.phase === 'armed' || r.phase === 'record'));
+    if (other >= 0) {
+      rt.queued = true;
+      rt.recStart = rts[other].recEnd ?? punchAt(beat);
+      rt.recEnd = bars ? rt.recStart + bars * BEATS_PER_BAR : null;
+      rt.freeSince = null;
+      rt.phase = 'armed';
+      return;
+    }
+    // Free with nothing playing: it starts now and its length sets the tempo.
+    const free = bars === 0 && !busy;
+    if (free) start = beat;
+    const ok = audio.record(i, { startBeat: start, bars, free });
     if (!ok) return;
     // A new take: a write or restore of what was here before must not land on it.
     bumpGen(i);
     rt.recStart = start;
     rt.recEnd = bars ? start + bars * BEATS_PER_BAR : null;
-    rt.freeSince = bars === 0 && !busy ? performance.now() : null;
+    rt.freeSince = free ? performance.now() : null;
     rt.phase = 'armed';
     return;
   }
@@ -656,6 +798,21 @@ function arm(i: number, beat: number): void {
   rt.tab = !t.instrument && !t.source ? get(musicStudio).set : null;
   rt.armSound = keysSound(get(musicStudio));
   rt.freeSince = null;
+  rt.clickBeat = Math.ceil(beat);
+  if (d.startMode !== 'bar' && recording < 0) {
+    // On the first note: wait as long as it takes, then start on the bar nearest the note.
+    const grid = gridAnchor(i);
+    rt.phase = 'armed';
+    rt.recEnd = null;
+    if (grid) rt.wait = { from: beat, grid: grid.origin };
+    else if (host!.clockBusy()) rt.wait = { from: beat, grid: 0 };
+    else if (d.countIn > 0 && d.length) {
+      // Nothing playing: the count-in sets the grid; the take still starts with the first note.
+      rt.wait = { from: start, grid: start };
+    } else rt.wait = { from: beat, grid: null }; // the first note is beat 1 (free: its loop sets the tempo)
+    rt.recStart = rt.wait.from;
+    return;
+  }
   if (d.length === 0 && !busy) {
     // Nothing plays and the length is free: start now; the loop sets the tempo.
     rt.recStart = beat;
@@ -667,14 +824,15 @@ function arm(i: number, beat: number): void {
     rt.recEnd = d.length ? start + d.length * BEATS_PER_BAR : null;
     rt.phase = 'armed';
   }
-  rt.clickBeat = Math.ceil(beat);
 }
 
 function closeRecord(i: number, beat: number): void {
   const rt = rts[i];
   if (isAudio(i)) {
+    const setsTempo = rt.freeSince !== null;
     const end = audioEngine()?.closeRecording(i);
     if (end !== undefined && end !== null) rt.recEnd = end;
+    if (setsTempo) resetClicks();
     return;
   }
   if (rt.freeSince !== null) {
@@ -717,6 +875,7 @@ function finishFree(i: number, beat: number): void {
   audioStore.setManualBPM(tempo.bpm);
   // Now is the downbeat: the loop just ended its first pass.
   const synced = resyncLaunchClock();
+  if (synced) resetClicks();
   const now = clockNow().beat;
   const origin = synced ? now - beats : nextBarAt(now);
   commitFirstLayer(i, layer, beats, origin, synced ? now : origin);
@@ -751,15 +910,17 @@ function startTrack(i: number): void {
   const { beat } = clockNow();
   if (isAudio(i)) {
     audioEngine()?.play(i);
+    rt.stopAt = null;
+    rt.playAt = punchAt(beat);
     rt.phase = 'play';
     return;
   }
-  const busy = host!.clockBusy() || rts.some((r, j) => j !== i && (r.phase === 'play' || r.phase === 'overdub'));
-  const at = busy ? punchAt(beat) : beat;
-  rt.origin = busy ? at : beat;
+  // From the next bar line, as audio does, so a loop started alone stays on the bar grid.
+  const at = punchAt(beat);
+  rt.origin = at;
   rt.scheduledBeat = at;
   rt.stopAt = null;
-  rt.playAt = null;
+  rt.playAt = at;
   rt.phase = 'play';
 }
 
@@ -769,12 +930,18 @@ export function stopLoopTrack(i: number, now = false): void {
   const rt = rts[i];
   const phase = phaseOf(i);
   if (phase === 'armed' || phase === 'record') {
-    if (isAudio(i)) audioEngine()?.cancel(i);
+    if (isAudio(i) && !rt.queued) audioEngine()?.cancel(i);
+    rt.wait = null;
+    rt.queued = false;
+    rt.noteFloor = null;
     rt.phase = hasContent(i) ? 'stopped' : 'empty';
   } else if (phase === 'play' || phase === 'overdub') {
     if (isAudio(i)) {
       audioEngine()?.stop(i, data().fadeBars, now);
-      rt.phase = 'stopped';
+      // It plays to the next bar: shown as stopping until then.
+      rt.playAt = null;
+      rt.stopAt = now ? null : punchAt(clockNow().beat);
+      if (now) rt.phase = 'stopped';
     } else {
       if (phase === 'overdub') rt.dubTo = Math.max(rt.dubFrom, punchAt(clockNow().beat));
       rt.stopAt = now ? clockNow().beat : punchAt(clockNow().beat);
@@ -1080,9 +1247,10 @@ function endTrack(i: number, at: number): void {
 function cutPending(i: number, at: number): void {
   const rt = rts[i];
   const time = host?.now() ?? 0;
-  for (const p of rt.pendingOffs) if (p.offBeat > at) host?.send({ ...withTone(noteOff(p.instrument, p.note, 'sequencer', time), p.tone), insertChannel: loopFxChannel(i) });
+  const cut = (e: NoteEvent) => (host?.cut ? host.cut(e) : host?.send(e));
+  for (const p of rt.pendingOffs) if (p.offBeat > at) cut({ ...withTone(noteOff(p.instrument, p.note, 'sequencer', time), p.tone), loopTrack: i, insertChannel: loopFxChannel(i), ...(p.patch ? { patch: p.patch } : {}) });
   rt.pendingOffs = [];
-  for (const p of rt.xyOffs) host?.send({ ...withTone(noteOff('xy', p.note, 'sequencer', time), p.tone), loopTrack: i, insertChannel: loopFxChannel(i) });
+  for (const p of rt.xyOffs) cut({ ...withTone(noteOff('xy', p.note, 'sequencer', time), p.tone), loopTrack: i, insertChannel: loopFxChannel(i) });
   rt.xyOffs = [];
   // The XY voice and a latched arp on its tone let go, and the moves booked ahead are dropped.
   if (rt.xySounding) host?.letGoXy?.(i);
@@ -1090,6 +1258,9 @@ function cutPending(i: number, at: number): void {
 }
 
 const withTone = (event: NoteEvent, tone?: string): NoteEvent => (tone ? { ...event, tone } : event);
+
+/** A pending state showed on the last tick: one more publish clears it once its bar has passed. */
+let hadPending = false;
 
 /** Called from the runtime's scheduler tick. */
 export function scheduleStation(lookaheadSeconds: number): void {
@@ -1101,30 +1272,42 @@ export function scheduleStation(lookaheadSeconds: number): void {
   let changed = false;
   for (let i = 0; i < LOOP_TRACK_COUNT; i++) {
     if (isAudio(i)) {
-      changed = syncAudioPhase(i) || changed;
+      changed = syncAudioPhase(i, beat) || changed;
       continue;
     }
     changed = stepMidi(i, beat, horizon, timeAt) || changed;
   }
   scheduleClicks(beat, horizon, timeAt);
   stepSections(beat);
-  if (changed) publish();
+  // A pending stop, start or punch shows until its bar: publish while one waits (the view drops repeats).
+  const pending = rts.some((rt) => rt.wait || rt.queued || rt.stopAt !== null || rt.dubTo !== null || (rt.playAt !== null && rt.playAt > beat) || (rt.phase === 'overdub' && rt.dubFrom > beat));
+  if (changed || pending || hadPending) publish();
+  hadPending = pending;
 }
 
 function stepMidi(i: number, beat: number, horizon: number, timeAt: (b: number) => number): boolean {
   const rt = rts[i];
   let changed = false;
-  if (rt.phase === 'armed' && beat >= rt.recStart) {
+  if (rt.phase === 'armed' && rt.wait) {
+    // Waits as long as it takes: the take starts with the first note (after any count-in).
+    const first = beat >= rt.wait.from - EARLY_GRACE_BEATS ? firstNote(i, rt.wait.from - EARLY_GRACE_BEATS, beat + 1e-6) : null;
+    if (first !== null) {
+      startOnFirstNote(i, first);
+      changed = true;
+    }
+  } else if (rt.phase === 'armed' && beat >= rt.recStart) {
     rt.phase = 'record';
     changed = true;
   }
   if (rt.phase === 'record' && rt.recEnd !== null && beat >= rt.recEnd - 0.02) {
     const beats = rt.recEnd - rt.recStart;
-    // Pass 0 on the playing loops' grid; it plays on from where the recording ended.
-    const origin = alignedOrigin(rt.recStart, beats, gridAnchor(i)?.origin ?? null);
-    const layer = takeLayer(i, rt.recStart, rt.recEnd, origin, beats, captured(), true);
-    // A free take closed on a bar already gone plays on from now; its notes since were heard live.
-    commitFirstLayer(i, layer, beats, origin, beat - rt.recEnd > 0.25 ? beat : rt.recEnd);
+    // The loop starts where the take did (the first note's bar), never with the wait before it. A
+    // take closed a beat late keeps the notes since, wrapped onto its start.
+    const from = rt.noteFloor ?? rt.recStart;
+    const layer = takeLayer(i, from, Math.max(rt.recEnd, beat), rt.recStart, beats, captured(), true);
+    rt.noteFloor = null;
+    // Closed on a bar already gone: it plays on from now (the notes since were heard live).
+    commitFirstLayer(i, layer, beats, rt.recStart, beat - rt.recEnd > 0.25 ? beat : rt.recEnd);
     changed = true;
   }
   if (rt.phase === 'record' && rt.recEnd === null && beat - rt.recStart >= MAX_MIDI_LOOP_BARS * BEATS_PER_BAR) {
@@ -1260,7 +1443,7 @@ function sendNote(i: number, n: RecordedNote, at: number, timeAt: (b: number) =>
   const own = { loopTrack: i, insertChannel: loopFxChannel(i), ...(t.patch && !t.tone ? { patch: t.patch } : {}) };
   host!.send({ ...withTone(noteOn(instrument, n.note, velocity, 'sequencer', timeAt(at)), t.tone), ...own });
   host!.send({ ...withTone(noteOff(instrument, n.note, 'sequencer', timeAt(offBeat)), t.tone), ...own });
-  rt.pendingOffs.push({ note: n.note, offBeat, instrument, tone: t.tone });
+  rt.pendingOffs.push({ note: n.note, offBeat, instrument, tone: t.tone, ...(t.patch && !t.tone ? { patch: t.patch } : {}) });
 }
 
 /** Count-in clicks, and a click while recording when nothing else keeps time. */
@@ -1276,10 +1459,25 @@ function scheduleClicks(beat: number, horizon: number, timeAt: (b: number) => nu
 }
 
 /** Audio tracks: their recorder says when a take has come back. */
-function syncAudioPhase(i: number): boolean {
+function syncAudioPhase(i: number, beat: number): boolean {
   const rt = rts[i];
   const audio = audioEngine();
   if (!audio) return false;
+  if (rt.queued) {
+    // Its turn once the other audio take is in.
+    if (rts.some((r, j) => j !== i && isAudio(j) && (r.phase === 'armed' || r.phase === 'record'))) return false;
+    rt.queued = false;
+    const d = data();
+    const start = Math.max(rt.recStart, punchAt(beat));
+    if (!audio.canRecord(i) || !audio.record(i, { startBeat: start, bars: d.length || 0, free: false })) {
+      rt.phase = hasContent(i) ? 'stopped' : 'empty';
+      return true;
+    }
+    bumpGen(i);
+    rt.recStart = start;
+    rt.recEnd = d.length ? start + d.length * BEATS_PER_BAR : null;
+    return true;
+  }
   const state = audio.state(i);
   let next = rt.phase;
   if (rt.phase === 'armed' && state === 'record') next = 'record';
@@ -1290,7 +1488,17 @@ function syncAudioPhase(i: number): boolean {
     rt.freeSince = null;
   }
   if ((rt.phase === 'armed' || rt.phase === 'record') && state === 'empty') next = 'empty';
-  if (rt.phase === 'overdub' && state === 'play') next = 'play';
+  // A punch-out records to its bar: overdub until then.
+  if (rt.phase === 'overdub' && state === 'play' && (rt.dubTo === null || beat >= rt.dubTo - 0.02)) {
+    next = 'play';
+    rt.dubTo = null;
+  }
+  // A stop plays to its bar: playing until then.
+  if ((rt.phase === 'play' || rt.phase === 'overdub') && (state === 'stopped' || state === 'empty') && (rt.stopAt === null || beat >= rt.stopAt - 0.02)) {
+    next = state === 'empty' ? 'empty' : 'stopped';
+    rt.stopAt = null;
+    rt.dubTo = null;
+  }
   if (next === rt.phase) return false;
   rt.phase = next;
   return true;
@@ -1491,9 +1699,19 @@ export function onLoopNotice(listener: ((message: string) => void) | null): void
 
 export function publish(): void {
   const audio = audioEngine() ?? null;
+  const beat = host ? clockNow().beat : 0;
+  const pendingOf = (rt: Rt, phase: TrackPhase): TrackView['pending'] =>
+    (phase === 'play' || phase === 'overdub') && rt.stopAt !== null ? 'stop'
+      : phase === 'overdub' && rt.dubTo !== null ? 'punch-out'
+        : phase === 'overdub' && rt.dubFrom > beat + 1e-6 ? 'punch-in'
+          : phase === 'play' && rt.playAt !== null && rt.playAt > beat + 1e-6 ? 'play'
+            : null;
   const tracks = rts.map((rt, i): TrackView => {
     const phase = phaseOf(i);
     const t = track(i);
+    // Waiting over playing loops: the playhead runs round the longest of them.
+    const grid = rt.wait && rt.wait.grid !== null ? gridAnchor(i) : null;
+    const waiting = { waiting: !!rt.wait || rt.queued, waitOrigin: grid?.origin ?? 0, waitBeats: grid?.beats ?? 0 };
     if (t.kind === 'audio') {
       const info = audio?.info(i);
       return {
@@ -1504,7 +1722,9 @@ export function publish(): void {
         beats: (info?.bars ?? 0) * BEATS_PER_BAR,
         layers: info?.layers ?? 0,
         redo: info?.redo ?? 0,
-        pending: null,
+        pending: pendingOf(rt, phase),
+        ...waiting,
+        waiting: false,
         setsTempo: rt.freeSince !== null,
         noInput: audio ? !audio.canRecord(i) && !(info?.layers) : false,
       };
@@ -1517,8 +1737,9 @@ export function publish(): void {
       beats: t.beats,
       layers: t.layers.length,
       redo: rt.redo.length,
-      pending: rt.stopAt !== null ? 'stop' : rt.playAt !== null ? 'play' : null,
-      setsTempo: rt.freeSince !== null,
+      pending: pendingOf(rt, phase),
+      ...waiting,
+      setsTempo: rt.freeSince !== null || (!!rt.wait && rt.wait.grid === null && !data().length),
       noInput: false,
     };
   });

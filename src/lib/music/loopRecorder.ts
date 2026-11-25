@@ -126,6 +126,14 @@ export class PlayedNotes {
     this.notes.push({ instrument: 'drums', note, velocity, beat, end: beat + 1 / STEPS_PER_BEAT, drum: voice });
   }
 
+  /** The clock was re-based: every note moves by `delta` beats. */
+  shift(delta: number): void {
+    for (const n of this.notes) {
+      n.beat += delta;
+      if (n.end !== null) n.end += delta;
+    }
+  }
+
   /** Forget notes that started before `beat` and have ended. */
   forgetBefore(beat: number): void {
     if (!this.notes.length || this.notes[0].beat >= beat) return;

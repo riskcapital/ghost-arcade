@@ -173,3 +173,18 @@ describe('HeldNotes.cut', () => {
     expect(h.isHeld('drone', 60)).toBe(false);
   });
 });
+
+describe('HeldNotes per loop track', () => {
+  it('a loop\'s note is counted apart from the same pitch played live, so neither swallows the other', () => {
+    const h = new HeldNotes();
+    const live = { type: 'on' as const, instrument: 'keys' as const, note: 60, velocity: 1, source: 'keyboard' as const, time: 0 };
+    expect(h.apply(live)).toBe(true);
+    expect(h.apply({ ...live, source: 'sequencer', loopTrack: 2 })).toBe(true);
+    expect(h.apply({ ...live, type: 'off', source: 'sequencer', loopTrack: 2 })).toBe(true);
+    expect(h.isHeld('keys', 60)).toBe(true);
+    expect(h.all()).toEqual([{ instrument: 'keys', note: 60 }]);
+    h.apply({ ...live, loopTrack: 1 });
+    expect(h.notes('keys')).toEqual([60]);
+    expect(h.all()).toContainEqual({ instrument: 'keys', note: 60, loopTrack: 1 });
+  });
+});

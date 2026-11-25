@@ -176,13 +176,14 @@ export const noteBus = createNoteBus();
 export class HeldNotes {
   private held = new Map<string, number>();
 
-  private key(instrument: InstrumentId, note: number): string {
-    return `${instrument}:${note}`;
+  /** Per pitch, and per loop track: a loop's note never swallows (or is swallowed by) the same pitch played live or on another loop. */
+  private key(instrument: InstrumentId, note: number, loopTrack?: number): string {
+    return loopTrack === undefined ? `${instrument}:${note}` : `${instrument}:${note}@${loopTrack}`;
   }
 
   /** Returns true when this event changes what is sounding. */
   apply(event: NoteEvent): boolean {
-    const k = this.key(event.instrument, event.note);
+    const k = this.key(event.instrument, event.note, event.loopTrack);
     const count = this.held.get(k) ?? 0;
     if (event.type === 'on') {
       this.held.set(k, count + 1);
@@ -202,7 +203,7 @@ export class HeldNotes {
    * sounds until that later off: a cut always reaches the bus then.
    */
   cut(event: NoteEvent): boolean {
-    if (!this.held.has(this.key(event.instrument, event.note))) return true;
+    if (!this.held.has(this.key(event.instrument, event.note, event.loopTrack))) return true;
     return this.apply(event);
   }
 
@@ -215,20 +216,22 @@ export class HeldNotes {
     return this.held.has(this.key(instrument, note));
   }
 
+  /** Pitches held on an instrument (live or on any loop track). */
   notes(instrument: InstrumentId): number[] {
-    const out: number[] = [];
+    const out = new Set<number>();
     for (const k of this.held.keys()) {
       const [inst, note] = k.split(':');
-      if (inst === instrument) out.push(Number(note));
+      if (inst === instrument) out.add(parseInt(note, 10));
     }
-    return out.sort((a, b) => a - b);
+    return [...out].sort((a, b) => a - b);
   }
 
   /** Every held note, for an all-notes-off. */
-  all(): Array<{ instrument: InstrumentId; note: number }> {
+  all(): Array<{ instrument: InstrumentId; note: number; loopTrack?: number }> {
     return [...this.held.keys()].map((k) => {
-      const [inst, note] = k.split(':');
-      return { instrument: inst as InstrumentId, note: Number(note) };
+      const [inst, rest] = k.split(':');
+      const [note, track] = rest.split('@');
+      return { instrument: inst as InstrumentId, note: Number(note), ...(track !== undefined ? { loopTrack: Number(track) } : {}) };
     });
   }
 

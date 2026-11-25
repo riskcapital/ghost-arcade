@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   keysSound,
-  alignedOrigin,
+  firstNoteStart,
   syncedFreeEnd,
   loopFxChannel,
   normalizeTrack,
@@ -127,6 +127,12 @@ describe('overdub layering and punch', () => {
     expect(layer[0].beat).toBe(0);
   });
 
+  it('a hair early with no quantize lands on beat 0, not at the end of the loop', () => {
+    expect(notesForLayer([played(11.95)], 'keys', 12, 16, 12, 4, 0)[0].beat).toBe(0);
+    // Early for the loop's start (a take begun on its first note's bar): beat 0 as well.
+    expect(notesForLayer([played(15.9)], 'keys', 15.9, 20, 16, 4, 0)[0].beat).toBe(0);
+  });
+
   it('punches in and out on the next bar, and passes end on loop boundaries', () => {
     expect(punchAt(5.2)).toBe(8);
     expect(punchAt(8)).toBe(12);
@@ -141,8 +147,9 @@ describe('overdub layering and punch', () => {
     expect(recordStart(1.5, 0, false)).toBe(4);
   });
 
-  it('ends a free recording on the nearest bar line, ahead in its last beat', () => {
+  it('ends a free recording on the bar just passed when at most a beat late, else on the next bar (never far in the past)', () => {
     expect(freeRecordEnd(0, 9)).toBe(8);
+    expect(freeRecordEnd(0, 9.5)).toBe(12);
     expect(freeRecordEnd(0, 10.5)).toBe(12);
     expect(freeRecordEnd(0, 15.2)).toBe(16);
     expect(freeRecordEnd(0, 1)).toBe(4);
@@ -349,19 +356,24 @@ describe('keysSound', () => {
 });
 
 describe('a new loop on the playing loops\' grid', () => {
-  it('starts its pass 0 on the loop-length boundary at or before the recording', () => {
-    expect(alignedOrigin(24, 16, null)).toBe(24);
-    expect(alignedOrigin(24, 16, 4)).toBe(20);
-    expect(alignedOrigin(20, 16, 4)).toBe(20);
-    expect(alignedOrigin(28, 4, 4)).toBe(28);
-    expect(alignedOrigin(30, 8, -16)).toBe(24);
+  it('a take on its first note starts on the bar nearest the note, on the running grid', () => {
+    // Bar lines at 4, 8, 12… (grid from beat 4).
+    expect(firstNoteStart(12, 4)).toBe(12); // on the bar
+    expect(firstNoteStart(11.9, 4)).toBe(12); // a bit early
+    expect(firstNoteStart(12.3, 4)).toBe(12); // a bit late
+    expect(firstNoteStart(13.6, 4)).toBe(12); // inside the bar: the nearer line
+    expect(firstNoteStart(14.4, 4)).toBe(16);
+    expect(firstNoteStart(101, 1)).toBe(101); // a long wait changes nothing
+    expect(firstNoteStart(-2.5, -16)).toBe(-4);
   });
 
   it('closes a free take on a length that fits the longest loop playing', () => {
-    // 4-bar loop playing: 3.25 bars in closes at 4 bars, 2.75 at 2, 1.4 at 1, 7 at 8; never 3.
+    // 4-bar loop playing: the shortest fit ending ahead of the press (or a beat behind it); never 3 bars.
     expect(syncedFreeEnd(8, 8 + 13, 16)).toBe(8 + 16);
-    expect(syncedFreeEnd(8, 8 + 11, 16)).toBe(8 + 8);
-    expect(syncedFreeEnd(8, 8 + 5.6, 16)).toBe(8 + 4);
+    expect(syncedFreeEnd(8, 8 + 11, 16)).toBe(8 + 16);
+    expect(syncedFreeEnd(8, 8 + 8.6, 16)).toBe(8 + 8);
+    expect(syncedFreeEnd(8, 8 + 5.6, 16)).toBe(8 + 8);
+    expect(syncedFreeEnd(8, 8 + 4.9, 16)).toBe(8 + 4);
     expect(syncedFreeEnd(8, 8 + 28, 16)).toBe(8 + 32);
     // Nothing a bar long to fit: the nearest bar.
     expect(syncedFreeEnd(0, 6.5, 0)).toBe(8);

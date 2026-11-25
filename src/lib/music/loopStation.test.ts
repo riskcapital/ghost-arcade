@@ -79,6 +79,7 @@ beforeEach(() => {
 
 describe('a MIDI loop track', () => {
   it('records 4 bars from the next bar, then plays them without a gap', () => {
+    musicStudio.updateLoopStation((d) => ({ ...d, startMode: 'bar' }));
     pressLoopTrack(0);
     expect(_trackRuntime(0).phase).toBe('armed');
     expect(_trackRuntime(0).recStart).toBe(4);
@@ -164,10 +165,14 @@ describe('a MIDI loop track', () => {
     const t0 = 1000;
     const nowSpy = vi.spyOn(performance, 'now').mockReturnValue(t0);
     pressLoopTrack(0);
-    expect(_trackRuntime(0).phase).toBe('record');
+    // It waits for the first note, which starts the loop.
+    expect(_trackRuntime(0).phase).toBe('armed');
+    expect(get(loopStationView).tracks[0].waiting).toBe(true);
     const start = clock.beat;
     play(start);
     play(start + 3, 64);
+    scheduleStation(0.12);
+    expect(_trackRuntime(0).phase).toBe('record');
     // 4 seconds later (8 beats at 120): 2 bars at 120 BPM.
     nowSpy.mockReturnValue(t0 + 4000);
     clock.beat = start + 8;
@@ -198,24 +203,114 @@ describe('a MIDI loop track', () => {
 });
 
 describe('loop timing', () => {
-  it('a take recorded over a playing loop sits on its grid and plays on from where it ended', () => {
+  /** Track 0: a 4-bar loop from beat 4 (bar lines 4, 8, 12…); then track 1 armed on 2 bars. */
+  function overLoop() {
     pressLoopTrack(0);
     runTo(4);
     play(4);
-    runTo(20); // track 0: 4 bars from beat 4
+    runTo(20);
     musicStudio.updateLoopStation((d) => ({ ...d, length: 2 }));
     pressLoopTrack(1);
-    expect(_trackRuntime(1).recStart).toBe(24);
-    runTo(24);
-    play(26, 67);
-    runTo(32.5);
-    // Its pass 0 is on track 0's 2-bar grid (4, 12, 20, 28): the note played at 26 keeps its place.
-    expect(_trackRuntime(1).origin).toBe(20);
-    expect(get(musicStudio).loopStation.tracks[1].layers[0].map((n) => n.beat)).toEqual([6]);
+    expect(_trackRuntime(1).phase).toBe('armed');
+    expect(get(loopStationView).tracks[1].waiting).toBe(true);
+  }
+  const track1 = () => get(musicStudio).loopStation.tracks[1];
+
+  it('over playing loops, a take waits for its first note and starts on the bar nearest it', () => {
+    overLoop();
+    runTo(31.5);
+    play(32, 67); // on the bar
+    runTo(32.25);
+    expect(_trackRuntime(1)).toMatchObject({ phase: 'record', recStart: 32, recEnd: 40 });
+    runTo(40.5);
+    expect(_trackRuntime(1).origin).toBe(32);
+    expect(track1().layers[0].map((n) => n.beat)).toEqual([0]);
+  });
+
+  it('a first note a bit early or late is its bar\'s beat 1; one inside a bar keeps its offset from the nearer bar', () => {
+    overLoop();
+    runTo(31.75);
+    play(31.9, 67); // early, inside the grace: beat 1
+    runTo(32.25);
+    expect(_trackRuntime(1).recStart).toBe(32);
+    runTo(40.5);
+    expect(track1().layers[0][0].beat).toBe(0);
+  });
+
+  it('a late first note keeps its offset from the bar', () => {
+    musicStudio.setQuantize('off');
+    overLoop();
+    runTo(33);
+    play(33.3, 67);
+    runTo(33.5);
+    expect(_trackRuntime(1).recStart).toBe(32);
+    runTo(40.5);
+    expect(track1().layers[0][0].beat).toBeCloseTo(1.3, 6);
+  });
+
+  it('a first note mid-bar snaps the start to the nearer bar line', () => {
+    musicStudio.setQuantize('off');
+    overLoop();
+    runTo(34.5);
+    play(34.6, 67); // nearer 36
+    runTo(35);
+    expect(_trackRuntime(1).recStart).toBe(36);
+  });
+
+  it('waits as long as it takes: several loop cycles, then the take starts with the first note', () => {
+    overLoop();
+    runTo(100.5);
+    expect(_trackRuntime(1).phase).toBe('armed');
+    play(101, 67);
+    runTo(101.5);
+    expect(_trackRuntime(1).recStart).toBe(100);
+  });
+
+  it('the wait is never part of the loop: arm, wait 3 bars, play 2 bars, the loop wraps straight back to the first note', () => {
+    musicStudio.setQuantize('off');
+    overLoop();
+    const armed = clock.beat; // 20
+    // Three bars of nothing, then two bars of notes from the bar line at 32.
+    runTo(armed + 12 - 0.25);
+    play(32, 60);
+    play(36, 62);
+    play(39, 64);
+    runTo(39.5);
     sent = [];
-    runTo(36);
-    const ons = sent.filter((e) => e.type === 'on' && e.note === 67);
-    expect(ons[0].time).toBeCloseTo((34 * 500) / 1000, 6);
+    runTo(40.5);
+    const t = track1();
+    expect(t.beats).toBe(8);
+    expect(t.layers[0].map((n) => n.beat)).toEqual([0, 4, 7]);
+    // Playback: the second pass starts with the first note again, at 40, no silent bars before it.
+    runTo(48.5);
+    const ons = sent.filter((e) => e.type === 'on' && e.loopTrack === 1).map((e) => Math.round((e.time! * 1000) / 500 * 100) / 100);
+    expect(ons).toEqual([40, 44, 47, 48]);
+  });
+
+  it('free over a playing loop: the take fits the loop\'s length', () => {
+    overLoop();
+    musicStudio.updateLoopStation((d) => ({ ...d, length: 0 }));
+    // Re-arm on Free.
+    pressLoopTrack(1);
+    pressLoopTrack(1);
+    play(24, 67);
+    runTo(24.25);
+    expect(_trackRuntime(1).recStart).toBe(24);
+    runTo(33.5); // 9.5 beats in: past 2 bars by more than a beat
+    pressLoopTrack(1);
+    runTo(40.5);
+    expect(track1().beats).toBe(16);
+  });
+
+  it('with count-in and nothing playing, the count-in sets the grid and the first note starts the take', () => {
+    busy = false;
+    pressLoopTrack(0);
+    // Count-in bar to 8 (armed at 0.5), then waiting for the note.
+    expect(get(loopStationView).tracks[0].waiting).toBe(true);
+    runTo(10.5);
+    play(10.9);
+    runTo(11.25);
+    expect(_trackRuntime(0).recStart).toBe(12);
   });
 
   it('shows the notes of a take while it records', () => {
@@ -227,6 +322,58 @@ describe('loop timing', () => {
     runTo(20);
     expect(liveTakeNotes(0, 20.5)).toEqual([]);
     expect(track0().layers[0].map((n) => n.note)).toEqual([62]);
+  });
+});
+
+describe('honest states', () => {
+  const view0 = () => get(loopStationView).tracks[0];
+  it('shows a punch-in, punch-out, stop and start waiting for their bar', () => {
+    pressLoopTrack(0);
+    runTo(4);
+    play(4);
+    runTo(21);
+    pressLoopTrack(0); // punch in at 24
+    expect(view0()).toMatchObject({ phase: 'overdub', pending: 'punch-in' });
+    runTo(24.25);
+    expect(view0().pending).toBe(null);
+    pressLoopTrack(0); // punch out at 28
+    expect(view0().pending).toBe('punch-out');
+    runTo(28.25);
+    expect(view0()).toMatchObject({ phase: 'play', pending: null });
+    stopLoopTrack(0);
+    expect(view0().pending).toBe('stop');
+    runTo(32.25);
+    expect(view0().phase).toBe('stopped');
+    pressLoopTrack(0); // play from the next bar, on the bar grid
+    expect(view0()).toMatchObject({ phase: 'play', pending: 'play' });
+    expect(_trackRuntime(0).origin).toBe(36);
+  });
+
+  it('a stop cuts the notes still sounding through the cut path', () => {
+    const cuts: NoteEvent[] = [];
+    attachLoopStation({ send: (e) => sent.push(e), cut: (e) => cuts.push(e), now: () => (clock.beat * clock.beatMs) / 1000, click: () => {}, played: () => notes, clockBusy: () => busy, wake: () => {}, audioTracks: () => null });
+    pressLoopTrack(0);
+    runTo(4);
+    notes.push({ instrument: 'keys', note: 60, velocity: 0.8, beat: 4, end: 7.9 });
+    runTo(20.1);
+    stopLoopTrack(0, true);
+    expect(cuts.some((e) => e.type === 'off' && e.note === 60 && e.loopTrack === 0)).toBe(true);
+  });
+
+  it('a track armed while a free first loop sets the tempo starts on its downbeat', () => {
+    busy = false;
+    musicStudio.updateLoopStation((d) => ({ ...d, length: 0 }));
+    const nowSpy = vi.spyOn(performance, 'now').mockReturnValue(1000);
+    pressLoopTrack(0);
+    play(clock.beat);
+    scheduleStation(0.12);
+    nowSpy.mockReturnValue(5000);
+    clock.beat += 8;
+    musicStudio.updateLoopStation((d) => ({ ...d, startMode: 'bar' }));
+    pressLoopTrack(1);
+    nowSpy.mockRestore();
+    // The clock was resynced to 0 (the loop's downbeat): track 1 starts there, not bars later.
+    expect(_trackRuntime(1).recStart).toBe(0);
   });
 });
 

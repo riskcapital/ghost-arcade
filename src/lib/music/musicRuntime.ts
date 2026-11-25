@@ -377,7 +377,7 @@ export function panic(): void {
   releaseMidi();
   stopTake();
   const time = audio.peekNow() ?? 0;
-  for (const { instrument, note } of held.all()) noteBus.emit(noteOff(instrument, note, 'keyboard', time));
+  for (const { instrument, note, loopTrack } of held.all()) noteBus.emit({ ...noteOff(instrument, note, 'keyboard', time), ...(loopTrack !== undefined ? { loopTrack } : {}) });
   held.clear();
   audio.allNotesOff();
   latchedArps.clear();
@@ -1555,8 +1555,9 @@ export function captureLoop(): number {
   if (!phrase) return 0;
   const s = get(musicStudio);
   const take = takeLoop(played.between(phrase.startBeat, phrase.startBeat + phrase.beats), phrase.startBeat, phrase.beats, quantizeBeats(s.quantize));
-  // What was kept is used up: the next capture starts from new playing.
-  played.clear();
+  // What was kept is used up: the next capture starts from new playing. A
+  // looper track still recording keeps the notes it needs.
+  played.forgetBefore(Math.min(beat + 1e-6, stationOldestBeat(beat + 1e-6)));
   return keepTake(take, beat, true);
 }
 
@@ -1662,7 +1663,8 @@ function finishLoopRecord(startBeat: number, endBeat: number): void {
   heardLive.clear();
   const s = get(musicStudio);
   const take = takeLoop(played.between(startBeat, endBeat), startBeat, endBeat - startBeat, quantizeBeats(s.quantize));
-  played.clear();
+  // Used up, except what a looper track still recording needs.
+  played.forgetBefore(Math.min(endBeat, stationOldestBeat(endBeat)));
   // Drums were written into the grid as they were played.
   keepTake(take, endBeat, false);
   publishLoopRec(launchClockPosition().beat);
@@ -3000,6 +3002,8 @@ export function ensureMusicRuntime(): void {
   registerLoopControls();
   attachLoopStation({
     send,
+    cut: sendCut,
+    shiftPlayed: (delta) => played.shift(delta),
     now: () => audio.now(),
     click: (time, accent) => audio.click(time, accent),
     played: () => played.all(),
