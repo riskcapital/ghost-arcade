@@ -81,7 +81,7 @@
   const voiceGroups = STUDIO_SETS.map((set) => ({ ...set, voices: VOICE_SHADERS.filter((v) => v.family === set.id) }));
 </script>
 
-<div class="msp" data-help-page="music-studio">
+<div class="msp" data-help-page="midi-audio">
   <div class="msp-row">
     <label class="msp-field">
       <span class="msp-eyebrow">Scene</span>
