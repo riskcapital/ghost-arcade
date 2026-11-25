@@ -38,6 +38,8 @@ export interface AudioLoopTracks {
   restoreLayers(i: number, layers: Array<[Float32Array, Float32Array]>, bars: number, beatMs: number, originBeat: number): void;
   /** The input latency applied to recordings, in ms (reported + manual). */
   latencyMs(): number;
+  /** What the system reports alone, in ms (without the manual offset). */
+  reportedLatencyMs?(): number;
   /** Loopback: a click out, heard back on track `i`'s input; the round trip in ms. */
   measureLatency(i: number): Promise<number | null>;
   /** Each layer's shape, `n` peaks 0-1, cached per layer. */

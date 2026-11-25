@@ -5,9 +5,9 @@
    * them as columns for playing (LoopLive.svelte). With the panel focused
    * the keys drive it (loopControls.ts loopKey).
    */
-  import { onDestroy, onMount } from 'svelte';
+  import { onMount } from 'svelte';
   import { ensureMusicRuntime } from '../../music/musicRuntime';
-  import { loopLatencyMs, loopStationView, measureLoopLatency, onLoopNotice, publish } from '../../music/loopStation';
+  import { loopLatencyMs, loopStationView, measureLoopLatency, publish } from '../../music/loopStation';
   import { musicStudio } from '../../music/musicStudioStore';
   import { showToast } from '../../stores/errorToast';
   import LoopRecordBar from './LoopRecordBar.svelte';
@@ -26,6 +26,27 @@
     if (!(e.target as HTMLElement)?.closest?.('input, select, textarea')) root?.focus({ preventScroll: true });
   }
 
+  /**
+   * Playing the keys or pads after a click in the looper keeps its keys
+   * (Space, 1–8, Shift+S…): a click there takes the focus off the panel, so
+   * the window passes the looper's keys on while nothing else has the focus.
+   */
+  let keysHere = false;
+  function windowDown(e: PointerEvent) {
+    const t = e.target as HTMLElement | null;
+    if (root?.contains(t)) keysHere = true;
+    else if (!t?.closest?.('.play, .pads, .drum-pads, .piano, [data-looper-keys]')) keysHere = false;
+  }
+  function windowKey(e: KeyboardEvent) {
+    if (!keysHere || e.defaultPrevented) return;
+    const active = document.activeElement as HTMLElement | null;
+    if (active && active !== document.body && (root?.contains(active) || active.closest?.('input, select, textarea, button, [contenteditable="true"]'))) return;
+    if (loopKey(e)) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
+  }
+
   function key(e: KeyboardEvent) {
     const target = e.target as HTMLElement | null;
     if (target?.closest?.('input, select, textarea, [contenteditable="true"]')) return;
@@ -38,9 +59,7 @@
   onMount(() => {
     ensureMusicRuntime();
     publish();
-    onLoopNotice((message) => showToast(message === 'Too short' ? 'Too short: a loop needs at least a beat.' : message === 'Nothing was played' ? 'Nothing was played, so no loop was made.' : 'No empty loop track for it. Clear a track first.', 'info'));
   });
-  onDestroy(() => onLoopNotice(null));
 
   const station = $derived($musicStudio.loopStation);
   let latency = $state<number | null>(null);
@@ -62,6 +81,8 @@
     showToast(rt === null ? 'Nothing came back. Loop an output into the input (a cable, or the mic near a speaker) and try again.' : `Round trip ${Math.round(rt)} ms: audio loops now line up with it.`, rt === null ? 'warning' : 'info');
   }
 </script>
+
+<svelte:window onpointerdowncapture={windowDown} onkeydowncapture={windowKey} />
 
 <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
 <div class="station" class:tracks={mode === 'tracks'} bind:this={root} tabindex="0" role="region" aria-label="Live looper" onkeydown={key} onpointerdown={focusRoot}>

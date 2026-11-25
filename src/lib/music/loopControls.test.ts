@@ -21,7 +21,7 @@ vi.mock('./loopStation', () => {
   };
 });
 
-import { loopKey, pedalActions, pedalResolve } from './loopControls';
+import { loopKey, pedalActions, pedalResolve, stepTrack } from './loopControls';
 import * as station from './loopStation';
 import { setAddonsStatusForTests } from '../addons/addonAccess';
 
@@ -46,11 +46,27 @@ describe('looper mapping', () => {
 
   it('gives each pedal preset its tap and hold', () => {
     expect(pedalActions('2-switch', 1)).toEqual(['button', 'undo']);
-    expect(pedalActions('2-switch', 2)).toEqual(['next', null]);
+    // The 2-switch can stop: hold its second switch.
+    expect(pedalActions('2-switch', 2)).toEqual(['next', 'stop']);
     expect(pedalActions('3-switch', 3)).toEqual(['stop', 'undo']);
     expect(pedalResolve('3-switch', 1, 100)).toBe('button');
     expect(pedalResolve('3-switch', 1, 800)).toBe('undo');
-    expect(pedalResolve('2-switch', 2, 800)).toBe('next');
+    expect(pedalResolve('2-switch', 2, 100)).toBe('next');
+    expect(pedalResolve('2-switch', 2, 800)).toBe('stop');
     expect(pedalResolve('off', 1, 0)).toBeNull();
+  });
+});
+
+describe('next and previous track', () => {
+  it('wrap round the tracks showing, not all eight', () => {
+    expect(stepTrack(5, 1, 6)).toBe(0);
+    expect(stepTrack(0, -1, 6)).toBe(5);
+    expect(stepTrack(2, 1, 6)).toBe(3);
+  });
+
+  it('S plays its note; Shift+S saves the selected loop', () => {
+    calls.length = 0;
+    expect(loopKey(k('KeyS', { shiftKey: true }))).toBe(true);
+    expect(calls).toEqual(['save 2']);
   });
 });

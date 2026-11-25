@@ -5,7 +5,9 @@
  * Mute and level, the same for the selected track, Next and Previous track,
  * Start all and Stop all. Footswitches learn onto Pedal 1–3; the pedal
  * preset says what they do (2-switch: the selected track's button, hold to
- * undo · next track; 3-switch: button · next · stop, hold to undo).
+ * undo · next track, hold to stop; 3-switch: button · next · stop, hold to
+ * undo). The button fires on the press, like a hardware looper; holding it
+ * on then takes that press back and undoes the last layer.
  *
  * The keyboard map is for the looper panel when it has focus.
  */
@@ -33,6 +35,7 @@ import {
 import { LOOP_TRACK_COUNT, trackForProgram, type PedalPreset } from './loopTrack';
 import { onProgramChange } from '../midi/programChange';
 import { addonUsable } from '../addons/addonAccess';
+import { musicKeyboardClaims } from './musicKeyboard';
 
 /** A footswitch held this long undoes instead of pressing. */
 export const PEDAL_HOLD_MS = 500;
@@ -41,7 +44,7 @@ export const PEDAL_HOLD_MS = 500;
 export type PedalAction = 'button' | 'next' | 'stop' | 'undo' | null;
 
 export function pedalActions(preset: PedalPreset, pedal: 1 | 2 | 3): [PedalAction, PedalAction] {
-  if (preset === '2-switch') return pedal === 1 ? ['button', 'undo'] : pedal === 2 ? ['next', null] : [null, null];
+  if (preset === '2-switch') return pedal === 1 ? ['button', 'undo'] : pedal === 2 ? ['next', 'stop'] : [null, null];
   if (preset === '3-switch') return pedal === 1 ? ['button', 'undo'] : pedal === 2 ? ['next', null] : ['stop', 'undo'];
   return [null, null];
 }
@@ -52,27 +55,50 @@ export function pedalResolve(preset: PedalPreset, pedal: 1 | 2 | 3, heldMs: numb
   return heldMs >= PEDAL_HOLD_MS && hold ? hold : tap;
 }
 
+/** The track after (or before) `i` among the tracks showing. */
+export function stepTrack(i: number, delta: 1 | -1, count: number): number {
+  const n = Math.max(1, count);
+  return (((i + delta) % n) + n) % n;
+}
+
+const shownTracks = () => get(musicStudio).loopStation.trackCount;
+
 function run(action: PedalAction): void {
   const i = selectedLoopTrack();
   if (action === 'button') pressLoopTrack(i);
-  else if (action === 'next') selectLoopTrack((i + 1) % LOOP_TRACK_COUNT);
+  else if (action === 'next') selectLoopTrack(stepTrack(i, 1, shownTracks()));
   else if (action === 'stop') stopLoopTrack(i);
   else if (action === 'undo') undoLoopLayer(i);
 }
 
-const pedalDown = new Map<number, { at: number; timer: ReturnType<typeof setTimeout> | null; fired: boolean }>();
+const pedalDown = new Map<number, { at: number; timer: ReturnType<typeof setTimeout> | null; fired: boolean; before: string | null }>();
+
+/** Where a track is, to take a press back: armed, or an overdub still waiting for its bar. */
+function pressState(i: number): string | null {
+  const v = get(loopStationView).tracks[i];
+  return v ? `${v.phase}:${v.pending ?? ''}` : null;
+}
 
 function pedal(n: 1 | 2 | 3, value: number): void {
   const preset = get(musicStudio).loopStation.pedal;
+  const [tap, hold] = pedalActions(preset, n);
   if (value > 0) {
-    const [, hold] = pedalActions(preset, n);
-    const state = { at: performance.now(), timer: null as ReturnType<typeof setTimeout> | null, fired: false };
-    // With no hold action the tap fires on the press, for the tightest timing.
-    if (!hold) {
-      run(pedalResolve(preset, n, 0));
+    const state = { at: performance.now(), timer: null as ReturnType<typeof setTimeout> | null, fired: false, before: null as string | null };
+    // The button fires on the press, for the tightest timing; so does any tap with no hold.
+    if (tap === 'button' || !hold) {
+      state.before = pressState(selectedLoopTrack());
+      run(tap);
       state.fired = true;
-    } else {
+    }
+    if (hold) {
       state.timer = setTimeout(() => {
+        state.timer = null;
+        if (tap === 'button' && state.fired) {
+          // Held: take the press back where it can be (a recording armed, an overdub not yet begun), then undo.
+          const i = selectedLoopTrack();
+          const now = pressState(i);
+          if (state.before !== now && (now === 'armed:' || now === 'overdub:punch-in')) pressLoopTrack(i);
+        }
         state.fired = true;
         run(hold);
       }, PEDAL_HOLD_MS);
@@ -149,8 +175,8 @@ export function registerLoopControls(): void {
     { id: 'loop.sel.redo', label: 'Selected loop redo', group: g, kind: 'trigger', run: () => void redoLoopLayer(selectedLoopTrack()) },
     { id: 'loop.sel.clear', label: 'Selected loop clear', group: g, kind: 'trigger', run: () => clearLoopTrack(selectedLoopTrack()) },
     { id: 'loop.sel.mute', label: 'Selected loop mute', group: g, kind: 'toggle', run: () => toggleLoopMute(selectedLoopTrack()) },
-    { id: 'loop.next', label: 'Next loop track', group: g, kind: 'trigger', run: () => selectLoopTrack((selectedLoopTrack() + 1) % LOOP_TRACK_COUNT) },
-    { id: 'loop.prev', label: 'Previous loop track', group: g, kind: 'trigger', run: () => selectLoopTrack((selectedLoopTrack() + LOOP_TRACK_COUNT - 1) % LOOP_TRACK_COUNT) },
+    { id: 'loop.next', label: 'Next loop track', group: g, kind: 'trigger', run: () => selectLoopTrack(stepTrack(selectedLoopTrack(), 1, shownTracks())) },
+    { id: 'loop.prev', label: 'Previous loop track', group: g, kind: 'trigger', run: () => selectLoopTrack(stepTrack(selectedLoopTrack(), -1, shownTracks())) },
     { id: 'loop.start-all', label: 'Start all loops', group: g, kind: 'trigger', run: () => startAllLoopTracks() },
     { id: 'loop.stop-all', label: 'Stop all loops', group: g, kind: 'trigger', run: () => stopAllLoopTracks() },
     // The old band looper's controls (A and B were its two loops): mappings learned on them drive the loop tracks.
@@ -168,8 +194,9 @@ export function registerLoopControls(): void {
 /**
  * The looper panel's keys: 1–8 select, Space the selected track's button,
  * Shift+Space stops it, Cmd+Z / Shift+Cmd+Z undo and redo its layer, M
- * mutes, S saves, Backspace clears, Cmd+. stops all. Returns true when the
- * key was the looper's.
+ * mutes, Shift+S saves (S alone is a note on the letter keys), Backspace
+ * clears, Cmd+. stops all. A key the letter keyboard plays is never the
+ * looper's. Returns true when the key was the looper's.
  */
 export function loopKey(e: Pick<KeyboardEvent, 'key' | 'code' | 'shiftKey' | 'metaKey' | 'ctrlKey' | 'altKey' | 'repeat'>): boolean {
   if (!addonUsable('addon.audio-lab')) return false;
@@ -186,6 +213,7 @@ export function loopKey(e: Pick<KeyboardEvent, 'key' | 'code' | 'shiftKey' | 'me
     return true;
   }
   if (mod || e.altKey) return false;
+  if (musicKeyboardClaims(e as KeyboardEvent)) return false;
   if (/^Digit[1-8]$/.test(e.code)) {
     // Past the tracks showing, the key does nothing (selectLoopTrack checks).
     selectLoopTrack(Number(e.code.slice(5)) - 1);
@@ -200,7 +228,7 @@ export function loopKey(e: Pick<KeyboardEvent, 'key' | 'code' | 'shiftKey' | 'me
     toggleLoopMute(i);
     return true;
   }
-  if (e.code === 'KeyS') {
+  if (e.code === 'KeyS' && e.shiftKey) {
     void saveLoopTrack(i);
     return true;
   }

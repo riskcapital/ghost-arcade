@@ -31,6 +31,7 @@ import {
   setLoopTrackInstrument,
   setLoopTrackSound,
   liveTakeNotes,
+  selectLoopTrack,
 } from './loopStation';
 import { normalizeStationData } from './loopTrack';
 import { memoryBackend, setUserLoopsBackend, userLoops } from './userLoops';
@@ -374,6 +375,17 @@ describe('honest states', () => {
     nowSpy.mockRestore();
     // The clock was resynced to 0 (the loop's downbeat): track 1 starts there, not bars later.
     expect(_trackRuntime(1).recStart).toBe(0);
+  });
+});
+
+describe('picking a track by hand', () => {
+  it('the keys take its sound in any panel, so what is played is what it records', () => {
+    setLoopTrackSound(1, { instrument: 'synth', patch: 'pluck' });
+    musicStudio.setInstrument('keys');
+    selectLoopTrack(1);
+    expect(get(musicStudio).instrument).toBe('keys');
+    selectLoopTrack(1, true);
+    expect(get(musicStudio)).toMatchObject({ instrument: 'synth', synthPatch: 'pluck' });
   });
 });
 

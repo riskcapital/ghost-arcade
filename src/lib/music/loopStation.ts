@@ -81,6 +81,7 @@ import {
 } from './loopTrack';
 import type { AudioLoopTracks } from './audioLoopTracks';
 import { encodeWav } from './wav';
+import { showToast } from '../stores/errorToast';
 import { createAssetRefFromGeneratedBlob, pathToFileUrl, resolveAssetRefForRuntime, type AssetRef } from '../storage/assetRegistry';
 
 /** What the music runtime lends the station. */
@@ -650,12 +651,17 @@ export function stationOldestBeat(fallback: number): number {
   return oldest;
 }
 
-export function selectLoopTrack(i: number): void {
+/**
+ * Select a track. On the Looper page, or when picked by hand (`follow`: a
+ * click on its row or column, in any panel), the keys and the on-screen
+ * keyboard take the selected MIDI track's sound, so what is played is what
+ * it records.
+ */
+export function selectLoopTrack(i: number, follow = false): void {
   if (i < 0 || i >= data().trackCount) return;
   loopStationView.update((v) => ({ ...v, selected: i }));
-  // The keys and the on-screen keyboard play the selected MIDI track's instrument.
   const t = track(i);
-  if (looperFocus) followTrackSound(t);
+  if (looperFocus || follow) followTrackSound(t);
 }
 
 let looperFocus = false;
@@ -1520,8 +1526,8 @@ export async function measureLoopLatency(i: number): Promise<number | null> {
   if (!audio) return null;
   const roundTrip = await audio.measureLatency(i);
   if (roundTrip === null) return null;
-  const manual = data().latencyMs;
-  const reported = audio.latencyMs() - manual;
+  // What the system reports alone: the total is clamped at 0, so a negative offset cannot be taken back out of it.
+  const reported = audio.reportedLatencyMs ? audio.reportedLatencyMs() : audio.latencyMs() - data().latencyMs;
   musicStudio.updateLoopStation((d) => ({ ...d, latencyMs: Math.max(-200, Math.min(500, Math.round(roundTrip - reported))) }));
   return roundTrip;
 }
@@ -1685,8 +1691,14 @@ export async function insertUserLoopInSession(id: string): Promise<boolean> {
   return true;
 }
 
+/** The words for each notice, wherever the looper was played from (the Looper page, the session bar, a pedal). */
+export function loopNoticeText(message: string): string {
+  return message === 'Too short' ? 'Too short: a loop needs at least a beat.' : message === 'Nothing was played' ? 'Nothing was played, so no loop was made.' : 'No empty loop track for it. Clear a track first.';
+}
+
 function loopNotice(message: string): void {
-  noticeListener?.(message);
+  if (noticeListener) noticeListener(message);
+  else showToast(loopNoticeText(message), 'info');
 }
 
 let noticeListener: ((message: string) => void) | null = null;

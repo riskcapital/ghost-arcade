@@ -116,8 +116,8 @@ import { editStudio, studioTargetNow } from './studioTarget';
 import { normalizeStudioSource } from './studioPlugin';
 import { soundById } from './sounds/library';
 import { KeyFinder, type KeyGuess } from './keyFinder';
-import { loopMidiInstrument, attachLoopStation, captureSourceHit, captureSourceRelease, captureXyMove, killLoopStation, scheduleStation, stationBusy, stationOldestBeat, stopAllLoopTracks } from './loopStation';
-import { loopFxChannel } from './loopTrack';
+import { loopMidiInstrument, loopStationView, startLoopTrack, attachLoopStation, captureSourceHit, captureSourceRelease, captureXyMove, killLoopStation, scheduleStation, stationBusy, stationOldestBeat, stopAllLoopTracks } from './loopStation';
+import { LOOP_TRACK_COUNT, loopFxChannel } from './loopTrack';
 import { yAxisTarget } from './instrumentDress';
 import { audioLoopTracksFor, existingAudioLoopTracks } from './audioLoopEngine';
 import { registerLoopControls } from './loopControls';
@@ -453,14 +453,16 @@ function syncPadLoops(): void {
 // ── Transport ───────────────────────────────────────────────────────────
 
 /** What Stop stopped, so Play brings the same music back. */
-let resumable: { beat: boolean; loops: string[] } | null = null;
+let resumable: { beat: boolean; loops: string[]; loopTracks: number[] } | null = null;
 
-/** Stop every part (beat, loops, take, held notes); effect tails ring out. */
+/** Stop every part (beat, loops, the looper's tracks, take, held notes); effect tails ring out. */
 export function stopAll(): void {
   const s = get(musicStudio);
   const loops = Object.values(s.playingLoops).filter((id): id is string => !!id);
-  if (sequencer || loops.length) resumable = { beat: !!sequencer, loops };
+  const loopTracks = get(loopStationView).tracks.flatMap((t, i) => (t.phase === 'play' || t.phase === 'overdub' ? [i] : []));
+  if (sequencer || loops.length || loopTracks.length) resumable = { beat: !!sequencer, loops, loopTracks };
   cancelQueuedScene();
+  stopAllLoopTracks(true);
   stopAllLoops();
   if (sequencer) stopSequencer();
   machineHooks?.stop();
@@ -474,8 +476,9 @@ export function playAll(): void {
   ensureMusicRuntime();
   const back = resumable;
   resumable = null;
-  if (!back || back.beat || !back.loops.length) startSequencer();
+  if (!back || back.beat || (!back.loops.length && !back.loopTracks.length)) startSequencer();
   for (const id of back?.loops ?? []) launchLoop(id, true);
+  for (const i of back?.loopTracks ?? []) startLoopTrack(i);
 }
 
 /** Silence everything at once, effect tails included. */
@@ -2212,7 +2215,7 @@ function frame(): void {
     syncMacroFx();
     publishTransport(now);
     const loopAudio = audioLoopTracksForFrame();
-    if (loopAudio) for (let i = 0; i < 6; i++) { const level = loopAudio.levelOf(i); if (level !== null) voices.setLevel(loopTrackSource(i), level); }
+    if (loopAudio) for (let i = 0; i < LOOP_TRACK_COUNT; i++) { const level = loopAudio.levelOf(i); if (level !== null) voices.setLevel(loopTrackSource(i), level); }
     if (loopRec) publishLoopRec(launchClockPosition().beat);
   } else if (studioHostsLive() > 0) {
     // No audio yet (the studio has not been opened this session): a studio
