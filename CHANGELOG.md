@@ -1,3 +1,7 @@
+# Ghost Arcade Pro 2.1.12 — November 24, 2026
+
+A Timeline that scores the whole stage: rows per mapped piece, groups, presets, looks, control lines, LED, Screen FX and audio rows, sections with GO, Auto show, Live key and the keys a video editor knows; Render to video on its own clock up to 120 fps with the sound in sync; two add-ons, Audio Lab (a music studio whose sound draws the picture, with ten demo songs and a looper) and Analog Synth, each with a 3-day trial; a Dome inside view with projector rings and mirror domes; Install mode for unattended shows; Find latest with community effects; editor crash recovery and much lower CPU while a show plays. See [release notes](docs/releases/v2.1.12.md).
+
 # Ghost Arcade Pro 2.1.11 — November 6, 2026
 
 An in-app editor for p5.js sketches, with import from the p5.js Web Editor, checked saves and a learning mode; New Show from Audio, show audio that plays any song and is included in Render to Video; badges that show how each video decodes, with one-click conversion for smooth playback; a Preview monitor for the VJ; saving and undo that catch every edit; mapping points that snap and nudge precisely; Screens that find their projector after displays are renumbered; quantised launches on the beat; a new welcome screen and one Mapping | VJ switch. See [release notes](docs/releases/v2.1.11.md).
