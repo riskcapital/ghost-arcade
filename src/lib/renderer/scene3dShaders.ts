@@ -707,6 +707,17 @@ fn wetted(m: Material, world: vec3f) -> Material {
   return out;
 }
 
+// Firelight on a real object (a catcher): the light the projector adds to
+// it, as it would fall on a pale matte surface. The object's own color does
+// the rest.
+fn catcher_fire(raw: Material, world: vec3f, n: vec3f) -> vec3f {
+  var m = raw;
+  m.base = vec3f(0.8);
+  m.metal = 0.0;
+  m.rough = max(raw.rough, 0.6);
+  return fire_lighting(m, world, n, normalize(view.cam_pos.xyz - world));
+}
+
 @fragment
 fn fs_wet(in: LitOut) -> @location(0) vec4f {
   let raw = materials[in.material];
@@ -715,7 +726,7 @@ fn fs_wet(in: LitOut) -> @location(0) vec4f {
   if (raw.catcher > 0.5) {
     let dark = 1.0 - shadow_at(in.world, n);
     let paint = paint_at(in.world);
-    return vec4f(paint.rgb, max(dark * 0.85, paint.a));
+    return vec4f(paint.rgb + catcher_fire(raw, in.world, n) * (1.0 - paint.a), max(dark * 0.85, paint.a));
   }
   let m = wetted(raw, in.world);
   let v = normalize(view.cam_pos.xyz - in.world);
@@ -732,7 +743,7 @@ fn fs_relief_wet(in: LitOut) -> @location(0) vec4f {
   if (raw.catcher > 0.5) {
     let dark = 1.0 - shadow_at(in.world, n);
     let paint = paint_at(in.world);
-    return vec4f(thrown * (1.0 - paint.a) + paint.rgb, clamp(max(dark * 0.85, paint.a), 0.0, 1.0));
+    return vec4f((thrown + catcher_fire(raw, in.world, n)) * (1.0 - paint.a) + paint.rgb, clamp(max(dark * 0.85, paint.a), 0.0, 1.0));
   }
   let m = wetted(raw, in.world);
   let reflectance = m.base * (1.0 - m.metal) + vec3f(0.12);
