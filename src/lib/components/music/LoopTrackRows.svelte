@@ -22,7 +22,7 @@
     type LiveNote,
     type TrackView,
   } from '../../music/loopStation';
-  import { beatNow, trackProgress } from '../../music/loopUi';
+  import { beatNow, stateLine, trackProgress } from '../../music/loopUi';
   import { parseSoundValue, setTrackKind, wrapBeat, type LoopTrackKind } from '../../music/loopTrack';
   import { SOURCE_MENU_LABELS, trackSoundLabel, type LoopSource } from '../../music/loopSources';
   /** The tab instruments a MIDI track can record. */
@@ -154,7 +154,7 @@
     {@const live = recording ? liveTakeNotes(i, $beatNow) : []}
     {@const bars = Math.max(1, Math.round((span || 16) / 4))}
     <div class="tr" class:sel={view.selected === i}>
-      <div class="hd" role="presentation" onpointerdown={() => selectLoopTrack(i)}>
+      <div class="hd" role="presentation" onpointerdown={() => selectLoopTrack(i, true)}>
         <LoopTrackButton index={i} />
         <div class="info">
           {#if v.phase === 'empty'}
@@ -184,6 +184,7 @@
           {:else}
             <div class="name">{t.name || (t.kind === 'audio' ? `Audio ${i + 1}` : trackSoundLabel(t, s.instrument))}</div>
             <div class="ga-eyebrow sub">{t.kind === 'audio' ? `Input ${t.input + 1}` : trackSoundLabel(t, s.instrument)} · {bars} bar{bars === 1 ? '' : 's'}{v.phase === 'overdub' ? ` · pass ${v.layers + 1}` : ''}</div>
+            {#if stateLine(v, $beatNow)}<div class="state" class:wait={v.waiting}>{stateLine(v, $beatNow)}</div>{/if}
             <div class="chips">
               {#each { length: v.layers } as _, li}<b class:new={v.phase === 'overdub' && li === v.layers - 1}>L{li + 1}</b>{/each}
               <button onclick={() => undoLoopLayer(i)} disabled={!v.layers} title="Undo the last layer (Cmd+Z)">Undo</button>
@@ -214,7 +215,7 @@
               <svg viewBox="0 0 200 20" preserveAspectRatio="none" aria-hidden="true"><path d={v.layers ? wavePath(i) : ''} /></svg>
             {/if}
           </div>
-          {#if v.phase === 'play' || v.phase === 'overdub' || v.phase === 'record'}
+          {#if v.phase === 'play' || v.phase === 'overdub' || v.phase === 'record' || (v.phase === 'armed' && v.waitBeats > 0)}
             <div class="ph" style="left: {headAt(v, $beatNow, span) * 100}%"></div>
           {/if}
         {/if}
@@ -237,7 +238,7 @@
     <button class="text-btn small" onclick={() => (saving = null)}>Cancel</button>
   {/if}
   <span class="sp"></span>
-  <span class="hint">Hold the track button to undo a layer · Space records the selected track</span>
+  <span class="hint">Space records the selected track · Shift+S saves it · Cmd+Z undoes a layer</span>
 </div>
 
 <style>
@@ -249,6 +250,8 @@
   .name { font-weight: 600; font-size: var(--ga-text-control, 12px); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .name.empty { color: var(--studio-muted); font-weight: 500; }
   .sub { margin: 0; }
+  .state { font-size: var(--ga-text-meta, 11px); color: var(--studio-loop-dub); }
+  .state.wait { color: var(--studio-loop-rec); }
   .pick { display: flex; gap: 4px; margin-top: 4px; flex-wrap: wrap; }
   .pick select { height: 22px; max-width: 120px; }
   .chips { display: flex; gap: 4px; margin-top: 4px; flex-wrap: wrap; }

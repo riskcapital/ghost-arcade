@@ -9,9 +9,9 @@
   import { musicStudio } from '../../music/musicStudioStore';
   import { QUANTIZE_GRIDS, type QuantizeId } from '../../music/loopRecorder';
   import { captureLoop, ensureMusicRuntime } from '../../music/musicRuntime';
-  import { COUNT_INS, LOOP_LENGTHS, type CountIn, type LoopLength } from '../../music/loopTrack';
+  import { COUNT_INS, LOOP_LENGTHS, type CountIn, type LoopLength, type StartMode } from '../../music/loopTrack';
   import { loopStationView, pressLoopTrack } from '../../music/loopStation';
-  import { beatNow } from '../../music/loopUi';
+  import { beatNow, buttonLabel, buttonTone } from '../../music/loopUi';
   import { keyLabel } from '../../music/studioSets';
   import { downloadMidi, importMidi, playingSong } from '../../music/midiExport';
   import { readMidiFile } from '../../music/midiFile';
@@ -30,7 +30,7 @@
   const selTrack = $derived(station.tracks[sel]);
   let fileInput = $state<HTMLInputElement | null>(null);
 
-  const left = $derived(v.phase === 'armed' ? Math.max(1, Math.ceil(v.startBeat - $beatNow)) : v.phase === 'record' && v.endBeat !== null ? Math.max(1, Math.ceil((v.endBeat - $beatNow) / 4)) : 0);
+  const tone = $derived(buttonTone(v, selTrack?.muted ?? false));
   const position = $derived.by(() => {
     const b = Math.max(0, $beatNow);
     return `${Math.floor(b / 4) + 1}.${(Math.floor(b) % 4) + 1}.${Math.floor((b % 1) * 4) + 1}`;
@@ -86,16 +86,16 @@
   <span class="pair">
     {#if !compact}<span class="ga-eyebrow ey">Loop record</span>{/if}
     <button
-      class="loop-rec"
-      class:on={v.phase === 'record' || v.phase === 'overdub'}
-      class:count={v.phase === 'armed'}
-      onclick={press}
+      class="loop-rec {tone}"
+      class:pending={v.pending !== null}
+      onpointerdown={(e) => { if (e.button === 0) { e.preventDefault(); press(); } }}
+      onclick={(e) => { if (e.detail === 0) press(); }}
       aria-pressed={v.phase === 'record' || v.phase === 'overdub' || v.phase === 'armed'}
       aria-label="Loop record"
       title="Loop track {sel + 1}: record, overdub or play it (Space in the looper)"
     >
       <span class="dot"></span>
-      {#if v.phase === 'armed'}In {left}{:else if v.phase === 'record'}{#if v.endBeat !== null}Rec {left}{:else}Rec{/if}{:else if v.phase === 'overdub'}Dub{:else if v.phase === 'play'}Overdub{:else if v.phase === 'stopped'}Play{:else}Rec{/if}
+      {#if v.phase === 'play' && !v.pending}Overdub{:else if v.phase === 'stopped'}Play{:else}{buttonLabel(v, $beatNow)}{/if}
     </button>
   </span>
   <span class="pair">
@@ -107,6 +107,13 @@
     </div>
   </span>
   {#if !compact}
+    <span class="pair">
+      <span class="ga-eyebrow ey">Start</span>
+      <select value={station.startMode} onchange={(e) => musicStudio.updateLoopStation((d) => ({ ...d, startMode: (e.target as HTMLSelectElement).value as StartMode }))} aria-label="Start" title="A MIDI take starts with the first note you play (on the bar nearest it, lined up with the loops playing), or on the next bar after the press">
+        <option value="note">On first note</option>
+        <option value="bar">On next bar</option>
+      </select>
+    </span>
     <span class="pair">
       <span class="ga-eyebrow ey">Count-in</span>
       <select value={station.countIn} onchange={(e) => musicStudio.updateLoopStation((d) => ({ ...d, countIn: Number((e.target as HTMLSelectElement).value) as CountIn }))} aria-label="Count-in" title="Bars of clicks before a recording when nothing is playing">
@@ -168,5 +175,12 @@
   }
   /* Wide enough for "Rec 4" and "Overdub", so the bar does not shift while recording. */
   .loop-rec { min-width: 72px; }
-  .loop-rec.on, .loop-rec.count { color: var(--studio-rec); border-color: var(--studio-rec); }
+  .loop-rec.rec, .loop-rec.armed { color: var(--studio-loop-rec); border-color: var(--studio-loop-rec); }
+  .loop-rec.armed { animation: loop-arm 1s ease-in-out infinite; }
+  .loop-rec.dub { color: var(--studio-loop-dub); border-color: var(--studio-loop-dub); }
+  .loop-rec.play { color: var(--studio-loop-play); border-color: var(--studio-loop-play); }
+  .loop-rec.pending { animation: loop-pending 0.5s steps(2, jump-none) infinite; }
+  @keyframes loop-arm { 50% { opacity: 0.45; } }
+  @keyframes loop-pending { 50% { border-color: var(--studio-ink); } }
+  @media (prefers-reduced-motion: reduce) { .loop-rec.armed, .loop-rec.pending { animation: none; } }
 </style>

@@ -23,6 +23,13 @@
   /* Recording and overdubbing (the live looper): coral, the one other accent. */
   --studio-rec: #ff6b57;
   --studio-rec-soft: rgba(255, 107, 87, 0.16);
+  /* The live looper's states, as on a hardware looper: record red, overdub amber, play green. */
+  --studio-loop-rec: #ff3b30;
+  --studio-loop-rec-soft: rgba(255, 59, 48, 0.16);
+  --studio-loop-dub: #f5a623;
+  --studio-loop-dub-soft: rgba(245, 166, 35, 0.16);
+  --studio-loop-play: #34c759;
+  --studio-loop-play-soft: rgba(52, 199, 89, 0.14);
   --studio-knob-face: radial-gradient(circle at 35% 30%, #3b362e, #13110e 70%);
   --studio-knob-edge: #3d382f;
   --studio-pointer: var(--studio-ink);

@@ -24,7 +24,7 @@
     toggleLoopMute,
     undoLoopLayer,
   } from '../../music/loopStation';
-  import { beatNow } from '../../music/loopUi';
+  import { beatNow, stateLine } from '../../music/loopUi';
   import { COUNT_INS, LOOP_LENGTHS, LOOP_TRACK_COUNT, type LoopLength, PEDAL_PRESETS, type CountIn, type PedalPreset } from '../../music/loopTrack';
   import { INSTRUMENT_LABELS, KEYS_PATCHES, SYNTH_PATCHES } from '../../music/instruments';
   import { TONES, TONE_FAMILY_LABELS, type ToneFamily } from '../../music/tone/tones';
@@ -230,10 +230,11 @@
       {@const t = station.tracks[i]}
       {@const v = view.tracks[i]}
       {@const bars = Math.max(1, Math.round(v.beats / 4))}
-      <div class="col" class:sel={view.selected === i} role="presentation" onpointerdown={() => selectLoopTrack(i)}>
+      <div class="col" class:sel={view.selected === i} role="presentation" onpointerdown={() => selectLoopTrack(i, true)}>
         {#if compact}<span class="num">{i + 1}</span>{/if}
         <LoopTrackButton index={i} size={compact ? 74 : 96} ring />
         <div class="txt">
+        {#if stateLine(v, $beatNow)}<div class="state" class:wait={v.waiting}>{stateLine(v, $beatNow)}</div>{/if}
         {#if v.phase === 'empty'}
           <div class="name empty">{t.name || 'Empty'}</div>
           <div class="pick">
@@ -283,6 +284,7 @@
           {:else}
             <button class:on={t.muted} onclick={() => toggleLoopMute(i)} title="Mute (M)">M</button>
             <button onclick={() => stopLoopTrack(i)} title="Stop on the next bar (Shift+Space)" aria-label="Stop"><svg viewBox="0 0 10 10" aria-hidden="true"><rect x="2" y="2" width="6" height="6" /></svg></button>
+            <button onclick={() => undoLoopLayer(i)} disabled={!v.layers} title="Undo the last layer (Cmd+Z)">Undo</button>
             <button onclick={() => clearLoopTrack(i)} title="Empty the track (Undo brings it back)">Clear</button>
             <button onclick={() => save(i)} title="Save it to My loops (S)">Save</button>
             <!-- The dub shots and the drum pads play through their own effects (their FX buttons on their tabs). -->
@@ -308,7 +310,7 @@
     {/each}
     <button class="text-btn small" onclick={snapshot} title="Keep which tracks play now as a section">+ Snapshot</button>
     <span class="sp"></span>
-    <span class="hint">Space = selected track · hold = undo layer · 1–{station.trackCount} select</span>
+    <span class="hint">Space = selected track · Cmd+Z = undo layer · 1–{station.trackCount} select</span>
   </div>
   {/if}
 </div>
@@ -320,6 +322,8 @@
   .bpm { font-variant-numeric: tabular-nums; font-size: var(--ga-text-control, 12px); }
   .pedal, .keys { font-size: var(--ga-text-meta, 11px); color: var(--studio-muted); display: inline-flex; align-items: center; gap: 4px; }
   .sp { flex: 1; }
+  .state { font-size: var(--ga-text-meta, 11px); color: var(--studio-loop-dub); text-align: center; }
+  .state.wait { color: var(--studio-loop-rec); }
   .pc-off { width: 46px; height: 22px; }
   .phrase { height: 3px; background: var(--studio-edge-soft); }
   .phrase i { display: block; height: 100%; background: var(--studio-accent); }
