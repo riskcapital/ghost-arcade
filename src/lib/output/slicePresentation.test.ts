@@ -42,6 +42,7 @@ function harness(platform: 'win32'|'darwin', {available = true, attach = true, s
     process:{platform,env:{}},app:{isPackaged:true},path:{join:(...s:string[])=>s.join('/')},__dirname:'/app/electron',
     attachSliceNativeLayer:attachLayer,enterSliceFullscreen,showOnDisplayFullscreen,detachSliceNativeLayer:vi.fn(),console,
     refreshSliceNativeLayerRects:vi.fn(),
+    useRendererDevServer:()=>false,rendererIndexHtml:()=>'/app/dist/index.html',
   });
   const openScreen = (sliceId: string) => callback(null,{sliceId,displayId:5});
   return {openScreen,windows,attachLayer,sliceWindows,broker,showOnDisplayFullscreen,enterSliceFullscreen};
