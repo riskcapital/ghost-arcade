@@ -14,12 +14,14 @@
   import { loopStationView, openTrackInFullEditor, setTrackLayers } from '../../music/loopStation';
   import { beatNow, trackProgress } from '../../music/loopUi';
   import { flattenMidi, type MidiLayer } from '../../music/loopTrack';
-  import { addNote, doubleLoop, halveLoop, nudgeNote, quantizeLayer, removeNote, resizeNote, setVelocity, transposeLayer } from '../../music/quickEdit';
+  import { drawNote, doubleLoop, halveLoop, nudgeNote, quantizeLayer, removeNote, resizeNote, setVelocity, transposeLayer } from '../../music/quickEdit';
   import { isBlackKey, noteName } from '../../music/noteEvents';
   import { INSTRUMENT_LABELS } from '../../music/instruments';
   import { clipEditorId } from '../../music/studioUi';
   import { playingKit } from '../../music/drumMachine/machineRuntime';
   import { isHitSource } from '../../music/loopSources';
+  import { holdLoopEditorKeys } from '../../music/loopControls';
+  import { onDestroy } from 'svelte';
 
   let { index, onclose, onsave }: { index: number; onclose?: () => void; onsave?: () => void } = $props();
 
@@ -47,6 +49,8 @@
   let shownLayer = $state(-1);
   let selected = $state<{ layer: number; i: number } | null>(null);
   let rollEl = $state<HTMLDivElement | null>(null);
+  // While the editor is open, Backspace deletes the selected note, not the whole track.
+  onDestroy(holdLoopEditorKeys());
 
   const notes = $derived(flattenMidi({ layers: t.layers, redo: [] }));
   /** A dub shots or drum pads loop: one row per shot or pad (note = its number), named as on its tab. */
@@ -68,7 +72,6 @@
     return { lo: Math.max(0, lo), hi: Math.min(127, hi) };
   });
   const rows = $derived(Array.from({ length: range.hi - range.lo + 1 }, (_, k) => range.hi - k));
-  const editLayer = $derived(shownLayer >= 0 ? Math.min(shownLayer, t.layers.length - 1) : t.layers.length - 1);
   const sel = $derived(selected && t.layers[selected.layer]?.[selected.i] ? { ...t.layers[selected.layer][selected.i], ...selected } : null);
 
   function commit(layers: MidiLayer[], newBeats = beats) {
@@ -90,12 +93,12 @@
   function clickRoll(e: MouseEvent) {
     if (e.target !== e.currentTarget) return;
     const p = pos(e);
-    if (!p || tool !== 'draw' || editLayer < 0) return;
+    if (!p || tool !== 'draw' || !(beats > 0)) return;
     const beat = Math.floor(p.beat / grid) * grid;
-    const layers = withLayer(editLayer, (l) => addNote(l, beat, p.note, grid, 0.8, beats));
-    commit(layers);
-    const i = layers[editLayer].findIndex((n) => Math.abs(n.beat - beat) < 1e-6 && n.note === p.note);
-    selected = { layer: editLayer, i };
+    // A track with no layer left (every note deleted, or cleared) gets one: drawing always works.
+    const drawn = drawNote(t.layers, shownLayer, beat, p.note, grid, 0.8, beats);
+    commit(drawn.layers);
+    selected = drawn.index >= 0 ? { layer: drawn.layer, i: drawn.index } : null;
   }
 
   function clickNote(e: MouseEvent, layer: number, i: number) {
@@ -163,6 +166,7 @@
       e.preventDefault();
       e.stopPropagation();
       const { layer, i } = sel;
+      // Only the selected note goes; the layer stays, so drawing goes on.
       commit(withLayer(layer, (l) => removeNote(l, i)));
       selected = null;
     }

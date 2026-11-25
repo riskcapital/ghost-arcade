@@ -21,7 +21,7 @@ vi.mock('./loopStation', () => {
   };
 });
 
-import { loopKey, pedalActions, pedalResolve, stepTrack } from './loopControls';
+import { holdLoopEditorKeys, loopKey, pedalActions, pedalResolve, stepTrack } from './loopControls';
 import * as station from './loopStation';
 import { setAddonsStatusForTests } from '../addons/addonAccess';
 
@@ -68,5 +68,18 @@ describe('next and previous track', () => {
     calls.length = 0;
     expect(loopKey(k('KeyS', { shiftKey: true }))).toBe(true);
     expect(calls).toEqual(['save 2']);
+  });
+});
+
+describe('looper keys with a note editor open', () => {
+  it('Backspace deletes a note in the editor, never the whole track (regression)', () => {
+    const release = holdLoopEditorKeys();
+    calls.length = 0;
+    expect(loopKey(k('Backspace', { key: 'Backspace' }))).toBe(false);
+    expect(calls.filter((c) => c.startsWith('clear'))).toEqual([]);
+    release();
+    release();
+    expect(loopKey(k('Backspace', { key: 'Backspace' }))).toBe(true);
+    expect(calls.some((c) => c.startsWith('clear'))).toBe(true);
   });
 });

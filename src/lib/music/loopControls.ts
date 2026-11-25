@@ -191,6 +191,23 @@ export function registerLoopControls(): void {
   registerStudioControls(list);
 }
 
+let noteEditors = 0;
+
+/**
+ * A note editor on a loop track is open: while it is, Backspace and Delete
+ * are its keys (they delete the selected note) and never clear the track.
+ * Returns the release.
+ */
+export function holdLoopEditorKeys(): () => void {
+  noteEditors++;
+  let held = true;
+  return () => {
+    if (!held) return;
+    held = false;
+    noteEditors = Math.max(0, noteEditors - 1);
+  };
+}
+
 /**
  * The looper panel's keys: 1–8 select, Space the selected track's button,
  * Shift+Space stops it, Cmd+Z / Shift+Cmd+Z undo and redo its layer, M
@@ -233,6 +250,8 @@ export function loopKey(e: Pick<KeyboardEvent, 'key' | 'code' | 'shiftKey' | 'me
     return true;
   }
   if (e.key === 'Backspace') {
+    // With a note editor open, Backspace deletes its selected note, never the whole track.
+    if (noteEditors > 0) return false;
     clearLoopTrack(i);
     return true;
   }

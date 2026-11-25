@@ -42,6 +42,28 @@ export function addNote(layer: MidiLayer, beat: number, note: number, dur: numbe
   return sort([...layer, { beat: b, note: clampNote(note), dur: Math.max(MIN_DUR, Math.min(dur, beats - b)), velocity: clampVelocity(velocity) }]);
 }
 
+/**
+ * Draw a note on a track's layers: on the shown layer (-1: the newest). A
+ * track with no layer left (cleared, or every note deleted) gets one, so
+ * drawing always works while the loop has a length.
+ */
+export function drawNote(
+  layers: MidiLayer[],
+  shownLayer: number,
+  beat: number,
+  note: number,
+  dur: number,
+  velocity: number,
+  beats: number,
+): { layers: MidiLayer[]; layer: number; index: number } {
+  const base = layers.length ? layers : [[]];
+  const layer = shownLayer >= 0 ? Math.min(shownLayer, base.length - 1) : base.length - 1;
+  const next = base.map((l, k) => (k === layer ? addNote(l, beat, note, dur, velocity, beats) : l));
+  const b = wrapBeat(beat, beats);
+  const index = next[layer].findIndex((n) => Math.abs(n.beat - b) < 1e-6 && n.note === clampNote(note));
+  return { layers: next, layer, index };
+}
+
 export function removeNote(layer: MidiLayer, index: number): MidiLayer {
   return layer.filter((_, i) => i !== index);
 }

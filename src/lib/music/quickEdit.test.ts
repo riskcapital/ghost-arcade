@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { addNote, doubleLoop, halveLoop, nudgeNote, quantizeLayer, removeNote, resizeNote, setVelocity, transposeLayer } from './quickEdit';
+import { addNote, drawNote, doubleLoop, halveLoop, nudgeNote, quantizeLayer, removeNote, resizeNote, setVelocity, transposeLayer } from './quickEdit';
 
 const n = (beat: number, note = 60, dur = 0.5) => ({ beat, note, dur, velocity: 0.8 });
 
@@ -31,5 +31,34 @@ describe('quick MIDI editor edits', () => {
     const d = doubleLoop([[n(1)]], 8);
     expect(d.beats).toBe(16);
     expect(d.layers[0].map((x) => x.beat)).toEqual([1, 9]);
+  });
+
+  it('deleting the only note leaves the loop drawable (regression)', () => {
+    // One 1/4 note drawn into a 1-bar loop, then deleted.
+    let { layers, layer, index } = drawNote([[]], -1, 1, 60, 1, 0.8, 4);
+    expect(layers).toEqual([[{ beat: 1, note: 60, dur: 1, velocity: 0.8 }]]);
+    layers = layers.map((l, k) => (k === layer ? removeNote(l, index) : l));
+    expect(layers).toEqual([[]]);
+    // A new note still goes in.
+    ({ layers } = drawNote(layers, -1, 2, 62, 1, 0.8, 4));
+    expect(layers[0]).toEqual([{ beat: 2, note: 62, dur: 1, velocity: 0.8 }]);
+  });
+
+  it('deleting one note keeps the others', () => {
+    const layers = [[n(0), n(1, 62), n(2, 64)]];
+    expect(removeNote(layers[0], 1).map((x) => x.note)).toEqual([60, 64]);
+  });
+
+  it('draws on a track with no layers left (cleared): it gets one', () => {
+    const r = drawNote([], -1, 0, 60, 0.25, 0.8, 4);
+    expect(r.layers).toHaveLength(1);
+    expect(r.layer).toBe(0);
+    expect(r.index).toBe(0);
+  });
+
+  it('draws on the shown layer, or the newest', () => {
+    const base = [[n(0)], [n(1)]];
+    expect(drawNote(base, 0, 2, 60, 1, 0.8, 4).layers[0]).toHaveLength(2);
+    expect(drawNote(base, -1, 2, 60, 1, 0.8, 4).layers[1]).toHaveLength(2);
   });
 });
