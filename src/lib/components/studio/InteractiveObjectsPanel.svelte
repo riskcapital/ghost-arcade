@@ -243,7 +243,7 @@
   <div class="tools">
     {#if world}
       <button class="ignite" disabled={effectsFull} onclick={() => onattach('flames')}>♨ Fire &amp; smoke</button>
-      <button disabled={effectsFull} onclick={() => onattach('drips')}>Paint drips</button>
+      <button disabled={effectsFull} onclick={() => onattach('drips')}>Drip blobs</button>
       <button disabled={effectsFull} onclick={() => onattach('balls3d')}>Balls</button>
     {:else}
       <button class="ignite" disabled={effectsFull} onclick={() => onattach('fire')}>♨ Ignite</button>

@@ -417,6 +417,9 @@ export function buildWorldPart(options: WorldPartOptions): WorldPart {
   const ballBytes = layout.count * BALL_FLOATS * 4;
   const wet = wetSize(aspect);
   textures.push({ id: id('wet-stain'), ...wet, format: 'rgba16float' }, { id: id('wet-gloss'), ...wet, format: 'rgba16float' });
+  // The liquid paint's screen fields, at the scene's own size.
+  const hdr = textures.find((t) => (t as { id: string }).id === id('hdr')) as { width: number; height: number } | undefined;
+  if (hdr) textures.push({ id: id('liquid-field'), width: hdr.width, height: hdr.height, format: 'rgba16float' }, { id: id('liquid-where'), width: hdr.width, height: hdr.height, format: 'rgba16float' }, { id: id('liquid-blur'), width: hdr.width, height: hdr.height, format: 'rgba16float' });
   const buffers = [
     ...graph.config.buffers,
     ...ballValues,
@@ -504,11 +507,38 @@ export function buildWorldPart(options: WorldPartOptions): WorldPart {
     { binding: 5, kind: 'graph-depth-texture', texture: id('shadow') }, b(9, 'lights', 'read-only-storage'),
     b(17, 'ball-phys', 'uniform'), b(21, 'drips', 'read-only-storage'), b(22, 'drip-kinds', 'read-only-storage'), b(23, 'fire-lights', 'uniform'),
   ];
-  after('balls', {
-    name: 'drips', shader_id: 'scene3d/drips-draw', vertex_entry: 'vs_drip', fragment_entry: flatTexture ? 'fs_drip_relief' : 'fs_drip',
-    target: 'texture', texture: id('hdr'), clear: false, depth: true, depth_write: true, depth_load: true, depth_texture: id('depth'),
-    vertex_count: 6, instance_count: paint.count,
-    bindings: flatTexture ? [...dripDraw, { binding: 11, kind: 'graph-texture', texture: flatTexture }, { binding: 12, kind: 'source-frame-sampler' }] : dripDraw,
+  // The paint as liquid: every drop adds a soft blob to two screen fields
+  // (its color and amount, its position and gloss), then one pass draws the
+  // fields as a single surface, so drops flow together instead of standing as beads.
+  const field = (name: string, fragment: string) => ({
+    name, shader_id: 'scene3d/drips-draw', vertex_entry: 'vs_liquid', fragment_entry: fragment,
+    target: 'texture', texture: id(name), clear: true, clear_color: [0, 0, 0, 0], blend: 'add',
+    vertex_count: 6, instance_count: paint.count, bindings: dripDraw,
+  });
+  after('balls', field('liquid-field', 'fs_liquid_field'));
+  after('liquid-field', field('liquid-where', 'fs_liquid_where'));
+  // Blur the field across into a spare texture and back down into the field.
+  const blur = (name: string, fragment: string, from: string, to: string) => ({
+    name, shader_id: 'scene3d/drips-draw', vertex_entry: 'vs_full', fragment_entry: fragment,
+    target: 'texture', texture: id(to), clear: true, clear_color: [0, 0, 0, 0], vertex_count: 3,
+    bindings: [...dripDraw, { binding: 28, kind: 'graph-texture', texture: id(from) }],
+  });
+  after('liquid-where', blur('liquid-blur-x', 'fs_liquid_blur_x', 'liquid-field', 'liquid-blur'));
+  after('liquid-blur-x', blur('liquid-blur-y', 'fs_liquid_blur_y', 'liquid-blur', 'liquid-field'));
+  // The position field blurred the same way, so position over amount stays true.
+  after('liquid-blur-y', blur('liquid-where-x', 'fs_liquid_blur_x', 'liquid-where', 'liquid-blur'));
+  after('liquid-where-x', blur('liquid-where-y', 'fs_liquid_blur_y', 'liquid-blur', 'liquid-where'));
+  const liquidTextures = [
+    { binding: 28, kind: 'graph-texture', texture: id('liquid-field') },
+    { binding: 29, kind: 'graph-texture', texture: id('liquid-where') },
+  ];
+  after('liquid-where-y', {
+    name: 'drips', shader_id: 'scene3d/drips-draw', vertex_entry: 'vs_full', fragment_entry: flatTexture ? 'fs_liquid_relief' : 'fs_liquid',
+    target: 'texture', texture: id('hdr'), clear: false, blend: 'alpha', depth: true, depth_write: true, depth_load: true, depth_texture: id('depth'),
+    vertex_count: 3,
+    bindings: flatTexture
+      ? [...dripDraw, { binding: 11, kind: 'graph-texture', texture: flatTexture }, { binding: 12, kind: 'source-frame-sampler' }, ...liquidTextures]
+      : [...dripDraw, ...liquidTextures],
   });
   const flameDraw = [
     b(0, 'settings', 'uniform'), { binding: 1, resource: frameBuffer.id, kind: 'uniform' }, b(2, 'view', 'read-only-storage'),
@@ -552,7 +582,7 @@ export function buildWorldPart(options: WorldPartOptions): WorldPart {
         ] : []),
       ].map(({ id, initial_b64 }) => ({ id, initial_b64, key: initial_b64 }));
     },
-    topology: `${geo.mode}|${world.flat}|${flatTexture ? JSON.stringify(flatSize(width, height)) : ''}|balls:${layout.count}:${layout.effects.length}|drips:${paint.count}:${paint.effects.length}:${JSON.stringify(wet)}|flames:${fire.count}:${fire.effects.length}|${graph.topology}`,
+    topology: `${geo.mode}|${world.flat}|${flatTexture ? JSON.stringify(flatSize(width, height)) : ''}|balls:${layout.count}:${layout.effects.length}|drips:liquid:${paint.count}:${paint.effects.length}:${JSON.stringify(wet)}|flames:${fire.count}:${fire.effects.length}|${graph.topology}`,
     flatTexture,
     zoneHits: ballZones(scene).length ? { bufferId: id('zone-hits'), zoneIds: ballZones(scene).map((z) => z.id) } : null,
   };

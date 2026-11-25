@@ -896,6 +896,149 @@ fn fs_drip_relief(in: DripOut) -> DripFrag {
   return f;
 }
 
+// ── Liquid paint ─────────────────────────────────────────────────────────
+// The drops are not drawn one by one: each adds a soft blob to a field on the
+// screen, stretched along its motion, and the field is drawn as one surface.
+// Neighbors flow together into runs, sheets and pools; a lone drop stays a bead.
+
+// How far a drop's blob reaches, in drop radii, and the field level its surface sits at.
+const LIQUID_REACH = 3.2;
+const LIQUID_EDGE = vec2f(0.45, 0.78);
+
+struct LiquidOut {
+  @builtin(position) clip: vec4f,
+  @location(0) uv: vec2f,
+  @location(1) @interpolate(flat) index: u32,
+}
+
+@vertex
+fn vs_liquid(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> LiquidOut {
+  let d = drips[ii];
+  var out: LiquidOut;
+  out.index = ii;
+  if (d.pos.w <= 0.0) { out.clip = OFFSCREEN; return out; }
+  let c = corner(vi);
+  // Its motion across the screen: a fast drop stretches into a run.
+  let across = vec2f(dot(d.vel.xyz, view.cam_right.xyz), dot(d.vel.xyz, view.cam_up.xyz));
+  let speed = length(across);
+  let axis = select(vec2f(0.0, 1.0), across / max(speed, 1e-5), speed > 1e-4);
+  let side = vec2f(-axis.y, axis.x);
+  let stretch = 1.0 + min(2.5, speed * 5.0);
+  let q = (axis * c.y * stretch + side * c.x) * d.pos.w * LIQUID_REACH;
+  let world = d.pos.xyz + view.cam_right.xyz * q.x + view.cam_up.xyz * q.y;
+  out.clip = view.view_proj * vec4f(world, 1.0);
+  out.uv = c;
+  return out;
+}
+
+// A metaball falloff: flat enough at the middle that neighbors add up into one shape.
+fn liquid_weight(uv: vec2f) -> f32 {
+  let r2 = dot(uv, uv);
+  if (r2 > 1.0) { return 0.0; }
+  let k = 1.0 - r2;
+  return k * k;
+}
+
+// Field: the paint's color and how much paint, added up (rgb * w, w).
+@fragment
+fn fs_liquid_field(in: LiquidOut) -> @location(0) vec4f {
+  let d = drips[in.index];
+  let w = liquid_weight(in.uv);
+  if (w <= 0.0) { discard; }
+  return vec4f(drip_color(u32(d.info.x), d.info.y) * w, w);
+}
+
+// Where: the paint's position, bulging toward the camera at a blob's middle,
+// and its gloss, added up the same way (xyz * w, gloss * w).
+@fragment
+fn fs_liquid_where(in: LiquidOut) -> @location(0) vec4f {
+  let d = drips[in.index];
+  let w = liquid_weight(in.uv);
+  if (w <= 0.0) { discard; }
+  let to_cam = normalize(view.cam_pos.xyz - d.pos.xyz);
+  let bulge = sqrt(max(0.0, 1.0 - dot(in.uv, in.uv))) * d.pos.w;
+  let gloss = clamp(dparam(u32(d.info.x), D_GLOSS), 0.0, 1.0);
+  return vec4f((d.pos.xyz + to_cam * bulge) * w, gloss * w);
+}
+
+@group(0) @binding(28) var liquid_field: texture_2d<f32>;
+@group(0) @binding(29) var liquid_where: texture_2d<f32>;
+
+fn liquid_at(p: vec2i) -> vec4f {
+  let size = vec2i(textureDimensions(liquid_field));
+  return textureLoad(liquid_field, clamp(p, vec2i(0), size - 1), 0);
+}
+
+// The field blurred across, then down, so the blobs of a run melt into one
+// smooth body before its surface is found.
+fn liquid_blur(clip: vec4f, step: vec2i) -> vec4f {
+  let p = vec2i(clip.xy);
+  var sum = liquid_at(p) * 0.2;
+  let w = array<f32, 4>(0.17, 0.12, 0.07, 0.03);
+  for (var i = 1; i <= 4; i++) {
+    sum += (liquid_at(p + step * i * 2) + liquid_at(p - step * i * 2)) * w[i - 1];
+  }
+  return sum / (0.2 + 2.0 * (0.17 + 0.12 + 0.07 + 0.03));
+}
+
+@fragment
+fn fs_liquid_blur_x(in: FullOut) -> @location(0) vec4f { return liquid_blur(in.clip, vec2i(1, 0)); }
+
+@fragment
+fn fs_liquid_blur_y(in: FullOut) -> @location(0) vec4f { return liquid_blur(in.clip, vec2i(0, 1)); }
+
+// The surface: where the field is deep enough there is paint; its slope tilts
+// the surface, so runs are round and pools flatten out; it is lit like the drops.
+fn liquid_shade(clip: vec4f) -> DripFrag {
+  var out: DripFrag;
+  let p = vec2i(clip.xy);
+  let f = liquid_at(p);
+  let w = f.a;
+  if (w < LIQUID_EDGE.x) { out.depth = 2.0; return out; }
+  let cover = smoothstep(LIQUID_EDGE.x, LIQUID_EDGE.y, w);
+  let e = 5;
+  let gx = liquid_at(p + vec2i(e, 0)).a - liquid_at(p - vec2i(e, 0)).a;
+  let gy = liquid_at(p + vec2i(0, e)).a - liquid_at(p - vec2i(0, e)).a;
+  let where_ = textureLoad(liquid_where, p, 0);
+  let hit = where_.xyz / w;
+  let gloss = clamp(where_.w / w, 0.0, 1.0);
+  let to_cam = normalize(view.cam_pos.xyz - hit);
+  // Screen y runs down. The surface curves at its edges and lies flat over a
+  // deep pool, so a run of drops reads as one body of paint, not a row of beads.
+  let flat_ = 1.0 - smoothstep(LIQUID_EDGE.y, LIQUID_EDGE.y * 2.6, w);
+  let tilt = vec2f(-gx, gy) * (1.4 / (1.0 + w)) * (0.25 + 0.75 * flat_);
+  let n = normalize(view.cam_right.xyz * tilt.x + view.cam_up.xyz * tilt.y + to_cam * 0.55);
+  var m: Material;
+  m.base = (f.rgb / w) * 0.8;
+  m.metal = 0.0;
+  m.rough = mix(0.45, 0.04, gloss);
+  m.emissive = max(dparam(0u, D_GLOW), 0.0) * 3.0;
+  m.opacity = 1.0;
+  m.catcher = 0.0;
+  let col = fogged(lighting(m, hit, n, to_cam) + fire_lighting(m, hit, n, to_cam), hit);
+  out.color = vec4f(col * cover, cover);
+  let c = view.view_proj * vec4f(hit, 1.0);
+  out.depth = clamp(c.z / c.w, 0.0, 1.0);
+  return out;
+}
+
+@fragment
+fn fs_liquid(in: FullOut) -> DripFrag {
+  let f = liquid_shade(in.clip);
+  if (f.depth > 1.5) { discard; }
+  return f;
+}
+
+@fragment
+fn fs_liquid_relief(in: FullOut) -> DripFrag {
+  var f = liquid_shade(in.clip);
+  if (f.depth > 1.5) { discard; }
+  let w = liquid_at(vec2i(in.clip.xy)).a;
+  let hit = textureLoad(liquid_where, vec2i(in.clip.xy), 0).xyz / max(w, 1e-4);
+  f.color = vec4f(f.color.rgb + thrown_light(hit).rgb * settings.post_b.z * 0.3 * f.color.a, f.color.a);
+  return f;
+}
+
 // The wet map: two face-on pictures of the paint on the world. The stain
 // (premultiplied, its strongest channel how much paint) fades over
 // phys.drips.z seconds, the gloss (red: how wet) over phys.drips.w. Each

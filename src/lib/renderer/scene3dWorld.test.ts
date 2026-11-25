@@ -150,7 +150,12 @@ describe('the 3D world in an Interactive layer', () => {
     expect(r.find((p) => p.name === 'gloss-splat')!.blend).toBe('alpha');
     const stain = r.find((p) => p.name === 'wet-splat')!.texture!;
     expect(r[opaque].bindings.find((b) => b.binding === 19)).toMatchObject({ texture: stain });
-    expect(names.indexOf('drips')).toBe(names.indexOf('balls') + 1);
+    // The drops as one liquid surface: they splat two fields, the fields are
+    // blurred, then the surface is drawn, all after the balls.
+    const balls = names.indexOf('balls');
+    expect(names.slice(balls + 1, balls + 8)).toEqual(['liquid-field', 'liquid-where', 'liquid-blur-x', 'liquid-blur-y', 'liquid-where-x', 'liquid-where-y', 'drips']);
+    expect(r.find((p) => p.name === 'liquid-field')!.blend).toBe('add');
+    expect(r.find((p) => p.name === 'drips')!.bindings.find((b) => b.binding === 28)).toMatchObject({ texture: r.find((p) => p.name === 'liquid-blur-y')!.texture });
     expect((g.config.passes as unknown as Pass[]).map((p) => p.name)).toContain('drips');
   });
 

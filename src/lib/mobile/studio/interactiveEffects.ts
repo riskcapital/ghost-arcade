@@ -13,7 +13,7 @@ export const isWorldEffect = (kind: EffectKind): kind is WorldEffectKind => (WOR
 export type InteractiveEffect = {id:string;kind:EffectKind;name:string;enabled:boolean;target:string;emission:'continuous'|'pulse'|'burst';burst:number;params:Record<string,number>;mods:Record<string,ParamModulation>;paramAuto?:Record<string,AutoConfig>};
 export type EffectParam = {key:string;label:string;min:number;max:number;step:number;value:number;slot?:number;group?:string};
 const p=(key:string,label:string,min:number,max:number,value:number,slot?:number,group='Look'):EffectParam=>({key,label,min,max,value,slot,group,step:max>20?1:.01});
-export const EFFECT_NAMES:Record<EffectKind,string>={architecture:'Living Architecture',garden:'Gravity Garden',walls:'Contour Waves',ribbons:'Silk Flow',orbit:'Orbital Bloom',electric:'Neural Web',light:'Volumetric Light',balls:'Kinetic Balls',smoke:'Rising Smoke',cloud:'Point Swarm',liquid:'Liquid',fire:'Fire',balls3d:'Bouncing Balls',drips:'Paint Drips',flames:'Fire & Smoke'};
+export const EFFECT_NAMES:Record<EffectKind,string>={architecture:'Living Architecture',garden:'Gravity Garden',walls:'Contour Waves',ribbons:'Silk Flow',orbit:'Orbital Bloom',electric:'Neural Web',light:'Volumetric Light',balls:'Kinetic Balls',smoke:'Rising Smoke',cloud:'Point Swarm',liquid:'Liquid',fire:'Fire',balls3d:'Bouncing Balls',drips:'Drip Blobs',flames:'Fire & Smoke'};
 export const EFFECT_KINDS=Object.keys(EFFECT_NAMES) as EffectKind[];
 /** What Add effect offers. Liquid is withdrawn (it does not look good enough yet); scenes that already use it still play. */
 export const OFFERED_EFFECT_KINDS=EFFECT_KINDS.filter((kind):kind is FlatEffectKind=>kind!=='liquid'&&!isWorldEffect(kind));
@@ -50,9 +50,11 @@ export function effectParams(kind:EffectKind):EffectParam[]{
 /** Longest name an effect can carry. */
 export const EFFECT_NAME_LIMIT=40;
 /** An effect's own name, tidied and capped; its style name when it has none. */
+/** Style names an effect was given before its style was renamed: it takes the new one. */
+const FORMER_NAMES:Partial<Record<EffectKind,string>>={drips:'Paint Drips'};
 export function effectName(raw:unknown,kind:EffectKind):string{
  const name=typeof raw==='string'?raw.replace(/[\u0000-\u001f\u007f]+/g,' ').replace(/\s+/g,' ').trim().slice(0,EFFECT_NAME_LIMIT).trim():'';
- return name||EFFECT_NAMES[kind];
+ return name&&name!==FORMER_NAMES[kind]?name:EFFECT_NAMES[kind];
 }
 /** One label per effect that tells it apart from the others: its name, or
  * the name with a number when two effects share it ("Fire 1", "Fire 2"). */
