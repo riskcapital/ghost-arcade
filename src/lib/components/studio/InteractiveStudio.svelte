@@ -614,6 +614,7 @@
         confirming: !!question,
         fullScreen,
         cleanPreview,
+        shapeKeys: inspector === 'objects' || !(e.target instanceof Element && e.target.closest('.inspector-body, .inspector-tabs')),
       },
     );
     e.stopPropagation();

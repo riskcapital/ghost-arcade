@@ -18,6 +18,7 @@ const context = (extra: Partial<EditorKeyContext> = {}): EditorKeyContext => ({
   confirming: false,
   fullScreen: false,
   cleanPreview: false,
+  shapeKeys: true,
   ...extra,
 });
 const command = (p: EditorKeyPress, c = context()) => editorKey(p, c).command;
@@ -149,5 +150,24 @@ describe('editor key map: everything else', () => {
         expect(editorKey(press(key, { target }), context())).toEqual({ command: null, preventDefault: false });
     expect(command(press('n', { metaKey: true }))).toBeNull();
     expect(command(press('s', { ctrlKey: true }))).toBeNull();
+  });
+});
+
+describe('editor key map: keys meant for a panel never act on the canvas', () => {
+  it('Backspace and Delete on an effect card or World setting keep the selected shape', () => {
+    for (const key of ['Backspace', 'Delete']) {
+      for (const target of ['button', 'other'] as const) {
+        expect(command(press(key, { target }), context({ shapeKeys: false }))).toBeNull();
+        expect(command(press(key, { target }))).toEqual({ type: 'remove-surface' });
+      }
+    }
+  });
+  it('arrows in a panel do not nudge the shape', () => {
+    expect(command(press('ArrowLeft', { target: 'button' }), context({ shapeKeys: false }))).toBeNull();
+    expect(command(press('ArrowLeft'))).toEqual({ type: 'nudge', dx: -1, dy: 0, big: false });
+  });
+  it('Escape on a select or slider leaves it instead of closing the editor', () => {
+    expect(command(press('Escape', { target: 'adjust' }))).toEqual({ type: 'leave-field' });
+    expect(command(press('Escape', { target: 'adjust' }), context({ fullScreen: true }))).toEqual({ type: 'leave-field' });
   });
 });

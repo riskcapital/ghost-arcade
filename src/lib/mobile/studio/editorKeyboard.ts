@@ -37,6 +37,12 @@ export type EditorKeyContext = {
   confirming: boolean;
   fullScreen: boolean;
   cleanPreview: boolean;
+  /**
+   * Focus is where the shapes are: the stage, the page or the Objects tab.
+   * Delete and the arrows only act on the selected shape then, so Backspace
+   * on an effect card or a World setting never removes a shape.
+   */
+  shapeKeys: boolean;
 };
 
 export type EditorKeyCommand =
@@ -73,7 +79,8 @@ const ARROWS: Record<string, [number, number]> = {
 /** Escape backs out of one thing at a time; with nothing left, it closes the editor. */
 function escape(press: EditorKeyPress, context: EditorKeyContext): EditorKeyResult {
   if (context.confirming) return run({ type: 'cancel-confirm' });
-  if (press.target === 'text') return run({ type: 'leave-field' });
+  // A select or slider gives up focus first; it never closes the editor.
+  if (press.target === 'text' || press.target === 'adjust') return run({ type: 'leave-field' });
   if (context.placingEmitter) return run({ type: 'exit-placing' });
   if (context.mode === 'draw') return run({ type: 'exit-draw' });
   if (context.cleanPreview) return run({ type: 'exit-clean-preview' });
@@ -96,13 +103,13 @@ export function editorKey(press: EditorKeyPress, context: EditorKeyContext): Edi
 
   if (key === 'Delete' || key === 'Backspace') {
     if (press.target === 'text') return NOTHING;
-    const canRemove = context.mode === 'edit' && context.hasSelection && !context.placingEmitter;
+    const canRemove = context.mode === 'edit' && context.shapeKeys && context.hasSelection && !context.placingEmitter;
     return canRemove ? run({ type: 'remove-surface' }) : NOTHING;
   }
 
   if (key in ARROWS) {
     if (press.target === 'text' || press.target === 'adjust') return NOTHING;
-    if (context.mode !== 'edit' || !context.hasSelection || context.placingEmitter) return NOTHING;
+    if (context.mode !== 'edit' || !context.shapeKeys || !context.hasSelection || context.placingEmitter) return NOTHING;
     const [dx, dy] = ARROWS[key];
     return run({ type: 'nudge', dx, dy, big: press.shiftKey });
   }
