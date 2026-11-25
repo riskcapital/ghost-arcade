@@ -113,7 +113,7 @@ async function fetchBinary(url: string, timeoutMs: number): Promise<ArrayBuffer>
   }
 }
 
-export type LidarAutoMapCamera = AutoMapCamera & { turn: Turn; lock(): Promise<void>; depth(): Promise<DepthScan>; stop(): void };
+export type LidarAutoMapCamera = AutoMapCamera & { turn: Turn; lock(): Promise<void>; unlock(): Promise<void>; depth(): Promise<DepthScan>; stop(): void };
 
 /**
  * Starts the LiDAR camera for a scan. `preview` (optional) shows a live grey
@@ -191,6 +191,10 @@ export async function openLidarAutoMapCamera(preview?: HTMLCanvasElement): Promi
     /** Holds exposure, focus and white balance for the rest of the scan. */
     async lock() {
       await call('patternLock', { locked: true });
+    },
+    /** Exposure and focus follow the picture again (the next projector's white sets them). */
+    async unlock() {
+      await call('patternLock', { locked: false });
     },
     async depth(): Promise<DepthScan> {
       const scan = parsePatternDepth(await fetchBinary('ghostcapture://pattern/depth?frames=15', 8000));

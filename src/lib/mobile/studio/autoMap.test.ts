@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { runAutoMap, mapSurface, type AutoMapLink, type AutoMapCamera } from './autoMap';
+import { runAutoMap, mapSurface, AUTO_MAP_STOPPED, type AutoMapLink, type AutoMapCamera } from './autoMap';
 import { planPatterns, patternValue, applyHomography, type PatternFrame } from './structuredLight';
 import { stripeFrameCode, STRIPE_CELL, STRIPE_CELLS } from './structuredLightCodes';
 
@@ -108,6 +108,43 @@ describe('auto-map run', () => {
     await expect(runAutoMap(link, blind, () => {}, { settleMs: 0, encode: () => '' })).rejects.toThrow(/Left: .*projector/);
     expect(ended()).toBe(true);
   }, 30000);
+
+  it('sets the exposure on each projector\'s white, holds it, and photographs that white at the held exposure', async () => {
+    const { link, camera } = rig();
+    const log: string[] = [];
+    const watched: AutoMapCamera = {
+      grab: () => { log.push('grab'); return camera.grab(); },
+      lock: async () => { log.push('lock'); },
+      unlock: async () => { log.push('unlock'); },
+    };
+    await runAutoMap(link, watched, () => {}, { settleMs: 0, encode: () => '' });
+    const frames = planPatterns(1920, 1080, STRIPE_CELL).frames.length;
+    // First projector: lock, then its white. Second: let go, lock again, then its white.
+    expect(log.slice(0, 2)).toEqual(['lock', 'grab']);
+    expect(log.slice(frames + 1, frames + 4)).toEqual(['unlock', 'lock', 'grab']);
+    expect(log.filter(x => x === 'lock')).toHaveLength(2);
+  }, 30000);
+
+  it('stops between photos when its signal is aborted, and still clears the stripes', async () => {
+    const { link, camera, ended } = rig();
+    const stop = new AbortController();
+    let grabs = 0;
+    const counting: AutoMapCamera = { grab: () => { if (++grabs === 3) stop.abort(); return camera.grab(); } };
+    await expect(runAutoMap(link, counting, () => {}, { settleMs: 0, encode: () => '', signal: stop.signal })).rejects.toThrow(AUTO_MAP_STOPPED);
+    expect(grabs).toBe(3);
+    expect(ended()).toBe(true);
+  }, 30000);
+
+  it('refuses to go on when the desktop now draws the Screen at a size with other stripes', async () => {
+    const { link, camera, ended } = rig();
+    const resized: AutoMapLink = { async request(op, extra) { const reply = await link.request(op, extra); return op === 'show' ? { ...reply, width: 2400, height: 1080 } : reply; } };
+    await expect(runAutoMap(resized, camera, () => {}, { settleMs: 0, encode: () => '' })).rejects.toThrow(/changed size/);
+    expect(ended()).toBe(true);
+    // The same bit count (a few pixels off) is fine.
+    const again = rig();
+    const close: AutoMapLink = { async request(op, extra) { const reply = await again.link.request(op, extra); return op === 'show' ? { ...reply, width: 1910, height: 1075 } : reply; } };
+    await expect(runAutoMap(close, again.camera, () => {}, { settleMs: 0, encode: () => '' })).resolves.toBeTruthy();
+  }, 60000);
 
   it('says what to do when nothing is on a projector', async () => {
     const none: AutoMapLink = { async request() { return { screens: [] }; } };

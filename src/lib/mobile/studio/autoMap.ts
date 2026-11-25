@@ -7,7 +7,7 @@
  * The link and the camera are passed in, so the whole run can be tested
  * against a simulated projector and camera.
  */
-import { planPatterns, decodeCaptures, fitHomography, applyHomography, type Capture, type Decoded, type PatternFrame, type PatternPlan, type UV } from './structuredLight';
+import { planPatterns, decodeCaptures, fitHomography, applyHomography, samePatternBits, type Capture, type Decoded, type PatternFrame, type PatternPlan, type UV } from './structuredLight';
 import { stripeFrameCode, STRIPE_CELL } from './structuredLightCodes';
 import type { DepthScan } from './meshMap';
 
@@ -20,6 +20,8 @@ export type AutoMapCamera = {
   jpeg?(): Promise<{ image: string; width: number; height: number }>;
   /** Hold exposure and focus once the white frame has set them (LiDAR camera). */
   lock?(): Promise<void>;
+  /** Let exposure and focus follow the picture again, so the next projector's white can set them. */
+  unlock?(): Promise<void>;
   /** Depth of the scene, lined up with the photos (LiDAR camera). */
   depth?(): Promise<DepthScan>;
 };
@@ -49,15 +51,20 @@ export type AutoMapResult = {
 
 /** Time for the projector and the camera pipeline to show the new frame. */
 const SETTLE_MS = 320;
+/** What a run stopped through its `signal` throws. */
+export const AUTO_MAP_STOPPED = 'The scan was stopped.';
 const wait = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms));
 
 export async function runAutoMap(
   link: AutoMapLink,
   camera: AutoMapCamera,
   progress: (text: string, fraction?: number) => void = () => {},
-  options: { settleMs?: number; encode?: (luma: Float32Array, width: number, height: number) => string; screenId?: string } = {},
+  options: { settleMs?: number; encode?: (luma: Float32Array, width: number, height: number) => string; screenId?: string; signal?: AbortSignal } = {},
 ): Promise<AutoMapResult> {
   const settle = options.settleMs ?? SETTLE_MS;
+  // Stopping (Cancel, the screen closing) ends the run between photos; `end` still clears the stripes.
+  const stopped = () => { if (options.signal?.aborted) throw new Error(AUTO_MAP_STOPPED); };
+  stopped();
   const listed = await link.request('screens');
   const open: AutoMapScreen[] = Array.isArray(listed.screens) ? listed.screens : [];
   // A desktop asking for one Screen (a room scan for Depth mode) gets only that one.
@@ -74,13 +81,24 @@ export async function runAutoMap(
       const captures: Capture[] = [];
       const startedAt = Date.now();
       for (const [step, frame] of plan.frames.entries()) {
+        stopped();
         progress(`${screen.name}: pattern ${step + 1} of ${plan.frames.length}`, (index + (step + 1) / plan.frames.length) / screens.length);
-        await link.request('show', { screenId: screen.id, frame: stripeFrameCode(frame as PatternFrame, STRIPE_CELL) });
+        const shown = await link.request('show', { screenId: screen.id, frame: stripeFrameCode(frame as PatternFrame, STRIPE_CELL) });
+        // A desktop that says the raster it drew at: a Screen resized since the plan shows other stripes.
+        if (step === 0 && Number.isFinite(shown?.width) && Number.isFinite(shown?.height) && !samePatternBits(plan, shown.width, shown.height)) {
+          throw new Error(`${screen.name} changed size during the scan (now ${shown.width}x${shown.height}). Leave its window as it is and scan again.`);
+        }
         await wait(settle);
+        // Each projector's white sets the exposure for its own stripes, then it is held: the white
+        // photo is taken at the held exposure too, so white, black and stripes compare like for like.
+        if (step === 0 && camera.lock && (index === 0 || camera.unlock)) {
+          if (index > 0) await camera.unlock!().catch(() => {});
+          await wait(settle);
+          await camera.lock().catch(() => {});
+        }
+        stopped();
         const shot = await camera.grab();
         if (step === 0 && index === 0 && camera.jpeg) colour = await camera.jpeg().catch(() => undefined);
-        // The white frame has set the exposure: keep it for every stripe that follows.
-        if (step === 0 && index === 0 && camera.lock) await camera.lock().catch(() => {});
         if (captures.length && (shot.width !== captures[0].width || shot.height !== captures[0].height)) throw new Error('The camera changed size during the capture. Keep the app open and try again.');
         captures.push(shot);
       }
@@ -108,6 +126,7 @@ export async function runAutoMap(
     }
     // Depth last, with the projector dark so its light cannot disturb the LiDAR.
     if (camera.depth) {
+      stopped();
       progress('Measuring depth', 1);
       const last = screens[screens.length - 1];
       await link.request('show', { screenId: last.id, frame: stripeFrameCode({ kind: 'black' }, STRIPE_CELL) });
@@ -202,7 +221,7 @@ export async function uprightTurn(): Promise<{ turn: 0 | 90 | 180 | 270; gravity
   });
 }
 
-export async function openAutoMapCamera(preview?: HTMLVideoElement, turn: 0 | 90 | 180 | 270 = 0): Promise<AutoMapCamera & { stop(): void }> {
+export async function openAutoMapCamera(preview?: HTMLVideoElement, turn: 0 | 90 | 180 | 270 = 0): Promise<AutoMapCamera & { stop(): void; setTurn(turn: 0 | 90 | 180 | 270): void }> {
   if (!navigator.mediaDevices?.getUserMedia) throw new Error('The camera is unavailable here. Open the installed app.');
   const stream = await navigator.mediaDevices.getUserMedia({ audio: false, video: { facingMode: { ideal: 'environment' }, width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: 30, max: 30 } } });
   const video = preview ?? document.createElement('video');
@@ -213,10 +232,16 @@ export async function openAutoMapCamera(preview?: HTMLVideoElement, turn: 0 | 90
   // Enough pixels to resolve the finest stripes without a slow decode.
   const scale = Math.min(1, 1600 / Math.max(video.videoWidth, video.videoHeight));
   const rawWidth = Math.round(video.videoWidth * scale), rawHeight = Math.round(video.videoHeight * scale);
-  const sideways = turn === 90 || turn === 270;
-  const width = sideways ? rawHeight : rawWidth, height = sideways ? rawWidth : rawHeight;
   const canvas = document.createElement('canvas');
-  canvas.width = width; canvas.height = height;
+  let width = 0, height = 0;
+  /** Which way is up: sampled again when the scan starts (the phone may be turned after the preview opened). */
+  const setTurn = (next: 0 | 90 | 180 | 270) => {
+    turn = next;
+    const sideways = turn === 90 || turn === 270;
+    width = sideways ? rawHeight : rawWidth; height = sideways ? rawWidth : rawHeight;
+    canvas.width = width; canvas.height = height;
+  };
+  setTurn(turn);
   const context = canvas.getContext('2d', { willReadFrequently: true })!;
   /** The current video frame, turned upright. */
   const draw = () => {
@@ -231,7 +256,8 @@ export async function openAutoMapCamera(preview?: HTMLVideoElement, turn: 0 | 90
     if (v.requestVideoFrameCallback) v.requestVideoFrameCallback(() => resolve()); else setTimeout(resolve, 45);
   });
   return {
-    turn,
+    get turn() { return turn; },
+    setTurn,
     async grab() {
       // Three frames averaged: steadier than one against sensor noise.
       const luma = new Float32Array(width * height);

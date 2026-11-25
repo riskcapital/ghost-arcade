@@ -103,10 +103,10 @@ describe('a scan with the LiDAR camera', () => {
     return { link, camera, events, shown };
   }
 
-  it('locks the exposure after the white frame and measures depth with the projector dark', async () => {
+  it('locks the exposure on the white frame (before photographing it) and measures depth with the projector dark', async () => {
     const { link, camera, events } = rig();
     const result = await runAutoMap(link, camera, () => {}, { settleMs: 0, encode: () => 'data:image/jpeg;base64,' });
-    expect(events.slice(0, 2)).toEqual(['grab', 'lock']);
+    expect(events.slice(0, 2)).toEqual(['lock', 'grab']);
     expect(events.filter(e => e === 'lock')).toHaveLength(1);
     expect(events[events.length - 1]).toBe(`depth after frame ${2 * 100 + 1}`); // black at the 32-pixel stripe size
     expect(result.depth?.width).toBe(32);

@@ -74,6 +74,12 @@ function bitsForCodes(codes: number): number {
   return bits;
 }
 
+/** True when a raster of this size shows the same stripes as the plan (same bit count on each axis). */
+export function samePatternBits(plan: PatternPlan, width: number, height: number): boolean {
+  if (!(width >= 1) || !(height >= 1)) return false;
+  return bitsForCodes(Math.ceil(Math.floor(width) / plan.cell)) === plan.bitsX && bitsForCodes(Math.ceil(Math.floor(height) / plan.cell)) === plan.bitsY;
+}
+
 export function planPatterns(width: number, height: number, cell = 8): PatternPlan {
   if (!(width >= 1) || !(height >= 1) || !(cell >= 1)) {
     throw new Error('planPatterns needs a positive width, height and cell size.');
