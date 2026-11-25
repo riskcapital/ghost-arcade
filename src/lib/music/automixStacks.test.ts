@@ -103,6 +103,17 @@ describe('auto-mix with clip visual stacks', () => {
     expect(turns).toEqual(['v0', 'clip', 'v1']);
   });
 
+  it('takes turns among clips alone: with no voices of its own the studio keeps the bar clock from the music', () => {
+    setStackClock(() => 0);
+    bringStack({ track: 'studio:lead', order: 2, trackName: 'Lead', clipName: 'Hook', clipId: 'c1', resolve: () => stack() }, 0);
+    bringStack({ track: 'studio:bass', order: 1, trackName: 'Bass', clipName: 'Riff', clipId: 'c2', resolve: () => stack() }, 0);
+    const turns = [0, 1, 2, 3].map((b) => rowsAt(host('order', 0), b + 0.5).stacks.map((r) => (shown(r) ? 1 : 0)).join(''));
+    // One clip at a time, and the turn moves on each bar.
+    expect(turns.every((t) => t === '10' || t === '01')).toBe(true);
+    expect(turns[0]).not.toBe(turns[1]);
+    expect(turns[0]).toBe(turns[2]);
+  });
+
   it('One at random: the clip is one of the choices, never twice running', () => {
     bring();
     const picks: string[] = [];

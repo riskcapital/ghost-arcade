@@ -271,8 +271,10 @@ export function expandStudioLayers(layers: Layer[], inputs: StudioRenderInputs, 
     const rows: MixRow[] = [];
     const voiceRows = new Map<number, MixRow>();
     const driven = studio.musicVoices.map((voice) => inputs.driven(voice.source, voice.auto, voice.live));
-    // Auto-mix works from the bar clock every voice shares.
-    const clock = driven.find((d) => Number.isFinite(d.vxBars));
+    // Auto-mix works from the bar clock every voice shares. With no voices of
+    // its own (a song whose pictures are all on its clips), it reads the clock
+    // from the music as a whole, or the turns would never come round.
+    const clock = driven.find((d) => Number.isFinite(d.vxBars)) ?? [inputs.driven('all', false)].find((d) => Number.isFinite(d.vxBars));
     const barPos = clock ? (clock.vxBars ?? 0) + (clock.vxBar ?? 0) : 0;
     // The playing clips' visual stacks, and the one list they share with the voices.
     const playing = currentStacks();
