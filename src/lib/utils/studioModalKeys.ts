@@ -55,3 +55,13 @@ export function studioModalKeyAction(
   if (event.code === 'Space' && context.timelineOpen) return 'timeline-transport';
   return 'block';
 }
+
+/**
+ * The Studio editor stops every key it sees (a capture listener on window
+ * and one on its own root), which also kept B from ever reaching the gate on
+ * <html> above. The editor asks this first and leaves the blackout key alone,
+ * so the gate can act on it.
+ */
+export function studioEditorPassesKey(event: StudioModalKeyEvent, target: unknown): boolean {
+  return studioModalKeyAction(event, { typing: isTypingTarget(target), timelineOpen: false }) === 'blackout';
+}

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { isTypingTarget, studioModalKeyAction, type StudioModalKeyEvent } from './studioModalKeys';
+import { isTypingTarget, studioEditorPassesKey, studioModalKeyAction, type StudioModalKeyEvent } from './studioModalKeys';
 
 const down = (key: string, extra: Partial<StudioModalKeyEvent> = {}): StudioModalKeyEvent => ({
   type: 'keydown',
@@ -65,5 +65,26 @@ describe('keys while the Interactive Studio is open', () => {
     expect(isTypingTarget({ tagName: 'BUTTON' })).toBe(false);
     expect(isTypingTarget({ tagName: 'BODY' })).toBe(false);
     expect(isTypingTarget(null)).toBe(false);
+  });
+});
+
+describe('the Studio editor lets the blackout key through to the gate', () => {
+  const button = { tagName: 'BUTTON' };
+  const field = { tagName: 'INPUT' };
+  it('passes B (either case) pressed on the stage, a button or the page', () => {
+    for (const key of ['b', 'B']) {
+      expect(studioEditorPassesKey(down(key), button)).toBe(true);
+      expect(studioEditorPassesKey(down(key), null)).toBe(true);
+      // ...and the gate then blacks out on that same key.
+      expect(studioModalKeyAction(down(key), { typing: isTypingTarget(button), timelineOpen: false })).toBe('blackout');
+    }
+  });
+  it('keeps every other key, B while typing, repeats and B with a modifier', () => {
+    expect(studioEditorPassesKey(down('b'), field)).toBe(false);
+    expect(studioEditorPassesKey(down('b', { repeat: true }), button)).toBe(false);
+    expect(studioEditorPassesKey(down('b', { metaKey: true }), button)).toBe(false);
+    expect(studioEditorPassesKey(down('Backspace'), button)).toBe(false);
+    expect(studioEditorPassesKey(down('t'), button)).toBe(false);
+    expect(studioEditorPassesKey(down(' '), button)).toBe(false);
   });
 });

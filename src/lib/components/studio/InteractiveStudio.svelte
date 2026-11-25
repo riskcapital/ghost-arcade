@@ -83,6 +83,7 @@
   import InteractiveWorldPanel from './InteractiveWorldPanel.svelte';
   import InteractiveDepthSetup from './InteractiveDepthSetup.svelte';
   import { fireShowAction } from '../../show/showActions';
+  import { studioEditorPassesKey } from '../../utils/studioModalKeys';
 
   // ── Props ────────────────────────────────────────────────────────────────
   export let outputLevel = 1,
@@ -585,6 +586,8 @@
       e.stopPropagation();
       return;
     }
+    // B, the emergency blackout, goes on to the app's gate (studioModalKeys.ts).
+    if (studioEditorPassesKey(e, e.target)) return;
     const target = keyTargetOf(e.target);
     // The embedded timeline plays and pauses on Space: let that one through.
     if (e.code === 'Space' && target === 'other' && root.querySelector('.studio-timeline > *')) return;
