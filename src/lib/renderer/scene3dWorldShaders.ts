@@ -988,7 +988,8 @@ fn fs_liquid_front(in: LiquidOut) -> LiquidFront {
   let hit = d.pos.xyz + to_cam * sqrt(1.0 - r2) * d.pos.w * 1.2;
   let c = view.view_proj * vec4f(hit, 1.0);
   out.depth = clamp(c.z / c.w, 0.0, 1.0);
-  out.color = vec4f(hit, 1.0);
+  // Alpha says a drop is here (1) and how see-through its effect is (+0..1).
+  out.color = vec4f(hit, 1.0 + clamp(dparam(u32(d.info.x), D_CLEAR), 0.0, 1.0));
   return out;
 }
 
@@ -1021,6 +1022,20 @@ fn fs_liquid_blur_y(in: FullOut) -> @location(0) vec4f { return liquid_blur(in.c
 
 // The surface: where the field is deep enough there is paint; its slope tilts
 // the surface, so runs are round and pools flatten out; it is lit like the drops.
+// How see-through the paint is here: from the nearest drop, or one close by at
+// the soft edge where the field reaches past the drops.
+fn liquid_clear(p: vec2i, front: vec4f) -> f32 {
+  if (front.w > 0.5) { return clamp(front.w - 1.0, 0.0, 1.0); }
+  let size = vec2i(textureDimensions(liquid_front));
+  for (var i = 0; i < 8; i++) {
+    let a = f32(i) * 0.785398;
+    let q = clamp(p + vec2i(vec2f(cos(a), sin(a)) * 10.0), vec2i(0), size - 1);
+    let near = textureLoad(liquid_front, q, 0);
+    if (near.w > 0.5) { return clamp(near.w - 1.0, 0.0, 1.0); }
+  }
+  return 0.0;
+}
+
 fn liquid_shade(clip: vec4f) -> DripFrag {
   var out: DripFrag;
   let p = vec2i(clip.xy);
@@ -1056,8 +1071,13 @@ fn liquid_shade(clip: vec4f) -> DripFrag {
   // Glossy paint: a fresnel sheen at grazing angles on top of its lit body.
   let fres = 0.04 + 0.96 * pow(saturate(1.0 - dot(n, to_cam)), 5.0);
   let sheen = (f.rgb / w) * 0.35 + vec3f(0.6);
-  let col = fogged(lighting(m, hit, n, to_cam) + fire_lighting(m, hit, n, to_cam) + sheen * fres * gloss * 0.5, hit);
-  out.color = vec4f(col * cover, cover);
+  let body = fogged(lighting(m, hit, n, to_cam) + fire_lighting(m, hit, n, to_cam), hit);
+  // See-through: a thin film lets most of what is behind it show, a deep pool
+  // less; the sheen stays on top, so clear liquid still catches the light.
+  let clear = liquid_clear(p, front);
+  let body_a = mix(1.0, 0.1 + 0.9 * (1.0 - exp(-w * 0.3)), clear);
+  let glint = sheen * fres * gloss * mix(0.5, 0.9, clear);
+  out.color = vec4f((body * body_a + glint) * cover, body_a * cover);
   let c = view.view_proj * vec4f(nearest, 1.0);
   out.depth = clamp(c.z / c.w, 0.0, 1.0);
   return out;
