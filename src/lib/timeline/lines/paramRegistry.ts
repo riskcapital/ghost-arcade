@@ -166,7 +166,7 @@ export function ledBlockParams(clip: TimelineLedClip): ParamEntry[] {
     out.push({ key: 'ledblock:color2', label: 'LED second color', group, min: 0, max: 0xffffff, step: 1, default: hexToInt(clip.color2), kind: 'colour' });
   }
   if (clip.kind !== 'follow' && clip.kind !== 'colour') {
-    out.push({ key: 'ledblock:speed', label: 'LED speed', group, min: 0, max: 4, step: 0.01, default: clip.speed, kind: 'continuous' });
+    out.push({ key: 'ledblock:speed', label: 'LED speed', group, min: 0, max: 8, step: 0.01, default: clip.speed, kind: 'continuous' });
   }
   if (clip.kind === 'chase') out.push({ key: 'ledblock:width', label: 'Chase width', group, min: 0.01, max: 1, step: 0.01, default: clip.width, kind: 'continuous' });
   if (clip.kind === 'effect') {
