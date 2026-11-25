@@ -15,6 +15,7 @@ mod graph_readbacks;
 mod scene_frame;
 mod core_frame_counter;
 mod churn_probe;
+mod gpu_object_cache;
 mod media_decode;
 mod media_orphans;
 mod autorelease_pool;
@@ -5459,7 +5460,8 @@ struct App {
     /// blend and dome reprojection.
     output_stage: OutputStage,
     /// Multi-output slices currently presenting on their own displays.
-    slice_outputs: Vec<SliceOutputSpec>,
+    /// Shared, so the frame's copy of the list is a reference count, not a deep copy.
+    slice_outputs: Arc<Vec<SliceOutputSpec>>,
     /// Source the recorder asked for besides the program output, if any.
     record_target: Option<RecordTargetSpec>,
     render_clock_mode: String,
@@ -5946,7 +5948,7 @@ impl App {
             output_frozen: false,
             composite_effects: Vec::new(),
             output_stage: OutputStage::default(),
-            slice_outputs: Vec::new(),
+            slice_outputs: Arc::new(Vec::new()),
             record_target: None,
             render_clock_mode: "live".to_string(),
             render_clock_time: None,
@@ -8082,7 +8084,7 @@ impl App {
     /// screen window keeps the old master warp while the preview moves.
     fn refresh_slice_master_stage(&mut self) {
         let master = self.output_stage;
-        for spec in &mut self.slice_outputs {
+        for spec in Arc::make_mut(&mut self.slice_outputs).iter_mut() {
             // Map Sim projector views draw without the master warp or dome.
             if spec.projector_view.is_some() {
                 continue;
@@ -8228,7 +8230,7 @@ impl App {
         if let Some(renderer) = self.renderer.as_mut() {
             renderer.slice_targets.retain(|id, _| ids.contains(id));
         }
-        self.slice_outputs = specs;
+        self.slice_outputs = Arc::new(specs);
         Ok(json!({ "slices": ids }))
     }
 
@@ -13993,6 +13995,7 @@ impl App {
         if let Some(renderer) = self.renderer.as_mut() {
             renderer.allow_async_compile = self.render_clock_mode != "manual";
             renderer.frame_epoch = renderer.frame_epoch.wrapping_add(1);
+            gpu_object_cache::begin_frame();
             renderer.pipeline_cap = self.pipeline_metadata_cache_cap.max(1) as usize;
             renderer.graph_budget_bytes = graph_budget;
         }
@@ -14064,7 +14067,7 @@ impl App {
         let output_gate = self.output_gate();
         let post_effects = self.composite_effect_slots();
         let output_stage = self.output_stage;
-        let slice_specs = self.slice_outputs.clone();
+        let slice_specs = Arc::clone(&self.slice_outputs);
         let deck_monitors_have_content = !deck_monitor_a.is_empty() || !deck_monitor_b.is_empty();
         let deck_monitors_were_lit = self.deck_monitors_lit;
         let mut deck_monitors_rendered = false;
@@ -16787,7 +16790,7 @@ impl App {
     /// the same mesh.
     fn apply_mirror_mesh(&mut self, command: &Value) -> Result<(), String> {
         let mesh = Arc::new(MirrorMesh::from_command(command)?);
-        for spec in &mut self.slice_outputs {
+        for spec in Arc::make_mut(&mut self.slice_outputs).iter_mut() {
             if spec.mirror_mesh_id.as_deref() == Some(mesh.id.as_str()) {
                 spec.mirror_mesh = Some(Arc::clone(&mesh));
             }
@@ -25604,12 +25607,12 @@ impl RenderState {
             &mut texture_views,
             &[],
         )?;
-        churn_probe::bind_group();
-        let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some(&pass_plan.name),
-            layout: &cached.bind_group_layout,
-            entries: &entries,
-        });
+        let bind_group = gpu_object_cache::bind_group(
+            &self.device,
+            Some(&pass_plan.name),
+            &cached.bind_group_layout,
+            &entries,
+        );
         {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some(&pass_plan.name),
@@ -25746,17 +25749,17 @@ impl RenderState {
             &mut texture_views,
             &sample_overrides,
         )?;
-        churn_probe::bind_group();
-        let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some(&render_plan.name),
-            layout: &cached.bind_group_layout,
-            entries: &entries,
-        });
+        let bind_group = gpu_object_cache::bind_group(
+            &self.device,
+            Some(&render_plan.name),
+            &cached.bind_group_layout,
+            &entries,
+        );
         let source_frame_target_view;
         let composite_target_view;
         let target_view = if let Some(index) = composite_target_index {
-            churn_probe::texture_view();
-            composite_target_view = self.composite_frame_textures[index].create_view(
+            composite_target_view = gpu_object_cache::view(
+                &self.composite_frame_textures[index],
                 &wgpu::TextureViewDescriptor {
                     label: Some("Ghost Native Composite Frame Target View"),
                     format: Some(self.config.format),
@@ -26039,8 +26042,8 @@ impl RenderState {
                         .source_slot
                         .unwrap_or(0)
                         .min(COMPOSITE_FRAME_SLOTS - 1);
-                    churn_probe::texture_view();
-                    texture_views.push(self.composite_frame_textures[index].create_view(
+                    texture_views.push(gpu_object_cache::view(
+                        &self.composite_frame_textures[index],
                         &wgpu::TextureViewDescriptor {
                             label: Some("Ghost Native Composite Frame Texture View"),
                             format: Some(self.config.format),
@@ -26742,8 +26745,7 @@ impl RenderState {
                     wgpu::Extent3d { width: edge, height: edge, depth_or_array_layers: 1 },
                 );
             } else {
-                churn_probe::texture_view();
-                let target = self.native_shader_input_texture.create_view(&wgpu::TextureViewDescriptor {
+                let target = gpu_object_cache::view(&self.native_shader_input_texture, &wgpu::TextureViewDescriptor {
                     label: Some("Ghost Render Core Native Shader Input Layer"),
                     dimension: Some(wgpu::TextureViewDimension::D2),
                     base_array_layer: layer as u32,
@@ -26999,12 +27001,12 @@ impl RenderState {
                     resource: wgpu::BindingResource::TextureView(view),
                 });
             }
-            churn_probe::bind_group();
-            let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("Ghost Render Core ISF Pass Bind Group"),
-                layout: &self.native_shader_bind_group_layout,
-                entries: &entries,
-            });
+            let bind_group = gpu_object_cache::bind_group(
+                &self.device,
+                Some("Ghost Render Core ISF Pass Bind Group"),
+                &self.native_shader_bind_group_layout,
+                &entries,
+            );
 
             let (dest_view, pipeline_key) = match target_index {
                 Some(index) => {
@@ -28369,16 +28371,14 @@ impl RenderState {
             None
         };
         if !frozen && output_gate > 0.0 {
-        churn_probe::texture_view();
         self.draw_fullscreen_to_view(
             &mut encoder,
-            &self.composite_frame_textures[0].create_view(&Default::default()),
+            &gpu_object_cache::view(&self.composite_frame_textures[0], &Default::default()),
             "Ghost Render Core Snapshot Pass",
             timestamp_writes,
         );
         self.encode_composition_effects(&mut encoder, composite_graph_jobs, composite_output_index)?;
-        churn_probe::texture_view();
-        let creative_view = self.composite_frame_textures[self.creative_frame_index].create_view(&Default::default());
+        let creative_view = gpu_object_cache::view(&self.composite_frame_textures[self.creative_frame_index], &Default::default());
         self.draw_stage3d_mesh_to_view(
             &mut encoder,
             &creative_view,
@@ -28533,16 +28533,14 @@ impl RenderState {
         } else {
             None
         };
-        churn_probe::texture_view();
         self.draw_fullscreen_to_view(
             &mut mirror_encoder,
-            &self.composite_frame_textures[0].create_view(&Default::default()),
+            &gpu_object_cache::view(&self.composite_frame_textures[0], &Default::default()),
             "Ghost Render Core Output Mirror Pass",
             mirror_timestamp_writes,
         );
         self.encode_composition_effects(&mut mirror_encoder, composite_graph_jobs, composite_output_index)?;
-        churn_probe::texture_view();
-        let creative_view = self.composite_frame_textures[self.creative_frame_index].create_view(&Default::default());
+        let creative_view = gpu_object_cache::view(&self.composite_frame_textures[self.creative_frame_index], &Default::default());
         self.draw_stage3d_mesh_to_view(
             &mut mirror_encoder,
             &creative_view,
