@@ -3,16 +3,16 @@ import { interactiveFeatureEnabled } from './features';
 
 describe('interactiveFeatureEnabled', () => {
   afterEach(() => vi.unstubAllEnvs());
-  it('is off by default', () => {
+  it('is on by default', () => {
     vi.stubEnv('VITE_INTERACTIVE', '');
-    expect(interactiveFeatureEnabled()).toBe(false);
+    expect(interactiveFeatureEnabled()).toBe(true);
   });
-  it('turns on with VITE_INTERACTIVE=1, on or true', () => {
-    for (const value of ['1', 'on', 'TRUE']) {
+  it('turns off with VITE_INTERACTIVE=0, off or false', () => {
+    for (const value of ['0', 'off', 'FALSE']) {
       vi.stubEnv('VITE_INTERACTIVE', value);
-      expect(interactiveFeatureEnabled()).toBe(true);
+      expect(interactiveFeatureEnabled()).toBe(false);
     }
-    vi.stubEnv('VITE_INTERACTIVE', '0');
-    expect(interactiveFeatureEnabled()).toBe(false);
+    vi.stubEnv('VITE_INTERACTIVE', '1');
+    expect(interactiveFeatureEnabled()).toBe(true);
   });
 });
