@@ -8050,8 +8050,15 @@ export class NativeRendererSync {
       if (group.blendMode && group.blendMode !== 'normal') {
         (child as { blendMode: Layer['blendMode'] }).blendMode = group.blendMode;
       }
-      if (config?.overrideStyles && (group.effects?.length ?? 0) > 0) {
-        (child as { effects: Layer['effects'] }).effects = group.effects;
+      // Group effects run on every child after its own, the way the editor's
+      // group pass applies them; Override effects makes them replace the
+      // child's own. (Without Override they used to be dropped here, so a
+      // regular effect on a group did nothing on the native path.) A mask
+      // child draws no picture for them to change.
+      if ((group.effects?.length ?? 0) > 0 && child.type !== 'mask') {
+        (child as { effects: Layer['effects'] }).effects = config?.overrideStyles
+          ? group.effects
+          : [...(layer.effects ?? []), ...group.effects];
       }
       // Group edge effects always apply to the child shapes (the editor's
       // group pass does the same), each child tracing its own outline.
