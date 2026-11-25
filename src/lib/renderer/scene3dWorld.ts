@@ -462,7 +462,8 @@ export function buildWorldPart(options: WorldPartOptions): WorldPart {
   after('shadow', {
     name: 'ball-shadows', shader_id: 'scene3d/balls-draw', vertex_entry: 'vs_ball_shadow', fragment_entry: 'fs_ball',
     // Not the shadow map itself: it is what this pass draws into.
-    target: 'texture', texture: id('shadow'), depth_load: true, vertex_count: 36, instance_count: layout.count, bindings: drawBindings.filter((x) => x.binding !== 5),
+    // Depth on and loaded: it adds to the blocks' shadows, it must not clear them.
+    target: 'texture', texture: id('shadow'), depth: true, depth_write: true, depth_load: true, vertex_count: 36, instance_count: layout.count, bindings: drawBindings.filter((x) => x.binding !== 5),
   });
   // The wet map: both pictures fade, then the drops on surfaces paint into them.
   const dripBindings = [

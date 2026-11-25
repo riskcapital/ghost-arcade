@@ -135,6 +135,14 @@ pub(crate) fn resolve_render_depth(
     Ok(depth)
 }
 
+/// Whether a render keeps the depth the pass before it stored. Asked for
+/// with `depth_load`, and decided on the depth the render resolved to: a
+/// render into a depth texture has depth even when it did not set `depth`
+/// (a second pass adding to a shadow map), and must not clear what is there.
+pub(crate) fn resolve_depth_load(requested: bool, resolved_depth_enabled: bool) -> bool {
+    requested && resolved_depth_enabled
+}
+
 /// A depth texture must match the size of the target it is used with.
 pub(crate) fn check_depth_size(
     render: &str,
@@ -488,6 +496,17 @@ mod tests {
             depth,
             RenderDepth { enabled: true, write: true, depth_only: true, texture_id: Some("shadow".into()) }
         );
+    }
+
+    #[test]
+    fn a_second_pass_into_a_shadow_map_keeps_what_the_first_drew() {
+        // The 3D world's ball shadows go into the block shadow map with
+        // depth_load and no `depth`: they must load it, not clear it.
+        let depth = resolve_render_depth("s", Some("shadow"), None, false, false, declared).unwrap();
+        assert!(resolve_depth_load(true, depth.enabled));
+        assert!(!resolve_depth_load(false, depth.enabled));
+        let colour = resolve_render_depth("s", None, None, false, false, declared).unwrap();
+        assert!(!resolve_depth_load(true, colour.enabled));
     }
 
     #[test]

@@ -16010,10 +16010,11 @@ impl App {
             .or_else(|| string_at(render, &["depthCompare"]))
             .map(|label| NativeComputeGraphDepthCompare::from_label(&label))
             .unwrap_or(NativeComputeGraphDepthCompare::Less);
-        let depth_load = depth_enabled
-            && bool_at(render, &["depth_load"])
-                .or_else(|| bool_at(render, &["depthLoad"]))
-                .unwrap_or(false);
+        // Resolved against the depth the pass ends up with (below): a pass
+        // into a depth texture has depth without asking for it.
+        let depth_load_requested = bool_at(render, &["depth_load"])
+            .or_else(|| bool_at(render, &["depthLoad"]))
+            .unwrap_or(false);
         let primitive_topology = string_at(render, &["primitive"])
             .or_else(|| string_at(render, &["topology"]))
             .or_else(|| string_at(render, &["primitive_topology"]))
@@ -16102,7 +16103,7 @@ impl App {
             depth_write,
             |id| self.graph_texture_format(id),
         )?;
-        let depth_load = depth_load && depth_enabled;
+        let depth_load = graph_textures::resolve_depth_load(depth_load_requested, depth_enabled);
         Ok(NativeComputeGraphRenderPlan {
             name,
             cache_key: format!(
