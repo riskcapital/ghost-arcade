@@ -390,7 +390,8 @@ export function buildWorldPart(options: WorldPartOptions): WorldPart {
     relief: {
       flatTexture: flatTexture ?? undefined, gain: RELIEF_PROJECTOR_GAIN, sway: world.sun.sway, projector: geo.projector,
       // Face-on, the camera is the projector, lens shift and all.
-      cameraShift: options.view && (options.view.yaw || options.view.pitch) ? [0, 0] : geo.projector.shift,
+      // Room orbits keep the projector's lens shift (roomCamera), so they start without a jump.
+      cameraShift: geo.mode !== 'room' && options.view && (options.view.yaw || options.view.pitch) ? [0, 0] : geo.projector.shift,
       // In a room the lens keeps its own shape over the output (it differs when a Screen stretches the output).
       ...(geo.mode === 'room' ? { cameraAspect: length(geo.projector.right) / Math.max(1e-9, length(geo.projector.up)) } : {}),
     },
@@ -533,7 +534,7 @@ export function buildWorldPart(options: WorldPartOptions): WorldPart {
       const settings = graph.settings.slice();
       const camera = geo.mode === 'room' || !geo.frame ? roomCamera(geo, view) : reliefCamera(geo.frame, world, view);
       settings.set([...camera.position, camera.fov, ...camera.target, camera.mode === 'director' ? 1 : 0], 0);
-      settings.set(view && (view.yaw || view.pitch) ? [0, 0] : geo.projector.shift, 42);
+      settings.set(geo.mode !== 'room' && view && (view.yaw || view.pitch) ? [0, 0] : geo.projector.shift, 42);
       // Other effect params: same effects in the same order, so the same
       // slots; only the values the params fill change.
       const balls = moved ? ballLayout(moved) : layout;

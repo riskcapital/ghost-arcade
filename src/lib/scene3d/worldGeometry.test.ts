@@ -191,3 +191,34 @@ describe('basisEuler', () => {
     }
   });
 });
+
+describe('orbiting a room', () => {
+  const dir = (c: { position: Vec3; target: Vec3 }) => normalize(sub(c.target, c.position));
+  it('starts with a small turn from the projector’s own view, not a jump to the middle', async () => {
+    const { roomCamera } = await import('./worldScene');
+    const { scene, room } = boxRoom();
+    // A projector aimed off the middle, so looking at the middle would be a jump.
+    const offAim: Room = { ...room, projector: { ...room.projector, target: [1.2, 0.2, 0] } };
+    const geo = worldGeometry(scene, { ...defaultReliefWorld(), source: 'room', room: offAim }, ASPECT);
+    const still = roomCamera(geo);
+    const nudged = roomCamera(geo, { yaw: 0.5, pitch: 0 });
+    expect(dot(dir(still), dir(nudged))).toBeGreaterThan(Math.cos((1.5 * Math.PI) / 180));
+    expect(length(sub(still.position, nudged.position))).toBeLessThan(0.1);
+  });
+
+  it('never tips over the top, however far it is pitched from a steep projector', async () => {
+    const { roomCamera } = await import('./worldScene');
+    const { scene, room } = boxRoom();
+    const steep: Room = { ...room, projector: { ...room.projector, position: [0, 5, 1.2] } };
+    const geo = worldGeometry(scene, { ...defaultReliefWorld(), source: 'room', room: steep }, ASPECT);
+    let last = -Infinity;
+    for (const pitch of [0, 20, 40, 60, 80]) {
+      const c = roomCamera(geo, { yaw: 10, pitch });
+      const elevation = (Math.asin(-dir(c)[1]) * 180) / Math.PI;
+      // Looking down more steeply as the camera rises, never past straight down.
+      expect(elevation).toBeLessThanOrEqual(85.0001);
+      expect(elevation).toBeGreaterThanOrEqual(last - 1e-6);
+      last = elevation;
+    }
+  });
+});

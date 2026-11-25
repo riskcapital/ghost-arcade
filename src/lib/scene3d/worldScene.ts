@@ -21,16 +21,35 @@ function turn(v: Vec3, axis: Vec3, deg: number): Vec3 {
   return add(add(scale(v, c), scale(cross(axis, v), s)), scale(axis, dot(axis, v) * (1 - c)));
 }
 
-/** The camera: the projector itself, or turned round the room's middle. */
+/** Steepest the orbit looks up or down, degrees: short of straight, where the view's up flips. */
+const MAX_ORBIT_ELEVATION = 85;
+
+/**
+ * The camera: the projector itself, or turned round the room. It turns round
+ * the point on the projector's axis level with the room's middle, keeping
+ * the projector's lens shift, so the first move of an orbit is a small turn
+ * and not a jump to look at the middle; it never tips over the top or bottom.
+ */
 export function roomCamera(geo: WorldGeo, view?: ReliefView): Scene3D['camera'] {
   const pr = geo.projector;
   if (!view || (!view.yaw && !view.pitch)) return { mode: 'free', fov: pr.fov, position: [...pr.pos] as Vec3, target: add(pr.pos, pr.fwd) };
   const yaw = Math.max(-80, Math.min(80, view.yaw)), pitch = Math.max(-80, Math.min(80, view.pitch));
-  let off = sub(pr.pos, geo.center);
-  off = turn(off, [0, 1, 0], yaw);
-  const side = normalize(cross([0, 1, 0], off));
-  if (length(side) > 0.5) off = turn(off, side, -pitch);
-  return { mode: 'free', fov: pr.fov, position: add(geo.center, off), target: [...geo.center] as Vec3 };
+  const fwd = normalize(pr.fwd);
+  const pivot = add(pr.pos, scale(fwd, Math.max(0.1, dot(sub(geo.center, pr.pos), fwd))));
+  const up: Vec3 = [0, 1, 0];
+  let off = turn(sub(pr.pos, pivot), up, yaw);
+  const dist = length(off);
+  if (dist > 1e-9) {
+    let side = cross(up, off);
+    if (length(side) < 1e-6 * dist) side = cross(up, turn(normalize(pr.right), up, yaw));
+    side = normalize(side);
+    const deg = (r: number) => (r * 180) / Math.PI;
+    const now = deg(Math.asin(Math.max(-1, Math.min(1, dot(off, up) / dist))));
+    // Pitch up raises the camera, as before; the result stays short of the poles.
+    const want = Math.max(-MAX_ORBIT_ELEVATION, Math.min(MAX_ORBIT_ELEVATION, now + pitch));
+    off = turn(off, side, -(want - now));
+  }
+  return { mode: 'free', fov: pr.fov, position: add(pivot, off), target: pivot };
 }
 
 function roomScene(scene: InteractiveScene, world: ReliefWorld, geo: WorldGeo, view?: ReliefView): Scene3D {

@@ -414,6 +414,8 @@
   }
   $: if (ready && !visible) {
     flush();
+    // Hidden behind another page: the live output goes back to the projector's view.
+    if (orbit) setOrbit(false);
     if (!outputActive) {
       stopCamera();
       mobileAudio?.stop();

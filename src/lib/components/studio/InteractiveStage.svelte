@@ -294,6 +294,7 @@
         onpointermove={orbitMove}
         onpointerup={orbitUp}
         onpointercancel={orbitUp}
+        onlostpointercapture={orbitUp}
       ></div>
       <div class="orbit-note" aria-live="polite">Orbit · the output follows this view</div>
     {/if}

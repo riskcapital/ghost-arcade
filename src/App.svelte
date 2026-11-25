@@ -90,7 +90,7 @@
   import { STRIPE_BLACK, STRIPE_CELLS, STRIPE_FRAME_LIMIT } from './lib/mobile/studio/structuredLightCodes';
   import {tick as studioTick} from 'svelte';
   import {defaultInteractive,validateScene as validateInteractiveScene,type InteractiveScene,type Interaction} from './lib/mobile/studio/interactive';
-  import {queueWorldAction, setLivePointer, setLiveWorldView} from './lib/interactive/interactiveLive';
+  import {liveWorldView, queueWorldAction, setLivePointer, setLiveWorldView} from './lib/interactive/interactiveLive';
   import {describePhoneClient,keepPhoneWorld,phoneShowActions,phoneWorldOn,studioCapabilities,withPhoneZoneDefaults} from './lib/mobile/studio/phoneWorld';
   import {DEPTH_REQUEST_ID,DepthCaptureOffers,parseDepthCaptureOffer,type DepthCaptureOffer,type DepthCaptureStatus,type WaitingDepthOffer} from './lib/mobile/studio/depthCaptureOffer';
   import {answersDepthScan,scanPhones,stepDepthScan,type DepthScanEvent,type DepthScanFlow,type ScanPhone} from './lib/mobile/studio/depthScanFlow';
@@ -140,12 +140,20 @@
     if(studioEditorClip)return studioClipStates(studioEditorClip.deck).states[studioEditorClip.row]?.activeClip?.id===studioEditorClip.id;
     return get(project).layers.find(l=>l.id===studioEditorLayer)?.visible!==false;
   }
+  /** The layer the output draws the edited scene on: the layer, or in VJ mode its clip's row. */
+  function studioOutputLayerId(){
+    return studioEditorClip?`vj-layer-${studioEditorClip.row}${get(vjClipLauncher).crossfaderEnabled?'-'+studioEditorClip.deck:''}`:studioEditorLayer;
+  }
   const studioNativeFrame=createNativeSourcePreview({
-    layerId:()=>studioEditorClip?`vj-layer-${studioEditorClip.row}${get(vjClipLauncher).crossfaderEnabled?'-'+studioEditorClip.deck:''}`:studioEditorLayer,
+    layerId:studioOutputLayerId,
     // No readback for a hidden page, a stopped layer or one that is gone.
     live:()=>showInteractiveStudio&&studioPage==='interactive'&&!!studioCurrentSource()?.interactiveScene&&studioTargetLive(),
     // A paused or empty scene does not move: read it once per edit, not 30 times a second.
-    stillKey:()=>{const source=studioCurrentSource();return source?.interactivePaused||!source?.interactiveScene?.effects?.some(e=>e.enabled)?studioEditorSignature:null;},
+    // A 3D world moves without effects (sun, throws, pours), and Orbit turns
+    // even a paused one, so the view is part of the key.
+    stillKey:()=>{const source=studioCurrentSource();const world=!!source?.interactiveScene?.world?.enabled;
+      if(!source?.interactivePaused&&(world||source?.interactiveScene?.effects?.some(e=>e.enabled)))return null;
+      return `${studioEditorSignature}|${JSON.stringify(liveWorldView(studioOutputLayerId())??null)}`;},
   });
 
   /** `notPhone`: never open (and so take over) a layer a phone is driving, even when it is selected. */
@@ -229,10 +237,22 @@
     return liveLayerValue(studioEditorLayer,at);
   }
   /** The editor's pointer straight to the layer, every frame (VJ clips use the scene path). */
-  function studioPointer(inputs:Interaction[]){if(showInteractiveStudio&&!studioEditorClip&&studioEditorLayer)setLivePointer(studioEditorLayer,inputs);}
+  /** Where the editor's live input goes: its layer, or its clip's row while that clip is the one playing. */
+  function studioLiveLayerId(){
+    if(!showInteractiveStudio||(!studioEditorClip&&!studioEditorLayer))return '';
+    return studioEditorClip&&!studioTargetLive()?'':studioOutputLayerId();
+  }
+  function studioPointer(inputs:Interaction[]){const id=studioLiveLayerId();if(id)setLivePointer(id,inputs);}
   /** The Studio's Orbit view turns the layer's 3D world; closing it turns it back (Studio onDestroy). */
-  function studioView(view:{yaw:number;pitch:number}|null){if(!studioEditorClip&&studioEditorLayer)setLiveWorldView(studioEditorLayer,view);}
-  function studioWorldAction(what:import('./lib/mobile/studio/interactive').ZoneWorldAction,point:{x:number;y:number}){if(!studioEditorClip&&studioEditorLayer)queueWorldAction(studioEditorLayer,what,point);}
+  let studioViewLayer='';
+  function studioView(view:{yaw:number;pitch:number}|null){
+    // A view is undone where it was set, even if the clip has stopped since.
+    if(studioViewLayer)setLiveWorldView(studioViewLayer,null);
+    studioViewLayer='';
+    const id=view?studioLiveLayerId():'';
+    if(id){setLiveWorldView(id,view);studioViewLayer=id;}
+  }
+  function studioWorldAction(what:import('./lib/mobile/studio/interactive').ZoneWorldAction,point:{x:number;y:number}){const id=studioLiveLayerId();if(id)queueWorldAction(id,what,point);}
   function closeInteractiveStudio(){
     if(!showInteractiveStudio)return;
     stepPhoneScan({type:'cancel',message:'Interactive Studio was closed on the desktop.'});
