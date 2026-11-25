@@ -62,6 +62,11 @@ interface LayerRenderObject {
   defaultControlPoints?: Point2D[];
 }
 
+/** How long, and how many, effect materials stay compiled after they stop
+ *  being drawn (see RenderEngine.retiredEffectMaterials). */
+const EFFECT_MATERIAL_RETAIN_MS = 30_000;
+const EFFECT_MATERIAL_RETAIN_MAX = 64;
+
 export class RenderEngine {
   private renderer: THREE.WebGLRenderer;
   private scene: THREE.Scene;
@@ -99,6 +104,13 @@ export class RenderEngine {
 
   // Effect materials cache (keyed by effectId)
   private effectMaterials: Map<string, THREE.ShaderMaterial> = new Map();
+  /** Effect materials not drawn last frame (a muted layer, an effect switched
+   *  off), kept so switching it back on does not recompile its shader. Freed
+   *  after EFFECT_MATERIAL_RETAIN_MS, or oldest first past
+   *  EFFECT_MATERIAL_RETAIN_MAX. Keyed by effect id. */
+  private retiredEffectMaterials: Map<string, { material: THREE.ShaderMaterial; type: string; retiredAt: number }> = new Map();
+  /** Layers already warned about a mask shape past the shader's point cap. */
+  private maskCapWarned = new Set<string>();
 
   // Effect processing render targets (ping-pong)
   private effectTargetA: THREE.WebGLRenderTarget;
@@ -1064,7 +1076,17 @@ export class RenderEngine {
   private getOrCreateEffectMaterial(effect: Effect): THREE.ShaderMaterial {
     let material = this.effectMaterials.get(effect.id);
     if (!material) {
+      const retired = this.retiredEffectMaterials.get(effect.id);
+      if (retired) {
+        this.retiredEffectMaterials.delete(effect.id);
+        if (retired.type === effect.type) {
+          this.effectMaterials.set(effect.id, retired.material);
+          return retired.material;
+        }
+        try { retired.material.dispose(); } catch { /* context lost */ }
+      }
       material = createEffectMaterial(effect.type);
+      material.userData.effectType = effect.type;
       // Force shader compilation to detect errors early
       material.needsUpdate = true;
       this.effectMaterials.set(effect.id, material);
@@ -1263,7 +1285,10 @@ export class RenderEngine {
       if (pts.length > 64) {
         // Naive downsample: keep every Nth point. Bezier tessellation is
         // already dense; this preserves overall silhouette quality.
-        console.warn(`[applyMask] Shape on layer ${layerId} tessellates to ${pts.length} points (>64); downsampling for shader.`);
+        if (!this.maskCapWarned.has(layerId)) {
+          this.maskCapWarned.add(layerId);
+          console.warn(`[applyMask] Shape on layer ${layerId} tessellates to ${pts.length} points (>64); downsampling for shader.`);
+        }
         const stride = pts.length / 64;
         const ds: Point2D[] = [];
         for (let i = 0; i < 64; i++) ds.push(pts[Math.floor(i * stride)]);
@@ -1695,10 +1720,20 @@ export class RenderEngine {
     this.temporalMagnificationRunner.reapStale(this.temporalEffectLiveKeys);
     this.temporalEffectLiveKeys.clear();
 
+    const now = performance.now();
     for (const [effectId, material] of this.effectMaterials.entries()) {
       if (!this.effectLiveKeys.has(effectId)) {
-        try { material.dispose(); } catch {}
         this.effectMaterials.delete(effectId);
+        this.retiredEffectMaterials.set(effectId, { material, type: String(material.userData.effectType ?? ''), retiredAt: now });
+      }
+    }
+    if (this.retiredEffectMaterials.size > 0) {
+      // Map order is retirement order: the oldest come first.
+      for (const [effectId, retired] of this.retiredEffectMaterials) {
+        const expired = now - retired.retiredAt > EFFECT_MATERIAL_RETAIN_MS;
+        if (!expired && this.retiredEffectMaterials.size <= EFFECT_MATERIAL_RETAIN_MAX) break;
+        try { retired.material.dispose(); } catch { /* context lost */ }
+        this.retiredEffectMaterials.delete(effectId);
       }
     }
 
@@ -2836,6 +2871,14 @@ export class RenderEngine {
     this.effectFeedbackTargets.clear();
     this.effectFeedbackHasPrior.clear();
     this.temporalMagnificationRunner.dispose();
+    this.gpuEffectRunner.dispose();
+    this.shapeMaskTarget?.dispose();
+    this.shapeMaskTarget = null;
+    this.edgeEffectTarget?.dispose();
+    this.edgeEffectTarget = null;
+    for (const fullScreenQuad of [this.compositeQuad, this.effectQuad, this.outputQuad, this.crossfadeQuad, this.domeQuad, this.transitionQuad]) {
+      try { fullScreenQuad?.geometry.dispose(); } catch { /* context lost */ }
+    }
     this.vjMixTarget?.dispose();
     this.vjMixTarget = null;
     this.feedbackCopyMaterial?.dispose();
@@ -2854,6 +2897,10 @@ export class RenderEngine {
       material.dispose();
     }
     this.effectMaterials.clear();
+    for (const retired of this.retiredEffectMaterials.values()) {
+      retired.material.dispose();
+    }
+    this.retiredEffectMaterials.clear();
 
     // Dispose mask materials
     for (const material of this.maskMaterials.values()) {
@@ -2905,6 +2952,11 @@ export class RenderEngine {
     if (material) {
       material.dispose();
       this.effectMaterials.delete(effectId);
+    }
+    const retired = this.retiredEffectMaterials.get(effectId);
+    if (retired) {
+      retired.material.dispose();
+      this.retiredEffectMaterials.delete(effectId);
     }
     const feedback = this.effectFeedbackTargets.get(effectId);
     if (feedback) {
