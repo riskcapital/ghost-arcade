@@ -268,6 +268,11 @@ var paint_masks: texture_2d_array<f32>;
 @group(0) @binding(6)
 var<storage, read> layer_tiles: array<u32>;
 const LAYER_TILES_HEADER: u32 = 4u;
+// Mesh cell bounds after the bins (main.rs MESH_CELL_BOUNDS_BASE): one word
+// per layer slot, where its cell boxes start (0 = none), then per meshed
+// layer its cells row by row as (min.xy, max.xy) f32 bits. Each box holds
+// the one layer_mesh_*_cell tests, so outside it the cell is skipped unbuilt.
+const MESH_CELL_BOUNDS_BASE: u32 = 263173u;
 
 const SOURCE_PREVIEW_SIZE: i32 = 256;
 const SOURCE_PREVIEW_PIXELS: i32 = SOURCE_PREVIEW_SIZE * SOURCE_PREVIEW_SIZE;
@@ -965,30 +970,59 @@ fn mesh_patch_uv(q: vec2<f32>, p: MeshPatch) -> vec3<f32> {
   return vec3<f32>(0.0, 0.0, 0.0);
 }
 
-fn layer_mesh_uv_bezier(local_uv: vec2<f32>, layer_index: u32, rows: u32, cols: u32) -> vec3<f32> {
-  // Same nearby-first search as the straight mesh below.
-  let exact_search = rows <= 4u && cols <= 4u;
+/// Row and column range of the cells a mesh search tries first: the cell
+/// under the pixel's grid estimate and its neighbours, or every cell of a
+/// mesh of at most 4 x 4 points (whose search stops there). (r0, r1, c0, c1)
+/// inclusive; the cells are tried row by row, as the full sweep orders them.
+fn layer_mesh_nearby(local_uv: vec2<f32>, rows: u32, cols: u32) -> vec4<u32> {
+  if (rows <= 4u && cols <= 4u) {
+    return vec4<u32>(0u, rows - 2u, 0u, cols - 2u);
+  }
   let estimated_row = min(rows - 2u, u32(clamp(floor(local_uv.y * f32(rows - 1u)), 0.0, f32(rows - 2u))));
   let estimated_col = min(cols - 2u, u32(clamp(floor(local_uv.x * f32(cols - 1u)), 0.0, f32(cols - 2u))));
-  for (var search = 0u; search < 2u; search = search + 1u) {
-    if (search == 1u && exact_search) { break; }
-    for (var row = 0u; row < 15u; row = row + 1u) {
-      if (row >= rows - 1u) { break; }
-      for (var col = 0u; col < 15u; col = col + 1u) {
-        if (col >= cols - 1u) { break; }
-        let nearby = exact_search || (row + 1u >= estimated_row && row <= estimated_row + 1u
-          && col + 1u >= estimated_col && col <= estimated_col + 1u);
-        if ((search == 0u && !nearby) || (search == 1u && nearby)) { continue; }
-        let mesh_cell = layer_mesh_patch(layer_index, row, col, cols);
-        if (!mesh_patch_contains_bounds(mesh_cell, local_uv)) { continue; }
-        let cell = mesh_patch_uv(local_uv, mesh_cell);
-        if (cell.x > 0.5) {
-          return vec3<f32>(1.0, layer_mesh_rest_uv(layer_index, row, col, cols, cell.yz));
-        }
-      }
-    }
+  return vec4<u32>(
+    max(estimated_row, 1u) - 1u, min(estimated_row + 1u, rows - 2u),
+    max(estimated_col, 1u) - 1u, min(estimated_col + 1u, cols - 2u),
+  );
+}
+
+/// Outside the cell's stored box (see MESH_CELL_BOUNDS_BASE)? `boxes` is
+/// where the layer's boxes start, 0 when it has none (then: never).
+fn layer_mesh_cell_skipped(local_uv: vec2<f32>, boxes: u32, row: u32, col: u32, cols: u32) -> bool {
+  if (boxes == 0u) { return false; }
+  let at = boxes + (row * (cols - 1u) + col) * 4u;
+  let lo = vec2<f32>(bitcast<f32>(layer_tiles[at]), bitcast<f32>(layer_tiles[at + 1u]));
+  let hi = vec2<f32>(bitcast<f32>(layer_tiles[at + 2u]), bitcast<f32>(layer_tiles[at + 3u]));
+  return any(local_uv < lo) || any(local_uv > hi);
+}
+
+/// One Bezier cell tried at local_uv: (found, rest u, rest v).
+fn layer_mesh_bezier_cell(local_uv: vec2<f32>, layer_index: u32, row: u32, col: u32, cols: u32) -> vec3<f32> {
+  let mesh_cell = layer_mesh_patch(layer_index, row, col, cols);
+  if (!mesh_patch_contains_bounds(mesh_cell, local_uv)) { return vec3<f32>(0.0); }
+  let cell = mesh_patch_uv(local_uv, mesh_cell);
+  if (cell.x > 0.5) {
+    return vec3<f32>(1.0, layer_mesh_rest_uv(layer_index, row, col, cols, cell.yz));
   }
-  return vec3<f32>(0.0, local_uv);
+  return vec3<f32>(0.0);
+}
+
+/// One straight cell tried at local_uv: (found, rest u, rest v).
+fn layer_mesh_straight_cell(local_uv: vec2<f32>, layer_index: u32, row: u32, col: u32, cols: u32) -> vec3<f32> {
+  let a = layer_mesh_point(layer_index, row * cols + col);
+  let b = layer_mesh_point(layer_index, row * cols + col + 1u);
+  let c = layer_mesh_point(layer_index, (row + 1u) * cols + col + 1u);
+  let d = layer_mesh_point(layer_index, (row + 1u) * cols + col);
+  let bounds_min = min(min(a, b), min(c, d)) - vec2<f32>(0.000001);
+  let bounds_max = max(max(a, b), max(c, d)) + vec2<f32>(0.000001);
+  if (any(local_uv < bounds_min) || any(local_uv > bounds_max)) { return vec3<f32>(0.0); }
+  // Concave/folded cells use the same two triangles as the mesh, rather
+  // than turning an unsolved bilinear inverse into transparent pixels.
+  let cell = mesh_cell_uv(local_uv, a, b, c, d);
+  if (cell.x > 0.5) {
+    return vec3<f32>(1.0, layer_mesh_rest_uv(layer_index, row, col, cols, cell.yz));
+  }
+  return vec3<f32>(0.0);
 }
 
 fn layer_mesh_uv(local_uv: vec2<f32>, layer_index: u32) -> vec3<f32> {
@@ -997,38 +1031,42 @@ fn layer_mesh_uv(local_uv: vec2<f32>, layer_index: u32) -> vec3<f32> {
   if (rows < 2u || cols < 2u) {
     return vec3<f32>(1.0, local_uv);
   }
-  if (layers[layer_index].fast_flags.y == 1u) {
-    return layer_mesh_uv_bezier(local_uv, layer_index, rows, cols);
-  }
-  // Try nearby cells first. A strong warp can move a cell far beyond its
-  // original grid neighborhood, so unresolved pixels also search the rest.
-  // Bounds reject unrelated cells before any inverse/triangle solve.
-  let exact_search = rows <= 4u && cols <= 4u;
-  let estimated_row = min(rows - 2u, u32(clamp(floor(local_uv.y * f32(rows - 1u)), 0.0, f32(rows - 2u))));
-  let estimated_col = min(cols - 2u, u32(clamp(floor(local_uv.x * f32(cols - 1u)), 0.0, f32(cols - 2u))));
-  for (var search = 0u; search < 2u; search = search + 1u) {
-    if (search == 1u && exact_search) { break; }
-    for (var row = 0u; row < 15u; row = row + 1u) {
-      if (row >= rows - 1u) { break; }
-      for (var col = 0u; col < 15u; col = col + 1u) {
-        if (col >= cols - 1u) { break; }
-        let nearby = exact_search || (row + 1u >= estimated_row && row <= estimated_row + 1u
-          && col + 1u >= estimated_col && col <= estimated_col + 1u);
-        if ((search == 0u && !nearby) || (search == 1u && nearby)) { continue; }
-        let a = layer_mesh_point(layer_index, row * cols + col);
-        let b = layer_mesh_point(layer_index, row * cols + col + 1u);
-        let c = layer_mesh_point(layer_index, (row + 1u) * cols + col + 1u);
-        let d = layer_mesh_point(layer_index, (row + 1u) * cols + col);
-        let bounds_min = min(min(a, b), min(c, d)) - vec2<f32>(0.000001);
-        let bounds_max = max(max(a, b), max(c, d)) + vec2<f32>(0.000001);
-        if (any(local_uv < bounds_min) || any(local_uv > bounds_max)) { continue; }
-        // Concave/folded cells use the same two triangles as the mesh, rather
-        // than turning an unsolved bilinear inverse into transparent pixels.
-        let cell = mesh_cell_uv(local_uv, a, b, c, d);
-        if (cell.x > 0.5) {
-          return vec3<f32>(1.0, layer_mesh_rest_uv(layer_index, row, col, cols, cell.yz));
-        }
+  let bezier = layers[layer_index].fast_flags.y == 1u;
+  // Try nearby cells first: the pixel's grid cell and its neighbours, looped
+  // over directly. A strong warp can move a cell far beyond its original
+  // grid neighborhood, so unresolved pixels also search the rest, row by
+  // row (a mesh of at most 4 x 4 points has no rest). Bounds reject
+  // unrelated cells before any inverse/triangle or Newton solve.
+  let boxes = layer_tiles[MESH_CELL_BOUNDS_BASE + layer_index];
+  let near = layer_mesh_nearby(local_uv, rows, cols);
+  for (var row = near.x; row <= near.y; row = row + 1u) {
+    for (var col = near.z; col <= near.w; col = col + 1u) {
+      if (layer_mesh_cell_skipped(local_uv, boxes, row, col, cols)) { continue; }
+      var hit: vec3<f32>;
+      if (bezier) {
+        hit = layer_mesh_bezier_cell(local_uv, layer_index, row, col, cols);
+      } else {
+        hit = layer_mesh_straight_cell(local_uv, layer_index, row, col, cols);
       }
+      if (hit.x > 0.5) { return hit; }
+    }
+  }
+  if (rows <= 4u && cols <= 4u) {
+    return vec3<f32>(0.0, local_uv);
+  }
+  for (var row = 0u; row < 15u; row = row + 1u) {
+    if (row >= rows - 1u) { break; }
+    for (var col = 0u; col < 15u; col = col + 1u) {
+      if (col >= cols - 1u) { break; }
+      if (row >= near.x && row <= near.y && col >= near.z && col <= near.w) { continue; }
+      if (layer_mesh_cell_skipped(local_uv, boxes, row, col, cols)) { continue; }
+      var hit: vec3<f32>;
+      if (bezier) {
+        hit = layer_mesh_bezier_cell(local_uv, layer_index, row, col, cols);
+      } else {
+        hit = layer_mesh_straight_cell(local_uv, layer_index, row, col, cols);
+      }
+      if (hit.x > 0.5) { return hit; }
     }
   }
   return vec3<f32>(0.0, local_uv);
@@ -1464,7 +1502,7 @@ fn mwarp_mesh_patch(row: u32, col: u32, cols: u32) -> MeshPatch {
 
 /// Master Warp Bezier mesh: the control points are destinations, so each
 /// pixel inverts the Coons patch of the cell it lands in, with the same
-/// nearby-first search and bounds rejection as layer_mesh_uv_bezier. It is a
+/// nearby-first search and bounds rejection as layer_mesh_uv. It is a
 /// separate loop only because the fs_output pipeline has no layer buffer.
 fn mwarp_mesh_uv_bezier(q: vec2<f32>, rows: u32, cols: u32) -> vec3<f32> {
   let exact_search = rows <= 4u && cols <= 4u;
@@ -4167,7 +4205,12 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
         local = quad_local_uv(layer_uv, tl, tr, br, bl);
       }
       let inside = local.x > 0.5;
-      let mesh_sample = layer_mesh_uv(local.yz, layer_index);
+      // The mesh is only read inside the quad (or a Bezier mesh's reach):
+      // outside it local is (0, 0) and the search found nothing it uses.
+      var mesh_sample = vec3<f32>(0.0);
+      if (inside) {
+        mesh_sample = layer_mesh_uv(local.yz, layer_index);
+      }
       let inside_mesh = inside && mesh_sample.x > 0.5;
       if (inside_mesh) {
         let uv_sample = layer_sample_uv(mesh_sample.yz, layer_index);
