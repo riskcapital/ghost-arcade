@@ -64,7 +64,7 @@
 </script>
 
 <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
-<div class="station" bind:this={root} tabindex="0" role="region" aria-label="Live looper" onkeydown={key} onpointerdown={focusRoot}>
+<div class="station" class:tracks={mode === 'tracks'} bind:this={root} tabindex="0" role="region" aria-label="Live looper" onkeydown={key} onpointerdown={focusRoot}>
   <div class="modes">
     <div class="ga-segmented small" role="tablist" aria-label="Looper view">
       <button role="tab" aria-selected={mode === 'tracks'} class:active={mode === 'tracks'} onclick={() => (mode = 'tracks')}>Tracks</button>
@@ -86,9 +86,18 @@
 </div>
 
 <style>
-  .station { display: flex; flex-direction: column; min-height: 0; height: 100%; outline: none; }
+  /*
+   * In the lower panel (a third of the window) the looper scrolls as a whole:
+   * the header rows keep their height and wrap instead of being clipped, and
+   * every loop track keeps its full row height.
+   */
+  .station { display: flex; flex-direction: column; min-height: 0; height: 100%; outline: none; overflow-y: auto; overflow-x: hidden; }
+  .station.tracks > * { flex: 0 0 auto; }
+  .station.tracks > :global(.rows) { overflow: visible; }
   .modes { display: flex; padding: 6px 10px 0; background: var(--studio-panel); }
-  .lat { display: flex; align-items: center; gap: 8px; padding: 4px 10px; border-bottom: 1px solid var(--studio-edge-soft); font-size: var(--ga-text-meta, 11px); color: var(--studio-muted); }
+  .lat { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 4px 10px; border-bottom: 1px solid var(--studio-edge-soft); font-size: var(--ga-text-meta, 11px); color: var(--studio-muted); }
   .lat input { width: 56px; height: 22px; }
-  .top { padding: 6px 10px; border-bottom: 1px solid var(--studio-edge); background: var(--studio-panel); overflow-x: auto; }
+  .top { padding: 6px 10px; border-bottom: 1px solid var(--studio-edge); background: var(--studio-panel); }
+  .top > :global(.bar) { flex-wrap: wrap; row-gap: 6px; white-space: normal; }
+  .top > :global(.bar > *) { white-space: nowrap; }
 </style>
