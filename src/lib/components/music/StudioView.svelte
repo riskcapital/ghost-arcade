@@ -744,7 +744,8 @@
   .lane-editor { min-height: 0; overflow: auto; border: 1px solid var(--studio-edge); border-radius: var(--studio-radius); }
   .looper-stage { position: relative; flex: 1; min-height: 0; display: flex; }
   .loop-visuals { position: absolute; right: 0; top: 0; width: 250px; z-index: 1; background: var(--studio-panel); border: 1px solid var(--studio-edge); border-radius: var(--studio-radius); padding: 6px 8px; }
-  .looper-cols { flex: 0 0 auto; position: relative; z-index: 1; border: 1px solid var(--studio-edge); border-radius: var(--studio-radius); overflow: hidden; }
+  /* The cells keep their full height; a short window scrolls them rather than cutting them off. */
+  .looper-cols { flex: 0 1 auto; min-height: 120px; max-height: 60%; position: relative; z-index: 1; border: 1px solid var(--studio-edge); border-radius: var(--studio-radius); overflow-x: hidden; overflow-y: auto; }
   .looper-page .rack.right { grid-row: 2 / 4; }
   .loops-running { display: inline-flex; align-items: center; gap: 6px; }
   .loops-running .led { width: 7px; height: 7px; border-radius: 50%; background: var(--studio-accent); box-shadow: 0 0 6px var(--studio-accent); }

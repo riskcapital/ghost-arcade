@@ -225,14 +225,14 @@
   </div>
   <div class="phrase" aria-hidden="true"><i style="width: {phrase}%"></i></div>
 
-  <div class="cols" style="grid-template-columns: repeat({station.trackCount}, minmax(0, 1fr))">
+  <div class="cols" style="grid-template-columns: repeat({station.trackCount}, minmax({compact ? '104px' : '0'}, 1fr))">
     {#each { length: $musicStudio.loopStation.trackCount } as _, i}
       {@const t = station.tracks[i]}
       {@const v = view.tracks[i]}
       {@const bars = Math.max(1, Math.round(v.beats / 4))}
       <div class="col" class:sel={view.selected === i} role="presentation" onpointerdown={() => selectLoopTrack(i, true)}>
         {#if compact}<span class="num">{i + 1}</span>{/if}
-        <LoopTrackButton index={i} size={compact ? 74 : 96} ring />
+        <div class="ring"><LoopTrackButton index={i} size={compact ? 74 : 96} ring /></div>
         <div class="txt">
         {#if stateLine(v, $beatNow)}<div class="state" class:wait={v.waiting}>{stateLine(v, $beatNow)}</div>{/if}
         {#if v.phase === 'empty'}
@@ -273,6 +273,7 @@
             </div>
           {/if}
         {/if}
+        <div class="controls">
         <input class="fader" type="range" min="0" max="1" step="0.01" value={t.level} oninput={(e) => setLoopLevel(i, Number((e.target as HTMLInputElement).value))} aria-label="Loop {i + 1} level" />
         <select class="visual" value={voiceFor(i)} onchange={(e) => assignVisual(i, Number((e.target as HTMLSelectElement).value))} aria-label="Visual for loop {i + 1}" title={voices.length ? 'The visual voice that follows this loop (pick the look in the visuals rack)' : 'Add a visual in the visuals rack first'}>
           <option value={-1}>No visual</option>
@@ -282,9 +283,12 @@
           {#if v.phase === 'empty'}
             <button onclick={() => onpicktrack?.(i)} title="Choose what the track records">Input</button>
           {:else}
+            <div class="row">
             <button class:on={t.muted} onclick={() => toggleLoopMute(i)} title="Mute (M)">M</button>
             <button onclick={() => stopLoopTrack(i)} title="Stop on the next bar (Shift+Space)" aria-label="Stop"><svg viewBox="0 0 10 10" aria-hidden="true"><rect x="2" y="2" width="6" height="6" /></svg></button>
             <button onclick={() => undoLoopLayer(i)} disabled={!v.layers} title="Undo the last layer (Cmd+Z)">Undo</button>
+            </div>
+            <div class="row">
             <button onclick={() => clearLoopTrack(i)} title="Empty the track (Undo brings it back)">Clear</button>
             <button onclick={() => save(i)} title="Save it to My loops (S)">Save</button>
             <!-- The dub shots and the drum pads play through their own effects (their FX buttons on their tabs). -->
@@ -292,7 +296,9 @@
               {@const fxCount = s.inserts[loopFxChannel(i)]?.length ?? 0}
               <button class:on={fxCount > 0} onclick={() => insertEditorChannel.set($insertEditorChannel === loopFxChannel(i) ? null : loopFxChannel(i))} title="Effects on this loop's sound">FX{fxCount ? ` ${fxCount}` : ''}</button>
             {/if}
+            </div>
           {/if}
+        </div>
         </div>
         </div>
       </div>
@@ -338,7 +344,10 @@
   .name.empty { color: var(--studio-muted); font-weight: 500; }
   .meta { margin: 0; text-align: center; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .fader { width: 80%; margin: 10px 0; }
-  .btns { display: flex; gap: 4px; flex-wrap: wrap; justify-content: center; }
+  .ring { display: flex; justify-content: center; }
+  .controls { display: contents; }
+  .btns { display: flex; flex-direction: column; align-items: center; gap: 4px; }
+  .btns .row { display: flex; gap: 4px; flex-wrap: wrap; justify-content: center; }
   .visual { max-width: 100%; height: 22px; font-size: var(--ga-text-meta, 11px); }
   .btns button { height: 22px; min-width: 24px; padding: 0 7px; border: 1px solid var(--studio-edge); background: transparent; color: var(--studio-ink); border-radius: var(--studio-radius); font: inherit; font-size: var(--ga-text-meta, 11px); cursor: pointer; display: inline-grid; place-items: center; }
   .btns button.on { background: var(--studio-accent-soft); border-color: var(--studio-accent); }
@@ -351,15 +360,28 @@
   .sec.on button:first-child { background: var(--studio-accent); color: var(--studio-on-accent); }
   .hint { font-size: var(--ga-text-meta, 11px); color: var(--studio-muted); }
   .txt { display: contents; }
-  .compact .cols { flex: 0 0 auto; overflow: visible; }
-  .compact .col { flex-direction: row; align-items: center; gap: 12px; padding: 14px 12px 12px; min-width: 0; position: relative; }
+  /*
+   * The lower panel's cells: the button centred at the top, the controls
+   * stacked under it at the cell's full width. The cells share one height,
+   * and the level, visual and buttons sit at the foot of each, so empty and
+   * filled cells line up; past the panel's width the cells scroll sideways.
+   */
+  .compact .cols { flex: 0 0 auto; overflow-x: auto; overflow-y: visible; }
+  .compact .col { flex-direction: column; align-items: stretch; gap: 6px; padding: 18px 8px 10px; min-width: 0; position: relative; }
   .compact .col.sel { box-shadow: inset 0 -2px 0 var(--studio-rec); }
-  .compact .txt { display: flex; overflow: hidden; flex-direction: column; align-items: flex-start; gap: 4px; min-width: 0; flex: 1; }
-  .compact .name { margin-top: 0; }
-  .compact .meta { text-align: left; }
-  .compact .fader { width: 100%; margin: 4px 0; }
+  .compact .txt { display: flex; flex-direction: column; align-items: stretch; gap: 4px; min-width: 0; flex: 1; }
+  .compact .state { text-align: center; }
+  .compact .name { margin-top: 2px; text-align: center; width: 100%; }
+  .compact button.name { text-align: center; }
+  .compact .meta { text-align: center; }
+  .compact .pick { flex-direction: column; flex-wrap: nowrap; }
+  .compact .pick select { width: 100%; max-width: none; }
+  .compact .controls { display: flex; flex-direction: column; align-items: stretch; gap: 4px; margin-top: auto; padding-top: 4px; }
+  .compact .fader { width: 100%; margin: 2px 0; }
   .compact .visual { width: 100%; }
-  .compact .btns { flex-wrap: wrap; }
+  .compact .btns { align-items: stretch; }
+  .compact .btns .row { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); flex-wrap: nowrap; }
+  .compact .btns button { min-width: 0; padding: 0 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .num { position: absolute; top: 5px; left: 8px; font-size: 10px; color: var(--studio-muted); }
   .compact { height: auto; }
   .pick { display: flex; gap: 4px; flex-wrap: wrap; max-width: 100%; }
