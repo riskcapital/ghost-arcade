@@ -1054,16 +1054,26 @@ fn flame_at(k: u32, i: u32, tick: u32, at: vec3f) -> Flame {
   let h3 = hash1(i * 83u + tick * 5u + 3u);
   let h4 = hash1(i * 79u + tick * 3u + 4u);
   let h5 = hash1(i * 67u + tick * 17u + 6u);
+  // Its own hash for the second sideways direction: h4 also picks embers,
+  // which sent every ember the same way.
+  let h6 = hash1(i * 59u + tick * 23u + 8u);
   var f: Flame;
   let seed = hash1(i * 71u + tick * 11u + 5u) + 1e-4;
   let life = max(fparam(k, F_LIFETIME), 0.1);
+  // Up is against gravity (a room's down need not be -Y); on the wall these
+  // are x, y and z as before.
+  let up = -phys.down.xyz;
+  var side = cross(up, vec3f(0.0, 0.0, 1.0));
+  if (dot(side, side) < 1e-4) { side = cross(up, vec3f(1.0, 0.0, 0.0)); }
+  side = normalize(side);
+  let depth = cross(side, up);
   if (h4 < clamp(fparam(k, F_EMBERS), 0.0, 1.0) * 0.12) {
     f.pos = vec4f(at, 0.012 + 0.01 * h5);
-    f.vel = vec4f((h3 - 0.5) * 2.0, 1.8 + 2.5 * h5, (h4 - 0.5) * 1.0, 0.0);
+    f.vel = vec4f(side * (h3 - 0.5) * 2.0 + up * (1.8 + 2.5 * h5) + depth * (h6 - 0.5) * 1.0, 0.0);
     f.info = vec4f(f32(k), seed, 2.0, life * (1.5 + h3));
   } else {
     f.pos = vec4f(at, mix(0.05, 0.35, clamp(fparam(k, F_SIZE), 0.0, 1.0)) * (0.6 + 0.6 * h5));
-    f.vel = vec4f((h3 - 0.5) * 0.3, 0.2 + 0.3 * h5, (h4 - 0.5) * 0.2, 0.0);
+    f.vel = vec4f(side * (h3 - 0.5) * 0.3 + up * (0.2 + 0.3 * h5) + depth * (h4 - 0.5) * 0.2, 0.0);
     f.info = vec4f(f32(k), seed, 1.0, life * (0.6 + 0.6 * h3));
   }
   return f;
@@ -1083,7 +1093,8 @@ fn flame_born(k: u32, i: u32, tick: u32) -> Flame {
     let b = fkinds[k].sites[n * 3u + 1u].xyz;
     let face = fkinds[k].sites[n * 3u + 2u];
     // Along the edge, and back from the face across the top of its solid.
-    let back = face.w - mix(0.04, max(face.w - 0.04, 0.05), h3);
+    // Never in front of the face, even on a block thinner than 5 cm.
+    let back = max(face.w - mix(0.04, max(face.w - 0.04, 0.05), h3), 0.0);
     at = mix(a, b, h2) - phys.down.xyz * 0.02 - face.xyz * back;
   } else {
     let uv = vec2f(fparam(k, F_X) + (h1 * 2.0 - 1.0) * fparam(k, F_RADIUS), fparam(k, F_Y));
@@ -1157,9 +1168,10 @@ fn cs_flames(@builtin(global_invocation_id) gid: vec3u) {
       if (f.info.z < 1.5) {
         // A flame rises while it is hot, curls, and slows; it slides round what it meets.
         let t = f.vel.w / f.info.w;
-        let q = p * 1.6 + vec3f(0.0, -frame.time * 1.2, frame.time * 0.3) + f.info.y * 10.0;
-        let lift = max(fparam(k, F_HEAT), 0.0) * 2.4 * (1.0 - t) + 0.4;
         let up = -phys.down.xyz;
+        // The curl noise scrolls down past the flame as it rises.
+        let q = p * 1.6 - up * frame.time * 1.2 + vec3f(0.0, 0.0, frame.time * 0.3) + f.info.y * 10.0;
+        let lift = max(fparam(k, F_HEAT), 0.0) * 2.4 * (1.0 - t) + 0.4;
         v += (up * lift + curl(q) * max(fparam(k, F_TURBULENCE), 0.0) * 1.1) * dt;
         // Sideways motion dies fast, so the fire rises as a column.
         let rise = up * dot(v, up);
