@@ -67,7 +67,7 @@
   import { shareInteractiveScene } from '../../mobile/studio/captureToolkit';
   import { dialogHostOf, isCovered, keyTargetOf, trapTab } from './interactiveEditorFocus';
   import type { DepthStage, DepthStep, EditorMode, EmitterMarker, InspectorTab, PhoneDepthScan, TouchTool } from './interactiveEditorTypes';
-  import { defaultRoom, defaultRoomSetup, FACE_ROLES, type RoomSetup } from '../../scene3d/roomModel';
+  import { defaultRoomSetup, FACE_ROLES, roomForHandSetup, roomForRealObjects, roomOnCancel, type RoomSetup } from '../../scene3d/roomModel';
   import { solveRoom } from '../../scene3d/roomSolve';
   import { roomFromCapture, validateDepthCapture, type DepthCapture } from '../../scene3d/roomPhone';
   import { defaultReliefWorld, type ReliefWorld, type WorldSource } from '../../scene3d/worldModel';
@@ -238,14 +238,27 @@
       openDepth(null);
       return setWorld({ ...world, source, look: 'shaded' }, true);
     }
-    const room = world.room?.setup ? world.room : { ...(world.room ?? defaultRoom()), setup: defaultRoomSetup() };
+    // A phone scan stays as measured; otherwise a hand setup (kept if there is one).
+    const room = roomForRealObjects(world.room);
     setWorld({ ...world, source, look: 'effects', room }, true);
-    if (!room.setup?.done) openDepth('start');
+    if (room.setup && !room.setup.done) openDepth('start');
   }
   function cancelDepth() {
     openDepth(null);
-    // Never set up: back to the flat wall.
-    if (scene.world && !roomSetup?.done) setWorld({ ...scene.world, source: 'wall', look: 'shaded' }, true);
+    const world = scene.world;
+    if (!world || world.source !== 'room') return;
+    const room = roomOnCancel(world.room);
+    // Never set up and nothing scanned: back to the flat wall.
+    if (!room) setWorld({ ...world, source: 'wall', look: 'shaded' }, true);
+    else if (room !== world.room) setWorld({ ...world, room }, true);
+  }
+  /** A step of the hand setup; the first one gives a scanned room a setup to edit. */
+  function stepDepth(step: DepthStep) {
+    const world = scene.world;
+    if (step !== 'start' && step !== 'scan' && world && world.source === 'room' && !world.room?.setup) {
+      setWorld({ ...world, room: roomForHandSetup(world.room) }, true);
+    }
+    openDepth(step);
   }
   function cycleRole(id: string) {
     if (!roomSetup) return;
@@ -1366,7 +1379,7 @@
             faces={depthSolids.length}
             contacts={depthSolve?.contacts ?? 0}
             canLink={mappingSurfaces.some((s) => s.id && s.enabled && s.mode === 'corners')}
-            onstep={(step) => (step === null ? cancelDepth() : openDepth(step))}
+            onstep={(step) => (step === null ? cancelDepth() : stepDepth(step))}
             onsetup={setRoomSetup}
             ongravity={(gravity, undo) => scene.world && setWorld({ ...scene.world, gravity }, undo)}
             onlink={linkMapping}

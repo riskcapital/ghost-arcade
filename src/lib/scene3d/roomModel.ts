@@ -93,6 +93,43 @@ export function defaultRoom(): Room {
   return { source: 'manual', projector: defaultRoomProjector(), down: [0, -1, 0], floor: true, faces: [] };
 }
 
+// ── Choosing and leaving depth setup ─────────────────────────────────────
+// A phone scan is a measured room with no hand setup (the setup is what the
+// engine solves a room from, so attaching one replaces the scan). These keep
+// a scan through every way in and out of setup.
+
+/** A room measured by the phone and not replaced by a hand setup. */
+export function isScannedRoom(room: Room | undefined): room is Room {
+  return !!room && room.source === 'phone' && !room.setup && room.faces.length > 0;
+}
+
+/** The room for "Real objects": a scan or a hand setup as it is, else a new hand setup. */
+export function roomForRealObjects(room: Room | undefined): Room {
+  if (room?.setup || isScannedRoom(room)) return room!;
+  return { ...(room ?? defaultRoom()), setup: defaultRoomSetup() };
+}
+
+/** "Set up by hand": a hand setup over whatever is there (a scan comes back on Cancel). */
+export function roomForHandSetup(room: Room | undefined): Room {
+  return room?.setup ? room : { ...(room ?? defaultRoom()), setup: defaultRoomSetup() };
+}
+
+/**
+ * Cancel in depth setup. A finished setup or a scan stays; an unfinished hand
+ * setup over a scan is dropped so the scan is back; with neither, the world
+ * goes back to the flat wall (`null`).
+ */
+export function roomOnCancel(room: Room | undefined): Room | null {
+  if (!room) return null;
+  if (room.setup?.done) return room;
+  if (room.source === 'phone' && room.faces.length > 0) {
+    if (!room.setup) return room;
+    const { setup: _dropped, ...scan } = room;
+    return scan;
+  }
+  return null;
+}
+
 // ── Vector helpers ────────────────────────────────────────────────────────
 
 export const sub = (a: Vec3, b: Vec3): Vec3 => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
