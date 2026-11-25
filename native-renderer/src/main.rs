@@ -14,6 +14,7 @@ mod graph_textures;
 mod graph_readbacks;
 mod scene_frame;
 mod core_frame_counter;
+mod churn_probe;
 mod media_decode;
 mod media_orphans;
 mod autorelease_pool;
@@ -1167,6 +1168,9 @@ struct CoreStatus {
     gpu_frames_completed: u64,
     gpu_backpressure_skips: u64,
     frames_presented: u64,
+    /// GA_CORE_CHURN_PROBE=1 only (churn_probe.rs).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    gpu_object_churn: Option<churn_probe::ChurnCounts>,
     commands_applied: u64,
     commands_dropped: u64,
     layers_seen: u32,
@@ -6840,6 +6844,7 @@ impl App {
             gpu_frames_completed,
             gpu_backpressure_skips: self.stats.gpu_backpressure_skips,
             frames_presented: gpu_frames_completed,
+            gpu_object_churn: churn_probe::counts(),
             commands_applied: self.stats.commands_applied,
             commands_dropped: self.stats.commands_dropped,
             layers_seen: self.layers_seen,
@@ -25297,6 +25302,7 @@ impl RenderState {
                 &mut texture_views,
                 &[],
             )?;
+            churn_probe::bind_group();
             let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some(&format!(
                     "Ghost Native Compute Graph Bind Group {}",
@@ -25598,6 +25604,7 @@ impl RenderState {
             &mut texture_views,
             &[],
         )?;
+        churn_probe::bind_group();
         let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some(&pass_plan.name),
             layout: &cached.bind_group_layout,
@@ -25739,6 +25746,7 @@ impl RenderState {
             &mut texture_views,
             &sample_overrides,
         )?;
+        churn_probe::bind_group();
         let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some(&render_plan.name),
             layout: &cached.bind_group_layout,
@@ -25747,6 +25755,7 @@ impl RenderState {
         let source_frame_target_view;
         let composite_target_view;
         let target_view = if let Some(index) = composite_target_index {
+            churn_probe::texture_view();
             composite_target_view = self.composite_frame_textures[index].create_view(
                 &wgpu::TextureViewDescriptor {
                     label: Some("Ghost Native Composite Frame Target View"),
@@ -26030,6 +26039,7 @@ impl RenderState {
                         .source_slot
                         .unwrap_or(0)
                         .min(COMPOSITE_FRAME_SLOTS - 1);
+                    churn_probe::texture_view();
                     texture_views.push(self.composite_frame_textures[index].create_view(
                         &wgpu::TextureViewDescriptor {
                             label: Some("Ghost Native Composite Frame Texture View"),
@@ -26584,6 +26594,7 @@ impl RenderState {
                             resource: wgpu::BindingResource::TextureView(&self.isf_dummy_texture_view),
                         });
                     }
+                    churn_probe::bind_group();
                     self.device.create_bind_group(&wgpu::BindGroupDescriptor {
                         label: Some("Ghost Render Core Native Shader Ring Bind Group"),
                         layout: &self.native_shader_bind_group_layout,
@@ -26731,6 +26742,7 @@ impl RenderState {
                     wgpu::Extent3d { width: edge, height: edge, depth_or_array_layers: 1 },
                 );
             } else {
+                churn_probe::texture_view();
                 let target = self.native_shader_input_texture.create_view(&wgpu::TextureViewDescriptor {
                     label: Some("Ghost Render Core Native Shader Input Layer"),
                     dimension: Some(wgpu::TextureViewDimension::D2),
@@ -26888,6 +26900,7 @@ impl RenderState {
                 })
             };
             let textures = [make("Ghost Render Core ISF Pass Target A"), make("Ghost Render Core ISF Pass Target B")];
+            churn_probe::texture_view(); churn_probe::texture_view();
             let views = [
                 textures[0].create_view(&wgpu::TextureViewDescriptor::default()),
                 textures[1].create_view(&wgpu::TextureViewDescriptor::default()),
@@ -26986,6 +26999,7 @@ impl RenderState {
                     resource: wgpu::BindingResource::TextureView(view),
                 });
             }
+            churn_probe::bind_group();
             let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("Ghost Render Core ISF Pass Bind Group"),
                 layout: &self.native_shader_bind_group_layout,
@@ -28355,6 +28369,7 @@ impl RenderState {
             None
         };
         if !frozen && output_gate > 0.0 {
+        churn_probe::texture_view();
         self.draw_fullscreen_to_view(
             &mut encoder,
             &self.composite_frame_textures[0].create_view(&Default::default()),
@@ -28362,6 +28377,7 @@ impl RenderState {
             timestamp_writes,
         );
         self.encode_composition_effects(&mut encoder, composite_graph_jobs, composite_output_index)?;
+        churn_probe::texture_view();
         let creative_view = self.composite_frame_textures[self.creative_frame_index].create_view(&Default::default());
         self.draw_stage3d_mesh_to_view(
             &mut encoder,
@@ -28517,6 +28533,7 @@ impl RenderState {
         } else {
             None
         };
+        churn_probe::texture_view();
         self.draw_fullscreen_to_view(
             &mut mirror_encoder,
             &self.composite_frame_textures[0].create_view(&Default::default()),
@@ -28524,6 +28541,7 @@ impl RenderState {
             mirror_timestamp_writes,
         );
         self.encode_composition_effects(&mut mirror_encoder, composite_graph_jobs, composite_output_index)?;
+        churn_probe::texture_view();
         let creative_view = self.composite_frame_textures[self.creative_frame_index].create_view(&Default::default());
         self.draw_stage3d_mesh_to_view(
             &mut mirror_encoder,
@@ -28677,6 +28695,7 @@ fn deck_monitor_size(width: u32, output: (u32, u32)) -> (u32, u32) {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    churn_probe::init();
     let mut builder = EventLoop::<UserEvent>::with_user_event();
     #[cfg(target_os = "macos")]
     {

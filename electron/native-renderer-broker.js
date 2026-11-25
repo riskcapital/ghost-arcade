@@ -3560,6 +3560,8 @@ export function normalizeStatus(status, previous = makeDefaultStatus()) {
       status.output_last_presented_layer_count ?? previous.output_last_presented_layer_count ?? 0,
     ),
     frames_presented: Number(status.frames_presented ?? previous.frames_presented ?? 0),
+    // Only when the core runs with GA_CORE_CHURN_PROBE=1 (churn_probe.rs).
+    ...(status.gpu_object_churn ? { gpu_object_churn: status.gpu_object_churn } : {}),
     commands_applied: Number(status.commands_applied ?? previous.commands_applied ?? 0),
     gpu_timing_supported: !!(status.gpu_timing_supported ?? previous.gpu_timing_supported ?? false),
     avg_render_cpu_ms: Number(status.avg_render_cpu_ms ?? previous.avg_render_cpu_ms ?? 0),

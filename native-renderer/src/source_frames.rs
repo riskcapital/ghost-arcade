@@ -71,6 +71,7 @@ impl SlotRef {
 
     /// A 2D view of this slot: `mip_count` levels from `base_mip`.
     pub(crate) fn view(&self, label: &str, base_mip: u32, mip_count: u32) -> wgpu::TextureView {
+        crate::churn_probe::texture_view();
         self.texture.create_view(&wgpu::TextureViewDescriptor {
             label: Some(label),
             format: Some(self.texture.format()),
