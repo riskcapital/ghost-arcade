@@ -52,9 +52,15 @@ export function widthKey(tab: SideTab): 'panel' | 'perform' {
   return tab === 'perform' ? 'perform' : 'panel';
 }
 
-/** The column's width now (0 when closed). */
-export function sideWidth(s: SideState): number {
-  return s.open ? s.widths[widthKey(s.tab)] : 0;
+/** Of the window, the most a column may take (a laptop keeps room for the lanes). */
+export const SIDE_MAX_SHARE = 0.4;
+
+/** The column's width now (0 when closed); with `windowWidth`, never more than its share of the window. */
+export function sideWidth(s: SideState, windowWidth?: number): number {
+  if (!s.open) return 0;
+  const w = s.widths[widthKey(s.tab)];
+  if (!windowWidth || !Number.isFinite(windowWidth)) return w;
+  return Math.min(w, Math.max(SIDE_MIN_WIDTH, Math.round(windowWidth * SIDE_MAX_SHARE)));
 }
 
 export function sideStep(s: SideState, e: SideEvent): SideState {

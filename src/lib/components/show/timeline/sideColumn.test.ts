@@ -69,3 +69,15 @@ describe('the Timeline side column', () => {
     expect(parseSide(JSON.stringify({ tab: 'elsewhere', widths: { panel: 9999 } }))).toEqual({ open: true, tab: 'inspector', widths: { panel: SIDE_MAX_WIDTH, perform: SIDE_PERFORM_WIDTH } });
   });
 });
+
+describe('a column on a laptop', () => {
+  it('takes no more than its share of the window, never under the minimum', async () => {
+    const { sideWidth: w, DEFAULT_SIDE: d } = await import('./sideColumn');
+    const perform = { ...d, tab: 'perform' as const };
+    expect(w(perform, 1280)).toBe(512);
+    expect(w(perform, 2560)).toBe(600);
+    expect(w(perform, 600)).toBe(300);
+    expect(w(perform)).toBe(600);
+  });
+});
+
