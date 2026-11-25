@@ -132,26 +132,63 @@ function bands(pieces: readonly PieceInfo[], key: (p: PieceInfo) => number, gap:
   return out;
 }
 
-/** Rows (or columns): gap bands, or even bands when the gaps do not say. */
+/**
+ * Rows (or columns): gap bands, or even bands when the gaps do not say.
+ *
+ * The bands come from the pieces of a real size along the axis. Thin ones
+ * (the tops of a row of cubes seen from a little above, a sliver of an edge)
+ * sit in the gaps between bands and would chain every band into one, so they
+ * join afterwards the band of the piece they rest against.
+ */
 function lines(pieces: readonly PieceInfo[], axis: 'y' | 'x'): string[][] {
   if (!pieces.length) return [];
   const key = (p: PieceInfo) => (axis === 'y' ? p.y : p.x);
   const across = (p: PieceInfo) => (axis === 'y' ? p.x : p.y);
-  const size = median(pieces.map((p) => (axis === 'y' ? p.box.y1 - p.box.y0 : p.box.x1 - p.box.x0)));
-  let found = bands(pieces, key, Math.max(1e-4, size * 0.45));
-  const n = pieces.length;
-  const extent = Math.max(...pieces.map(key)) - Math.min(...pieces.map(key));
+  const span = (p: PieceInfo) => (axis === 'y' ? p.box.y1 - p.box.y0 : p.box.x1 - p.box.x0);
+  const size = median(pieces.map(span));
+  const thick = pieces.filter((p) => span(p) >= size * 0.5);
+  const major = thick.length >= 2 ? thick : [...pieces];
+  let found = bands(major, key, Math.max(1e-4, size * 0.45));
+  const n = major.length;
+  const extent = Math.max(...major.map(key)) - Math.min(...major.map(key));
   // One band that spans far more than a piece (packed with no gaps), or a
   // band per piece or two: no clear bands.
   const packed = found.length === 1 && extent > 2.5 * size;
   if (n >= 4 && (packed || found.length > Math.max(2, Math.ceil(n / 1.5)))) {
     // No clear bands: even bands of about √n pieces.
     const count = Math.max(2, Math.round(Math.sqrt(n)));
-    const sorted = [...pieces].sort((a, b) => key(a) - key(b) || (a.id < b.id ? -1 : 1));
+    const sorted = [...major].sort((a, b) => key(a) - key(b) || (a.id < b.id ? -1 : 1));
     found = [];
     for (let i = 0; i < count; i++) {
       const part = sorted.slice(Math.floor((i * n) / count), Math.floor(((i + 1) * n) / count));
       if (part.length) found.push(part);
+    }
+  }
+  if (major.length < pieces.length) {
+    const bandOf = new Map<string, number>();
+    found.forEach((band, i) => band.forEach((p) => bandOf.set(p.id, i)));
+    const lo = (p: PieceInfo) => (axis === 'y' ? p.box.y0 : p.box.x0);
+    const hi = (p: PieceInfo) => (axis === 'y' ? p.box.y1 : p.box.x1);
+    const lo2 = (p: PieceInfo) => (axis === 'y' ? p.box.x0 : p.box.y0);
+    const hi2 = (p: PieceInfo) => (axis === 'y' ? p.box.x1 : p.box.y1);
+    const thin = pieces.filter((p) => !bandOf.has(p.id)).sort((a, b) => key(a) - key(b) || (a.id < b.id ? -1 : 1));
+    for (const p of thin) {
+      // The pieces nearest along the axis (touching counts as nearest), and of
+      // those the one most directly beside it across: a cube's top rests on
+      // its own front, not on the row behind that only meets it at a corner.
+      const gapTo = (q: PieceInfo) => Math.max(0, lo(q) - hi(p), lo(p) - hi(q));
+      const overlap = (q: PieceInfo) => Math.max(0, Math.min(hi2(p), hi2(q)) - Math.max(lo2(p), lo2(q)));
+      const nearest = Math.min(...major.map(gapTo));
+      let best: PieceInfo | null = null;
+      for (const q of major) {
+        if (gapTo(q) > nearest + size * 0.1) continue;
+        if (
+          !best ||
+          overlap(q) > overlap(best) + 1e-6 ||
+          (Math.abs(overlap(q) - overlap(best)) <= 1e-6 && (Math.abs(key(q) - key(p)) < Math.abs(key(best) - key(p)) || (Math.abs(key(q) - key(p)) === Math.abs(key(best) - key(p)) && q.id < best.id)))
+        ) best = q;
+      }
+      found[bandOf.get(best!.id)!].push(p);
     }
   }
   return found.map((band) => [...band].sort((a, b) => across(a) - across(b) || (a.id < b.id ? -1 : 1)).map((p) => p.id));
