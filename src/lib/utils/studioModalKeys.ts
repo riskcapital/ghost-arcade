@@ -65,3 +65,15 @@ export function studioModalKeyAction(
 export function studioEditorPassesKey(event: StudioModalKeyEvent, target: unknown): boolean {
   return studioModalKeyAction(event, { typing: isTypingTarget(target), timelineOpen: false }) === 'blackout';
 }
+
+/**
+ * Escape on the workshop's Phone calibration page, which has no editor to
+ * handle it: out of a field first, then close the workshop.
+ */
+export function calibrationEscape(
+  event: StudioModalKeyEvent,
+  context: { calibration: boolean; typing: boolean },
+): 'blur' | 'close' | null {
+  if (!context.calibration || event.type !== 'keydown' || event.key !== 'Escape' || event.defaultPrevented) return null;
+  return context.typing ? 'blur' : 'close';
+}

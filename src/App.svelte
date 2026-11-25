@@ -100,7 +100,7 @@
   import {mergeInteractiveEdit,editableEffects,interactiveEditSignature} from './lib/mobile/studio/interactiveEffects';
   import {PhoneSessions,PHONE_SCENE_MAX_BYTES,phoneSenderId,sanitizePhoneInputs,type PhoneSceneState} from './lib/mobile/studio/phoneSessions';
   import {pickEditorClipRow,pickEditorClipSlot,pickPhoneClipSlot,isPhoneInteractiveClip} from './lib/mobile/studio/studioTargets';
-  import {isTypingTarget,studioModalKeyAction} from './lib/utils/studioModalKeys';
+  import {calibrationEscape,isTypingTarget,studioModalKeyAction} from './lib/utils/studioModalKeys';
   import { isTextEntryTarget, undoShortcut } from './lib/utils/undoShortcut';
   import {createNativeSourcePreview} from './lib/sync/nativeSourcePreview';
   import {recordDiscreteAction,scheduleHistorySnapshot} from './lib/stores/historyHooks';
@@ -238,6 +238,15 @@
     stepPhoneScan({type:'cancel',message:'Interactive Studio was closed on the desktop.'});
     studioEditor?.flush();showInteractiveStudio=false;recordDiscreteAction();studioUnrecordedEdit=false;
   }
+  /** Escape on the calibration page (the editor handles its own): out of a field first, then close. */
+  function studioWorkshopKey(event:KeyboardEvent){
+    const escape=calibrationEscape(event,{calibration:studioPage==='calibration',typing:isTypingTarget(event.target)});
+    if(!escape)return;
+    event.preventDefault();
+    if(escape==='close')return closeInteractiveStudio();
+    if(event.target instanceof HTMLElement)event.target.blur();
+    studioDialog?.focus({preventScroll:true});
+  }
   /** The layer or clip under the editor went away (deleted, undone, another
    *  project). There is nothing left to flush into, so close and say why. */
   function studioTargetLost(message:string){
@@ -260,6 +269,9 @@
   }
   function studioWatchTarget(){
     if(!showInteractiveStudio)return;
+    // Phone calibration edits no layer, and opened from a phone's offer there
+    // is none to watch: checked again on the way back to the editor.
+    if(studioPage==='calibration')return;
     if(get(project).id!==studioEditorProject){studioTargetLost('Interactive Studio closed because another project was opened.');return;}
     const scene=studioCurrentSource()?.interactiveScene;
     if(!scene){studioTargetLost(studioEditorClip?'Interactive Studio closed because its clip was removed.':'Interactive Studio closed because its layer was removed.');return;}
@@ -283,6 +295,7 @@
   function studioKeyGate(event:KeyboardEvent){
     if(!showInteractiveStudio)return;
     event.stopPropagation();
+    studioWorkshopKey(event);
     const action=studioModalKeyAction(event,{typing:isTypingTarget(event.target),timelineOpen:get(keyframeTimeline).isOpen});
     if(action==='blackout'){
       event.preventDefault();
@@ -9278,7 +9291,7 @@
       <div class="studio-workshop-backdrop"><section bind:this={studioDialog} class="studio-workshop" role="dialog" aria-label={interactiveOn?'Interactive Studio tools':'Phone calibration'} aria-modal="true" tabindex="-1">
         <nav>
           <div class="ga-segmented" role="group" aria-label="Interactive Studio pages">
-            {#if interactiveOn}<button class:active={studioPage==='interactive'} aria-pressed={studioPage==='interactive'} onclick={()=>studioPage='interactive'}>Interactive Studio</button>{/if}
+            {#if interactiveOn}<button class:active={studioPage==='interactive'} aria-pressed={studioPage==='interactive'} onclick={()=>{studioPage='interactive';studioWatchTarget();}}>Interactive Studio</button>{/if}
             <button class:active={studioPage==='calibration'} aria-pressed={studioPage==='calibration'} onclick={()=>studioPage='calibration'}>Phone calibration{pendingPhoneCalibration?' •':''}</button>
           </div>
           <!-- The editor's own header closes it; the calibration page needs a way out. -->

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { isTypingTarget, studioEditorPassesKey, studioModalKeyAction, type StudioModalKeyEvent } from './studioModalKeys';
+import { calibrationEscape, isTypingTarget, studioEditorPassesKey, studioModalKeyAction, type StudioModalKeyEvent } from './studioModalKeys';
 
 const down = (key: string, extra: Partial<StudioModalKeyEvent> = {}): StudioModalKeyEvent => ({
   type: 'keydown',
@@ -86,5 +86,19 @@ describe('the Studio editor lets the blackout key through to the gate', () => {
     expect(studioEditorPassesKey(down('Backspace'), button)).toBe(false);
     expect(studioEditorPassesKey(down('t'), button)).toBe(false);
     expect(studioEditorPassesKey(down(' '), button)).toBe(false);
+  });
+});
+
+describe('Escape on the Phone calibration page', () => {
+  const page = { calibration: true, typing: false };
+  it('closes the workshop, or leaves a field first', () => {
+    expect(calibrationEscape(down('Escape'), page)).toBe('close');
+    expect(calibrationEscape(down('Escape'), { ...page, typing: true })).toBe('blur');
+  });
+  it('does nothing on the editor page, on keyup, for other keys or once a control used it', () => {
+    expect(calibrationEscape(down('Escape'), { ...page, calibration: false })).toBeNull();
+    expect(calibrationEscape(down('Escape', { type: 'keyup' }), page)).toBeNull();
+    expect(calibrationEscape(down('Escape', { defaultPrevented: true }), page)).toBeNull();
+    expect(calibrationEscape(down('b'), page)).toBeNull();
   });
 });
