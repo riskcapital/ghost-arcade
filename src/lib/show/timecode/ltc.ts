@@ -318,9 +318,18 @@ export class LtcDecoder {
       const hp = this.hpCoef * (this.hpPrevOut + x - this.hpPrevIn);
       this.hpPrevIn = x;
       this.hpPrevOut = hp;
-      this.smoothSum += hp - this.smooth[this.smoothIndex];
+      // The window holds float32 copies: adding `hp` but later taking off its
+      // rounded copy left the sum drifting over hours, so the sum takes the
+      // stored value and is re-summed once per lap.
+      const leaving = this.smooth[this.smoothIndex];
       this.smooth[this.smoothIndex] = hp;
+      this.smoothSum += this.smooth[this.smoothIndex] - leaving;
       this.smoothIndex = (this.smoothIndex + 1) % this.smooth.length;
+      if (this.smoothIndex === 0) {
+        let sum = 0;
+        for (let k = 0; k < this.smooth.length; k++) sum += this.smooth[k];
+        this.smoothSum = sum;
+      }
       const y = this.smoothSum / this.smooth.length;
 
       const s = y > 0 ? 1 : y < 0 ? -1 : 0;
