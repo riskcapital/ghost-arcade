@@ -106,6 +106,8 @@ describe('the 3D world in an Interactive layer', () => {
     const r = renders(g).map((p) => p.name);
     expect(r.indexOf('ball-shadows')).toBe(r.indexOf('shadow') + 1);
     expect(r.indexOf('balls')).toBe(r.indexOf('opaque') + 1);
+    // It adds to the blocks' shadows: depth on and loaded, never cleared.
+    expect(renders(g).find((p) => p.name === 'ball-shadows')).toMatchObject({ depth: true, depth_load: true });
     // The shadow map is drawn into there, so it is not also read.
     expect(renders(g).find((p) => p.name === 'ball-shadows')!.bindings.some((b) => b.binding === 5)).toBe(false);
     // The 2D builder leaves the world's elements alone.
@@ -144,7 +146,8 @@ describe('the 3D world in an Interactive layer', () => {
     const opaque = names.indexOf('opaque');
     expect(names.slice(opaque - 4, opaque)).toEqual(['wet-fade', 'gloss-fade', 'wet-splat', 'gloss-splat']);
     expect(r.find((p) => p.name === 'wet-fade')!.blend).toBe('alpha');
-    expect(r.find((p) => p.name === 'gloss-splat')!.blend).toBe('add');
+    // Gloss eases toward 1 under a drop: added up, a pool overflowed the half float to Inf / NaN.
+    expect(r.find((p) => p.name === 'gloss-splat')!.blend).toBe('alpha');
     const stain = r.find((p) => p.name === 'wet-splat')!.texture!;
     expect(r[opaque].bindings.find((b) => b.binding === 19)).toMatchObject({ texture: stain });
     expect(names.indexOf('drips')).toBe(names.indexOf('balls') + 1);

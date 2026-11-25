@@ -479,7 +479,7 @@ export function buildWorldPart(options: WorldPartOptions): WorldPart {
     wetPass('wet-fade', 'wet-stain', 'vs_full', 'fs_fade_stain', 'alpha', 3, 1) as { name: string },
     wetPass('gloss-fade', 'wet-gloss', 'vs_full', 'fs_fade_gloss', 'alpha', 3, 1) as { name: string },
     wetPass('wet-splat', 'wet-stain', 'vs_splat', 'fs_splat_stain', 'alpha', 6, paint.count) as { name: string },
-    wetPass('gloss-splat', 'wet-gloss', 'vs_splat', 'fs_splat_gloss', 'add', 6, paint.count) as { name: string },
+    wetPass('gloss-splat', 'wet-gloss', 'vs_splat', 'fs_splat_gloss', 'alpha', 6, paint.count) as { name: string },
   );
   // The world's surfaces show the paint.
   const opaque = renders.find((r) => r.name === 'opaque') as { name: string; shader_id: string; fragment_entry: string; bindings: { binding: number }[] };

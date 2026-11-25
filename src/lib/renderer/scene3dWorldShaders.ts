@@ -978,15 +978,25 @@ fn vs_splat(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) ->
   return out;
 }
 
-@fragment
-fn fs_splat_stain(in: SplatOut) -> @location(0) vec4f {
-  let a = smoothstep(1.0, 0.3, length(in.uv)) * 0.12;
-  return vec4f(in.color * a, a);
+// A drop's mark per frame at 60 fps, the same per second at any frame rate:
+// (1 - a)^(frames) is what is left of the old picture after a second.
+fn splat_alpha(a: f32) -> f32 {
+  return 1.0 - pow(1.0 - a, clamp(view.clock.x * 60.0, 0.0, 2.0));
 }
 
 @fragment
+fn fs_splat_stain(in: SplatOut) -> @location(0) vec4f {
+  let a = splat_alpha(smoothstep(1.0, 0.3, length(in.uv)) * 0.12);
+  return vec4f(in.color * a, a);
+}
+
+// Gloss eases toward 1 under a drop (alpha blend) instead of adding up: added,
+// a pool of drops passed the half float's 65504 and left Inf and NaN behind
+// that never dried. The surface shader reads it clamped to 0..1 anyway.
+@fragment
 fn fs_splat_gloss(in: SplatOut) -> @location(0) vec4f {
-  return vec4f(smoothstep(1.0, 0.3, length(in.uv)) * 0.3, 0.0, 0.0, 0.0);
+  let a = splat_alpha(smoothstep(1.0, 0.3, length(in.uv)) * 0.3);
+  return vec4f(a, 0.0, 0.0, a);
 }
 `;
 
