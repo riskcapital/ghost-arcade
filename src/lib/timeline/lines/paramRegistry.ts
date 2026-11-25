@@ -30,6 +30,8 @@
 import type { Layer, MappingCompositionState, WLEDController, WLEDEffect } from '../../types';
 import { discoverKeyframeableParams, paramKind, type KeyframeableParam } from '../../keyframes/paramDiscovery';
 import { isLayerExtraKey, readLayerExtra, type ParamKind } from '../../keyframes/layerParamKeys';
+import { effectParams } from '../../mobile/studio/interactiveEffects';
+import { paramValue, VIDEOSYNTH_PARAMS } from '../../videosynth/patch';
 import { discoverLedParams, discoverStageParams, readStageLedParam } from './stageLedParams';
 import type { WhereSpec } from '../where/whereModel';
 import type { TimelineLedClip } from '../leds/ledClips';
@@ -278,6 +280,17 @@ export function readLayerParam(layer: Layer, key: string): number | boolean | un
     v = e && path ? readDot(e, path) : undefined;
   } else if (key.startsWith('splat:')) v = readDot(l.splatContent, key.slice(6));
   else if (key.startsWith('model3d:')) v = readDot(l.model3dContent, key.slice(8));
+  else if (key.startsWith('interactive:')) {
+    // interactive:<effectId>:<param> on an Interactive scene's effect (or `enabled`).
+    const [, id, param] = key.split(':');
+    const e = l.source?.effectSource?.interactiveScene?.effects?.find?.((x: any) => x?.id === id);
+    if (e) v = param === 'enabled' ? e.enabled !== false : e.params?.[param] ?? effectParams(e.kind).find((d) => d.key === param)?.value;
+  } else if (key.startsWith('vsynth:')) {
+    // Analog Synth: read as stored (writing stays gated by the add-on in applyParamOverrides).
+    const es = l.source?.effectSource;
+    const spec = es?.effectType === 'videosynth' ? VIDEOSYNTH_PARAMS.find((p) => p.key === key.slice(7)) : undefined;
+    if (spec) v = paramValue(es, spec);
+  }
   return typeof v === 'number' || typeof v === 'boolean' ? v : undefined;
 }
 

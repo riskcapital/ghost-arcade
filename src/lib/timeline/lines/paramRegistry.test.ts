@@ -42,6 +42,11 @@ function gpuLayer(): Layer {
   return { ...createLayer('G1', 'Planet', 'gpu'), gpuLayerContent: { shaderId: 'planet', params: {} } as any } as Layer;
 }
 
+function interactiveLayer(): Layer {
+  const layer = createLayer('I1', 'Play', 'media');
+  return { ...layer, source: { id: 'src-i', type: 'effect', name: 'Interactive', effectSource: { effectType: 'interactive', interactiveScene: { effects: [{ id: 'b1', kind: 'balls3d', enabled: true, params: {} }] } } } as any } as Layer;
+}
+
 /** A value different from the param's default, inside its range. */
 function another(p: ParamEntry): number | boolean {
   if (p.kind === 'bool') return !p.default;
@@ -55,7 +60,7 @@ function another(p: ParamEntry): number | boolean {
 
 describe('parameter registry', () => {
   it('every discovered layer key applies to a copy and reads back, the layer untouched', () => {
-    for (const layer of [richLayer(), gpuLayer()]) {
+    for (const layer of [richLayer(), gpuLayer(), interactiveLayer()]) {
       const params = layerParams(layer);
       const before = JSON.stringify(layer);
       expect(params.length).toBeGreaterThan(10);
@@ -188,3 +193,13 @@ describe('parameter registry', () => {
     expect(readParam({ layers: [], wledControllers: [controller] }, { scope: 'led' }, 'led:c1:brightness')).toBe(1);
   });
 });
+
+describe('add-on and Interactive values read back', () => {
+  it('an Analog Synth control reads as stored, or its default', () => {
+    const layer = { ...createLayer('V1', 'Synth', 'media'), source: { id: 's', type: 'effect', name: 'Synth', effectSource: { effectType: 'videosynth', vsAFreq: 0.37 } } } as unknown as Layer;
+    expect(readLayerParam(layer, 'vsynth:vsAFreq')).toBeCloseTo(0.37);
+    expect(typeof readLayerParam(layer, 'vsynth:vsBFreq')).toBe('number');
+    expect(readLayerParam(createLayer('X', 'X', 'media'), 'vsynth:vsAFreq')).toBeUndefined();
+  });
+});
+
