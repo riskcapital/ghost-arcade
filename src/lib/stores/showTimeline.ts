@@ -2272,11 +2272,43 @@ function serializeClipMedia(media: ShowClipMedia): ShowClipMedia {
   return { ...media, ...(ref ? { _assetRef: ref } : {}), src: refIsDurable(ref) ? '' : media.src };
 }
 
+/** The runtime URL fields of a layer's content and the AssetRef that rebuilds each on load. */
+const TEMPLATE_URL_FIELDS: ReadonlyArray<readonly [field: string, refKey: string]> = [
+  ['src', '_assetRef'],
+  ['mediaSrc', '_assetRef'],
+  ['modelData', '_assetRef'],
+  ['filePath', '_assetRef'],
+  ['texturePath', '_textureAssetRef'],
+  ['sourceUrl', '_sourceAssetRef'],
+];
+
+/** A copy with every URL whose AssetRef rebuilds it blanked (this machine's paths stay out of the file). */
+function withoutDurableUrls(node: unknown): unknown {
+  if (Array.isArray(node)) {
+    let changed = false;
+    const out = node.map((v) => { const n = withoutDurableUrls(v); if (n !== v) changed = true; return n; });
+    return changed ? out : node;
+  }
+  if (!node || typeof node !== 'object') return node;
+  const obj = node as Record<string, unknown>;
+  let out: Record<string, unknown> | null = null;
+  for (const [field, refKey] of TEMPLATE_URL_FIELDS) {
+    if (typeof obj[field] === 'string' && obj[field] !== '' && refIsDurable(obj[refKey] as AssetRef | undefined)) {
+      out ??= { ...obj };
+      out[field] = '';
+    }
+  }
+  for (const [key, value] of Object.entries(obj)) {
+    if (!value || typeof value !== 'object' || key.startsWith('_')) continue;
+    const next = withoutDurableUrls(value);
+    if (next !== value) { out ??= { ...obj }; out[key] = next; }
+  }
+  return out ?? node;
+}
+
 function serializeTemplate(template: Layer | null): Layer | null {
   if (!template) return null;
-  const source = template.source;
-  if (!source || !refIsDurable(source._assetRef)) return template;
-  return { ...template, source: { ...source, src: '' } };
+  return withoutDurableUrls(template) as Layer;
 }
 
 /** A document as it is saved (see `serialize`). */
@@ -4793,7 +4825,23 @@ export const showTimeline = {
     }
     if (options.updateStore !== false) s = get(store);
     const active = docSnapshot(s);
-    const parked = docSnapshot(parkedDoc);
+    // The parked document's rows are saved as their layers are now too
+    // (in the snapshot: the parked doc is refreshed when it is opened).
+    let parkedFields = parkedDoc;
+    if (templateLayerSource && parkedDoc.layerTracks.length) {
+      try {
+        const fresh = freshTemplates(templatePairs(parkedDoc.layerTracks, templateLayerSource()));
+        if (fresh.size) {
+          parkedFields = { ...parkedDoc, layerTracks: parkedDoc.layerTracks.map((t) => {
+            const next = fresh.get(t.id);
+            return next ? { ...t, ...next } : t;
+          }) };
+        }
+      } catch (err) {
+        console.warn('[ShowTimeline] parked template refresh before save failed:', err);
+      }
+    }
+    const parked = docSnapshot(parkedFields);
     const [show, timeline] = s.doc === 'show' ? [active, parked] : [parked, active];
     return {
       // 3: rows come from the mapping layers; empty rows are not saved,
