@@ -161,6 +161,8 @@ export function applyInteractiveOverrides(scene:InteractiveScene,overrides:Recor
   const [prefix,id,param]=key.split(':');if(prefix!=='interactive'||!effects)continue;
   effects=effects.map(e=>{
    if(!e||e.id!==id)return e;if(param==='enabled')return {...e,enabled:!!value};
+   // A trigger zone's burst count (interactiveLive.ts), live like a param.
+   if(param==='burst')return typeof value==='number'&&Number.isFinite(value)?{...e,burst:Math.max(0,Math.floor(value))}:e;
    const d=effectParams(e.kind).find(p=>p.key===param);if(!d||typeof value!=='number'||!Number.isFinite(value))return e;
    const mods={...e.mods},paramAuto={...e.paramAuto};delete mods[param];delete paramAuto[param];
    return {...e,mods,paramAuto,params:{...e.params,[param]:Math.max(d.min,Math.min(d.max,value))}};

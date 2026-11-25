@@ -95,6 +95,29 @@ describe('trigger zones', () => {
     expect(zones.update(scene, [at(0.7, 0.7)], 2.6)).toHaveLength(1);
   });
 
+  it('a second hand coming in fires again once re-armed, while the first rests there', () => {
+    const scene = zoneScene(1);
+    const zones = new ZoneTriggers();
+    expect(zones.update(scene, [at(0.7, 0.7, 'a')], 0)).toHaveLength(1);
+    // Within the re-arm time: no second fire.
+    expect(zones.update(scene, [at(0.7, 0.7, 'a'), at(0.6, 0.6, 'b')], 0.5)).toEqual([]);
+    zones.update(scene, [at(0.7, 0.7, 'a')], 1.4);
+    expect(zones.update(scene, [at(0.7, 0.7, 'a'), at(0.6, 0.6, 'b')], 1.5)).toHaveLength(1);
+    // Both resting: quiet.
+    expect(zones.update(scene, [at(0.7, 0.7, 'a'), at(0.6, 0.6, 'b')], 9)).toEqual([]);
+  });
+
+  it('share the re-arm time with balls, for zones set off by either', () => {
+    const scene = zoneScene(1);
+    const zones = new ZoneTriggers();
+    expect(zones.arm('zone', 1, 0)).toBe(true);
+    expect(zones.update(scene, [at(0.7, 0.7)], 0.3)).toEqual([]);
+    zones.update(scene, [], 0.4);
+    expect(zones.update(scene, [at(0.7, 0.7)], 1.2)).toHaveLength(1);
+    expect(zones.arm('zone', 1, 1.5)).toBe(false);
+    expect(zones.arm('zone', 1, 2.3)).toBe(true);
+  });
+
   it('ignore points outside, and zones without a trigger', () => {
     const scene = zoneScene();
     const zones = new ZoneTriggers();

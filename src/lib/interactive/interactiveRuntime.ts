@@ -135,11 +135,14 @@ export type FiredZone = { surfaceId: string; actions: ZoneAction[] };
 
 /**
  * Trigger zones for one layer. A zone fires when a point comes into it while
- * it is armed. It then stays quiet until every point has left it and its
- * re-arm time has passed, so a held touch or a hand resting in the zone
- * fires once.
+ * it is armed. A point that stays in the zone fires it once (a held touch, a
+ * hand resting there); another point coming in fires it again once its
+ * re-arm time has passed, so two hands or two people do not lock each other
+ * out. Balls share the re-arm time (`arm`), so a zone set off by either
+ * touches or balls does not fire twice for one moment.
  */
 export class ZoneTriggers {
+  /** Zone and point pairs inside last frame. */
   private occupied = new Set<string>();
   private lastFired = new Map<string, number>();
 
@@ -148,18 +151,28 @@ export class ZoneTriggers {
     const occupied = new Set<string>();
     for (const surface of scene.surfaces) {
       if (surface.behavior !== 'trigger' || !surface.trigger || surface.trigger.when === 'ball') continue;
-      if (!points.some((p) => inside(p.point, surface.points))) continue;
-      occupied.add(surface.id);
-      if (this.occupied.has(surface.id)) continue;
-      const last = this.lastFired.get(surface.id);
-      if (last !== undefined && now - last < surface.trigger.rearm) continue;
-      this.lastFired.set(surface.id, now);
+      let entered = false;
+      for (const p of points) {
+        if (!inside(p.point, surface.points)) continue;
+        const key = `${surface.id}\u0000${p.id}`;
+        occupied.add(key);
+        if (!this.occupied.has(key)) entered = true;
+      }
+      if (!entered || !this.arm(surface.id, surface.trigger.rearm, now)) continue;
       if (surface.trigger.actions.length) fired.push({ surfaceId: surface.id, actions: surface.trigger.actions });
     }
     this.occupied = occupied;
     // Forget zones that are gone from the scene.
     for (const id of this.lastFired.keys()) if (!scene.surfaces.some((s) => s.id === id)) this.lastFired.delete(id);
     return fired;
+  }
+
+  /** Fire `surfaceId` now if its re-arm time has passed since it last fired (touch or ball). */
+  arm(surfaceId: string, rearm: number, now: number): boolean {
+    const last = this.lastFired.get(surfaceId);
+    if (last !== undefined && now >= last && now - last < rearm) return false;
+    this.lastFired.set(surfaceId, now);
+    return true;
   }
 
   reset() {

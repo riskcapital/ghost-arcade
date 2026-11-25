@@ -277,6 +277,52 @@ describe('Interactive zones: actions run after the frame is sent', () => {
   });
 });
 
+describe('Interactive zones: a burst goes out as live values', () => {
+  function burstLayer(): any {
+    const zone = {
+      id: 'z', name: 'Zone', behavior: 'trigger' as const,
+      points: [{ x: 0.1, y: 0.1 }, { x: 0.9, y: 0.1 }, { x: 0.9, y: 0.9 }, { x: 0.1, y: 0.9 }],
+      trigger: { actions: [{ kind: 'burst' as const }], rearm: 0.05 },
+    };
+    const fire = { ...fx.makeEffect('fire', 'z'), emission: 'burst' as const };
+    const off = { ...fx.makeEffect('smoke', 'z'), enabled: false };
+    const layer = types.createLayer('burst-layer', 'Bursts', 'media') as any;
+    layer.visible = true;
+    layer.source = {
+      id: 'burst-src', type: 'effect', src: 'plugin://performer-world', name: 'Interactive Studio',
+      effectSource: { effectType: 'performer-world', interactiveScene: { ...studio.defaultInteractive(), surfaces: [zone], effects: [fire, off] } },
+    };
+    return layer;
+  }
+  const matterBurst = (b64: string) => new Float32Array(Uint8Array.from(atob(b64), (c) => c.charCodeAt(0)).buffer)[46];
+
+  it('raises the burst on the core without touching the stored scene or rebuilding the graph', async () => {
+    const sync = makeSync();
+    const layers = [burstLayer()];
+    const scene = layers[0].source.effectSource.interactiveScene;
+    const [fire, off] = scene.effects;
+    await sync.flush(1920, 1080, layers);
+    await sync.flush(1920, 1080, layers);
+    h.batches.length = 0;
+    (globalThis as any).__gaNativeIpcProbe = { types: {} };
+    live.setLivePointer('burst-layer', [{ id: 'mouse', point: { x: 0.5, y: 0.5 }, strength: 1, mode: 'push' } as any]);
+    await sync.flush(1920, 1080, layers);
+    await sync.flush(1920, 1080, layers);
+    const updates = sent().filter((c) => c.type === 'update_native_graph_buffer' && c.layer_id === 'burst-layer');
+    const matter = updates.filter((c) => String(c.buffer_id).includes(`${fire.id}:interactive:`) && String(c.buffer_id).endsWith('matter'));
+    expect(matter.length).toBeGreaterThan(0);
+    expect(matterBurst(matter.at(-1)!.initial_b64)).toBe(fire.burst + 1);
+    // A disabled effect aimed at the zone is left alone.
+    expect(updates.some((c) => String(c.buffer_id).includes(`${off.id}:interactive:`) && String(c.buffer_id).endsWith('matter'))).toBe(false);
+    expect(sent().filter((c) => c.type === 'set_native_graph_layer' && c.layer_id === 'burst-layer')).toEqual([]);
+    expect((globalThis as any).__gaNativeIpcProbe.graphBuilds ?? 0).toBe(0);
+    // The stored scene is the same object, burst count and all.
+    expect(layers[0].source.effectSource.interactiveScene).toBe(scene);
+    expect(scene.effects[0].burst).toBe(fire.burst);
+    live.setLivePointer('burst-layer', []);
+  });
+});
+
 describe('Interactive scene: keyframes, show lanes and Timeline lines on an effect param without a graph rebuild', () => {
   const base = { kind: 'performer-world', sourceId: 'plugin:world-layer:performer-world', width: 1920, height: 1080, time: 0, frameDelta: 1 / 60, frameIndex: 1, audio: { active: false, bass: 0, mid: 0, treble: 0, energy: 0, beatPhase: 0, beatPulse: 0, amplitude: 0 }, state: null, reset: false };
   /** What the core holds for the layer's value buffers. */

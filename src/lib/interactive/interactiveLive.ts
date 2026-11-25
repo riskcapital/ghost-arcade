@@ -79,7 +79,42 @@ export function liveInteractiveInputs(layerId: string): Interaction[] | undefine
 }
 
 /** Drop layers that are gone. */
+/**
+ * Bursts fired by trigger zones, per layer and effect, on top of the burst
+ * count stored in the scene. They reach the core as live values, like Auto:
+ * a zone firing during a show changes no project, so it is no edit, no undo
+ * step and no graph rebuild, and an open editor is not reloaded under you.
+ */
+const zoneBursts = new Map<string, Map<string, number>>();
+
+export function addLiveBursts(layerId: string, effectIds: string[]): void {
+  if (!effectIds.length) return;
+  let bursts = zoneBursts.get(layerId);
+  if (!bursts) zoneBursts.set(layerId, (bursts = new Map()));
+  for (const id of effectIds) bursts.set(id, (bursts.get(id) ?? 0) + 1);
+}
+
+export function hasLiveBursts(): boolean {
+  return zoneBursts.size > 0;
+}
+
+/** The live burst counts of a layer's effects (`interactive:<effect>:burst`): stored plus fired. */
+export function liveBurstValues(
+  layerId: string,
+  effects: ReadonlyArray<{ id: string; burst: number } | null | undefined> | undefined,
+): Record<string, number> | undefined {
+  const bursts = zoneBursts.get(layerId);
+  if (!bursts || !effects) return undefined;
+  let out: Record<string, number> | undefined;
+  for (const e of effects) {
+    const extra = e ? bursts.get(e.id) : undefined;
+    if (extra) (out ??= {})[`interactive:${e!.id}:burst`] = (Number(e!.burst) || 0) + extra;
+  }
+  return out;
+}
+
 export function pruneLiveInteractiveInputs(keep: Set<string>): void {
+  for (const id of zoneBursts.keys()) if (!keep.has(id)) zoneBursts.delete(id);
   for (const id of live.keys()) if (!keep.has(id)) live.delete(id);
   for (const id of pointers.keys()) if (!keep.has(id)) pointers.delete(id);
   for (const id of views.keys()) if (!keep.has(id)) views.delete(id);

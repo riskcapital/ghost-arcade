@@ -1325,7 +1325,7 @@ import { nativeEffectPassIdForEffectType } from '$lib/renderer/nativeEffectCover
 import { statusFrameRate } from './statusFrameRate';
 import { recordingScreenIds } from '$lib/recording/recordingSources';
 import { launchClockPosition } from '$lib/stores/launchClock';
-import { liveInteractiveInputs, livePointer, liveWorldInput, liveWorldView, pruneLiveInteractiveInputs, setLiveInteractiveInputs, setLiveWorldInput, takeWorldActions } from '$lib/interactive/interactiveLive';
+import { addLiveBursts, hasLiveBursts, liveBurstValues, liveInteractiveInputs, livePointer, liveWorldInput, liveWorldView, pruneLiveInteractiveInputs, setLiveInteractiveInputs, setLiveWorldInput, takeWorldActions } from '$lib/interactive/interactiveLive';
 import { WorldInput } from '$lib/interactive/worldInput';
 import { combineInputs, PointSmoother, trackedPoints, ZoneTriggers, type FiredZone } from '$lib/interactive/interactiveRuntime';
 import { defaultInteractiveInput, validateScene, type InteractiveScene, type Interaction } from '$lib/mobile/studio/interactive';
@@ -5351,7 +5351,7 @@ function zoneMiddle(points: { x: number; y: number }[]): { x: number; y: number 
  * the zone, as the editor's Trigger burst button does. Live control: not an
  * undo step.
  */
-function fireInteractiveZones(layerId: string, fired: FiredZone[]): void {
+function fireInteractiveZones(layerId: string, fired: FiredZone[], liveScene: InteractiveScene | null): void {
   const bursts = new Set<string>();
   for (const zone of fired) {
     for (const action of zone.actions) {
@@ -5361,6 +5361,12 @@ function fireInteractiveZones(layerId: string, fired: FiredZone[]): void {
     }
   }
   if (!bursts.size) return;
+  // A core with in-place value updates gets the burst as a live value
+  // (interactiveLive.ts), for each enabled effect aimed at the zone.
+  if (liveScene) {
+    addLiveBursts(layerId, (liveScene.effects ?? []).filter((e) => e?.enabled && bursts.has(e.target)).map((e) => e.id));
+    return;
+  }
   runAsAutomation(() => project.update((p) => ({
     ...p,
     layers: p.layers.map((l) => {
@@ -8921,19 +8927,19 @@ export class NativeRendererSync {
   /** Per interactive layer, its ball zone counters (graph buffer id, zones in counter order). */
   private worldZoneHits = new Map<string, { bufferId: string; zoneIds: string[] }>();
   /** Per interactive layer: the counts last seen, whether a read is out, and when each zone last fired. */
-  private worldZoneReads = new Map<string, { seen: number[]; busy: boolean; at: number; fired: Map<string, number> }>();
+  private worldZoneReads = new Map<string, { seen: number[]; busy: boolean; at: number }>();
 
   /**
    * Zones set off by balls: about ten times a second, take the counters the
    * GPU keeps, and fire each zone whose count went up, once per re-arm time.
    * A count that went down is a fresh graph: it is the new starting point.
    */
-  private pollBallZones(layerId: string, scene: InteractiveScene, world: WorldInput, now: number): void {
+  private pollBallZones(layerId: string, scene: InteractiveScene, world: WorldInput, zones: ZoneTriggers, now: number): void {
     const hits = this.worldZoneHits.get(layerId);
     if (!hits || !scene.world?.enabled) return;
     let read = this.worldZoneReads.get(layerId);
     if (!read) {
-      read = { seen: [], busy: false, at: 0, fired: new Map() };
+      read = { seen: [], busy: false, at: 0 };
       this.worldZoneReads.set(layerId, read);
     }
     if (read.busy || now - read.at < 0.1) return;
@@ -8954,9 +8960,8 @@ export class NativeRendererSync {
           if (before === undefined || count <= before) return;
           const surface = scene.surfaces.find((s) => s.id === id);
           if (!surface?.trigger?.actions.length) return;
-          const last = state.fired.get(id);
-          if (last !== undefined && at - last < surface.trigger.rearm) return;
-          state.fired.set(id, at);
+          // One re-arm time for touches and balls (a zone set off by either).
+          if (!zones.arm(id, surface.trigger.rearm, at)) return;
           fired.push({ surfaceId: id, actions: surface.trigger.actions });
         });
         state.seen = counts;
@@ -9030,7 +9035,7 @@ export class NativeRendererSync {
     const asked = takeWorldActions(layer.id);
     if (scene.world?.enabled) for (const a of asked) runtime.world.trigger(a.what, a.point, now);
     setLiveWorldInput(layer.id, scene.world?.enabled ? runtime.world.update(points, now) : null);
-    if (!rendering) this.pollBallZones(layer.id, scene, runtime.world, now);
+    if (!rendering) this.pollBallZones(layer.id, scene, runtime.world, runtime.zones, now);
     const fired = runtime.zones.update(scene, points, now);
     if (!fired.length) return;
     if (scene.world?.enabled) {
@@ -9056,7 +9061,7 @@ export class NativeRendererSync {
 
   private fireZonesAfterFrame(layerId: string, fired: FiredZone[]): void {
     if (!this.flushInFlight) {
-      fireInteractiveZones(layerId, fired);
+      fireInteractiveZones(layerId, fired, this.liveBurstScene(layerId));
       return;
     }
     this.queuedZoneActions.push({ layerId, fired });
@@ -9064,12 +9069,18 @@ export class NativeRendererSync {
     if (over > 0) this.queuedZoneActions.splice(0, over);
   }
 
+  /** The scene zone bursts go live on, when the core takes them as values (else null: the stored scene). */
+  private liveBurstScene(layerId: string): InteractiveScene | null {
+    if (!this.supportsNativeFeature('native_interactive_value_updates')) return null;
+    return this.interactiveRuntimes.get(layerId)?.scene ?? null;
+  }
+
   private runQueuedZoneActions(): void {
     if (!this.queuedZoneActions.length) return;
     const queued = this.queuedZoneActions.splice(0);
     for (const { layerId, fired } of queued) {
       try {
-        fireInteractiveZones(layerId, fired);
+        fireInteractiveZones(layerId, fired, this.liveBurstScene(layerId));
       } catch (err) {
         console.warn('[NativeRendererSync] a zone action failed', err);
       }
@@ -10602,8 +10613,10 @@ export class NativeRendererSync {
     // showing a layer's shader follows the layer; a VJ row's follow the
     // clip they were worked out for.
     const hasLive = hasLiveValues();
-    if (!kfOverrides && !seqOverrides && !hasShow && !hasLines && !hasLive) return layers;
     const interactiveLiveAsValues = this.supportsNativeFeature('native_interactive_value_updates');
+    // Bursts fired by trigger zones (interactiveLive.ts): live values too.
+    const hasBursts = interactiveLiveAsValues && hasLiveBursts();
+    if (!kfOverrides && !seqOverrides && !hasShow && !hasLines && !hasLive && !hasBursts) return layers;
 
     let changed = false;
     const mapped = layers.map((layer) => {
@@ -10619,10 +10632,13 @@ export class NativeRendererSync {
       // show lanes, lines) are kept off the scene copy and sent as value
       // buffers: no graph build per frame while they move.
       const split = interactiveLiveAsValues && layer.source?.effectSource?.interactiveScene
-        ? splitInteractiveOverrides(layer, [allLive, kf as OverrideValues | undefined, showParams, lineParams, blockParams])
+        ? splitInteractiveOverrides(layer, [
+            hasBursts ? liveBurstValues(layer.id, layer.source!.effectSource!.interactiveScene!.effects) : undefined,
+            allLive, kf as OverrideValues | undefined, showParams, lineParams, blockParams,
+          ])
         : null;
       const [liveParams, kfParams, showRest, lineRest, blockRest] = split
-        ? split.sets
+        ? split.sets.slice(1)
         : [allLive, kf as OverrideValues | undefined, showParams, lineParams, blockParams];
       const interactiveParams = split?.params;
       if (!kf && seqMult === undefined && !showParams && showMul === undefined && !lineParams && !blockParams && !lookLines && !liveParams && !interactiveParams && layer._interactiveLiveParams === undefined) return layer;
