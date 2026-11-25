@@ -21,8 +21,13 @@ export const MAX_FLUID_PER_EFFECT = 12288;
 const PARTICLES_PER_CELL = 4;
 /** Constraint iterations: below about 14 the solve does not converge (Fluid Studio's sweep). */
 export const FLUID_ITERATIONS = 16;
-/** The most cells the grid may have; a coarser cell beyond it. */
-const MAX_CELLS = 262144;
+/**
+ * The most cells the grid may have; a coarser cell beyond it. The cell
+ * buffers and the bin passes are sized for this many whatever the grid is, so
+ * particle size (which sets the cell) is a value, not a rebuild: the passes
+ * read the grid's real size from the params and skip the cells past it.
+ */
+export const FLUID_MAX_CELLS = 262144;
 /** Cells across the world's widest side, at the middle particle size. */
 const CELLS_ACROSS = 120;
 
@@ -114,7 +119,7 @@ export function fluidGrid(geo: WorldGeo, size: number): FluidGrid {
   const span = [hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]];
   let h = (Math.max(...span) / CELLS_ACROSS) * (0.6 + 1.2 * Math.max(0, Math.min(1, size)));
   const cells = (cell: number) => span.map((s) => Math.max(1, Math.ceil(s / cell))) as [number, number, number];
-  while (cells(h).reduce((a, b) => a * b, 1) > MAX_CELLS) h *= 1.1;
+  while (cells(h).reduce((a, b) => a * b, 1) > FLUID_MAX_CELLS) h *= 1.1;
   return { origin: lo, h, n: cells(h) };
 }
 
@@ -177,13 +182,13 @@ type Binding = { binding: number; resource?: string; kind: string };
  */
 export function fluidGraph(
   layout: FluidLayout,
-  grid: { cells: number },
   id: (name: string) => string,
   base: Binding[],
 ): { buffers: object[]; passes: object[] } {
   const n = layout.count;
   if (!n) return { buffers: [], passes: [] };
-  const cells = grid.cells;
+  // Room for the finest grid fluidGrid allows, not the one in use now.
+  const cells = FLUID_MAX_CELLS;
   const storage = (name: string, bytes: number) => ({ id: id(name), kind: 'storage', byte_length: Math.max(16, bytes), persistent: true });
   const buffers = [
     storage('fluid', n * DRIP_FLOATS * 4),

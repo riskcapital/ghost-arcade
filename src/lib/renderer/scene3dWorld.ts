@@ -30,7 +30,7 @@ import {
 import { roomCamera, worldScene } from '../scene3d/worldScene';
 import type { ReliefWorld } from '../scene3d/worldModel';
 import { buildScene3DGraph, SCENE3D_TIERS, type Scene3DQuality } from './scene3dNative';
-import { fluidGraph, fluidGrid, fluidKinds, fluidLayout, fluidParams } from './scene3dFluid';
+import { fluidGraph, fluidKinds, fluidLayout, fluidParams } from './scene3dFluid';
 import {
   BALL_BLOCK_FLOATS,
   BALL_FLOATS,
@@ -405,8 +405,6 @@ export function buildWorldPart(options: WorldPartOptions): WorldPart {
   const paint = dripLayout(scene);
   const fire = flameLayout(scene);
   const fluid = fluidLayout(scene);
-  const fluidSize = (fluid.effects.find((e) => e.enabled) ?? fluid.effects[0])?.params.size ?? effectParams('fluid').find((d) => d.key === 'size')!.value;
-  const fluidCells = fluidGrid(geo, fluidSize).n;
   const value = (name: string, kind: 'uniform' | 'storage', data: Float32Array) => ({ id: id(name), kind, byte_length: data.byteLength, initial_b64: b64(data) });
   const ballValues = [
     value('ball-phys', 'uniform', worldPhysics(scene, world, geo, layout, paint, fire)),
@@ -462,7 +460,7 @@ export function buildWorldPart(options: WorldPartOptions): WorldPart {
     ],
   });
   // The fluid: its own buffers and the solve's passes, after the paint.
-  const liquid = fluidGraph(fluid, { cells: fluidCells[0] * fluidCells[1] * fluidCells[2] }, id, [
+  const liquid = fluidGraph(fluid, id, [
     b(0, 'settings', 'uniform'), { binding: 1, resource: frameBuffer.id, kind: 'uniform' }, b(2, 'view', 'read-only-storage'), b(17, 'ball-phys', 'uniform'),
   ]);
   buffers.push(...(liquid.buffers as typeof buffers));
@@ -614,7 +612,7 @@ export function buildWorldPart(options: WorldPartOptions): WorldPart {
         ] : []),
       ].map(({ id, initial_b64 }) => ({ id, initial_b64, key: initial_b64 }));
     },
-    topology: `${geo.mode}|${world.flat}|${flatTexture ? JSON.stringify(flatSize(width, height)) : ''}|balls:${layout.count}:${layout.effects.length}|drips:liquid:${paint.count}:${paint.effects.length}:${JSON.stringify(wet)}|flames:${fire.count}:${fire.effects.length}|fluid:${fluid.count}:${fluid.effects.length}:${fluidCells.join('x')}|${graph.topology}`,
+    topology: `${geo.mode}|${world.flat}|${flatTexture ? JSON.stringify(flatSize(width, height)) : ''}|balls:${layout.count}:${layout.effects.length}|drips:liquid:${paint.count}:${paint.effects.length}:${JSON.stringify(wet)}|flames:${fire.count}:${fire.effects.length}|fluid:${fluid.count}:${fluid.effects.length}|${graph.topology}`,
     flatTexture,
     zoneHits: ballZones(scene).length ? { bufferId: id('zone-hits'), zoneIds: ballZones(scene).map((z) => z.id) } : null,
   };
