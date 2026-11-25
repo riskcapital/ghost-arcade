@@ -58,6 +58,12 @@ export type MeshNode = {
   collider: Collider;
   /** Invisible, but receives shadows and blocks particles: the real room. */
   catcher: boolean;
+  /**
+   * Only there to catch shadows (a 3D world's backdrop and ground): left out
+   * of the bounds the key light's shadow map is fitted to, which a wall many
+   * metres wide blew up until a small object's shadow had a few texels.
+   */
+  receiverOnly?: boolean;
   /** `outline` only: a flat shape (x, y in metres on the node's XY plane)
    *  extruded `depth` metres along its Z. */
   outline?: { points: { x: number; y: number }[]; depth: number };

@@ -146,15 +146,26 @@ export function scene3dData(scene: Scene3D, width: number, height: number, quali
     materials.set([...linearColor(n.material.base), n.material.metal, n.material.rough, n.material.emissive, n.material.opacity, n.catcher ? 1 : 0], i * MATERIAL_FLOATS);
   });
 
-  // Bounds of the geometry, for the key light's shadow.
+  // Bounds of the geometry, for the key light's shadow. Meshes there only to
+  // catch shadows (a world's backdrop and ground) are left out, unless they
+  // are all there is.
   let lo: Vec3 = [Infinity, Infinity, Infinity], hi: Vec3 = [-Infinity, -Infinity, -Infinity];
-  for (let i = 0; i < geometry.count; i++) {
-    for (let k = 0; k < 3; k++) {
-      const v = geometry.vertices[i * VERTEX_FLOATS + k];
-      lo[k] = Math.min(lo[k], v);
-      hi[k] = Math.max(hi[k], v);
+  const receiverOnly = new Set(meshes.filter((n) => n.receiverOnly).map((n) => n.id));
+  const casting = geometry.meshIds.some((id) => !receiverOnly.has(id));
+  let first = 0;
+  geometry.meshIds.forEach((id, part) => {
+    const count = geometry.meshVertices[part];
+    if (!casting || !receiverOnly.has(id)) {
+      for (let i = first; i < first + count; i++) {
+        for (let k = 0; k < 3; k++) {
+          const v = geometry.vertices[i * VERTEX_FLOATS + k];
+          lo[k] = Math.min(lo[k], v);
+          hi[k] = Math.max(hi[k], v);
+        }
+      }
     }
-  }
+    first += count;
+  });
   if (!geometry.count) {
     lo = [-5, 0, -5];
     hi = [5, 5, 5];

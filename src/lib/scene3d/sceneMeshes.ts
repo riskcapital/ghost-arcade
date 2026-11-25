@@ -186,6 +186,8 @@ export type SceneMeshes = {
   count: number;
   /** Material index per mesh node id (into the scene's material list). */
   meshIds: string[];
+  /** Vertices of each mesh in `meshIds`, in order. */
+  meshVertices: number[];
   /** Meshes left out because the vertex budget was full. */
   dropped: string[];
 };
@@ -222,5 +224,5 @@ export function buildSceneMeshes(nodes: SceneNode[], materialIndex: (node: Scene
       for (const [p, n] of order) put(apply(part.m, p), applyNormal(part.m, part.s, n), part.mat);
     }
   }
-  return { vertices, count, meshIds: parts.map((p) => p.id), dropped };
+  return { vertices, count, meshIds: parts.map((p) => p.id), meshVertices: parts.map((p) => p.tris.length * 3), dropped };
 }

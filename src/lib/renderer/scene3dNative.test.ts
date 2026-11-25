@@ -31,6 +31,20 @@ describe('Interactive 3D graph data', () => {
     expect(d.hasShadows).toBe(true);
   });
 
+  it('fits the key light’s shadow to what casts it, not to a backdrop that only catches it', () => {
+    const scene = world();
+    const bounds = (s: Scene3D) => [...scene3dData(s, 1920, 1080, SCENE3D_TIERS.default).settings.slice(44, 48)];
+    const before = bounds(scene);
+    scene.nodes.push(node({ id: 'backdrop', kind: 'mesh', shape: 'plane', material: material('matte'), collider: 'none', catcher: true, receiverOnly: true, transform: { ...identityTransform(), position: [0, 0, -20], scale: [60, 1, 60] } }));
+    expect(bounds(scene)).toEqual(before);
+    // The same wall as an ordinary mesh does count.
+    scene.nodes[scene.nodes.length - 1] = { ...scene.nodes[scene.nodes.length - 1], receiverOnly: false } as SceneNode;
+    expect(bounds(scene)[3]).toBeGreaterThan(before[3] * 3);
+    // With nothing else, a receiver still gives the bounds.
+    const only = { ...defaultScene3D(), nodes: [node({ id: 'ground', kind: 'mesh', shape: 'plane', material: material('matte'), collider: 'static', catcher: false, receiverOnly: true, transform: { ...identityTransform(), scale: [8, 1, 8] } })] };
+    expect(bounds(only)[3]).toBeGreaterThan(2);
+  });
+
   it('shares a small tier fairly between emitters', () => {
     const scene = world();
     scene.nodes.push(node({ id: 'rain2', kind: 'emitter', shape: 'point', rate: 100000, burst: 0, life: 4, speed: 1, spread: 10, size: 0.02, color: '#ffffff', glow: 0 }));

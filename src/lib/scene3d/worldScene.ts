@@ -48,7 +48,7 @@ function roomScene(scene: InteractiveScene, world: ReliefWorld, geo: WorldGeo, v
     const at = sub(geo.center, scale(n, dot(geo.center, n) - geo.plane.offset));
     nodes.push(node('ground', 'Ground', {
       kind: 'mesh', shape: 'plane', material: material('matte', { base: world.wall.color, rough: world.wall.rough }),
-      collider: 'static', catcher: world.wall.catcher || effectsOnly,
+      collider: 'static', catcher: world.wall.catcher || effectsOnly, receiverOnly: true,
     }, { position: at, rotation: basisEuler(x, n, z), scale: [size * 2, 1, size * 2] }));
   }
   {
@@ -62,7 +62,7 @@ function roomScene(scene: InteractiveScene, world: ReliefWorld, geo: WorldGeo, v
     const span = far * (length(pr.right) + length(pr.up) + Math.abs(pr.shift[0]) + Math.abs(pr.shift[1])) * 3;
     nodes.push(node('backdrop', 'Backdrop', {
       kind: 'mesh', shape: 'plane', material: material('matte', { base: world.wall.color, rough: world.wall.rough }),
-      collider: 'none', catcher: world.wall.catcher || effectsOnly,
+      collider: 'none', catcher: world.wall.catcher || effectsOnly, receiverOnly: true,
     }, { position: add(pr.pos, scale(pr.fwd, far)), rotation: basisEuler(x, n, normalize(cross(x, n))), scale: [span, 1, span] }));
   }
   for (const f of geo.faces) {
