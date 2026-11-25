@@ -139,6 +139,27 @@ describe('a Live section and the takeover', () => {
     expect(get(showTimeline).currentTime).toBeGreaterThan(2.5);
   });
 
+  it('a piece the VJ takes over by hand during the section stays theirs at its end', () => {
+    timeline([liveA('live', 0, 2), sec('b', 2, 8)]);
+    showTimeline.seek(0); showTimeline.play(); playFor(1);
+    const own = { kind: 'vjRow', deck: 'B', row: 3 } as const;
+    liveTakeover.engage('A', own);
+    playFor(2); showTimeline.go(); playFor(1);
+    expect(showTimeline.sectionState().live).toBe(null);
+    liveTakeover.tick();
+    expect(liveTakeover.state.surfaces.A?.source).toEqual(own);
+    expect(liveTakeover.state.surfaces.A?.phase).toBe('live');
+  });
+
+  it('opening the other document gives a Live section\'s pieces back', async () => {
+    const { releaseSectionTakeovers } = await import('./sectionRuntime');
+    timeline([liveA('live', 0, 4), sec('b', 4, 8)]);
+    showTimeline.seek(0); showTimeline.play(); playFor(1);
+    expect(liveTakeover.isTakenOver('A')).toBe(true);
+    releaseSectionTakeovers();
+    expect(released()).toBe(true);
+  });
+
   it('two Live sections back to back keep the piece taken over', () => {
     timeline([liveA('l1', 0, 2), liveA('l2', 2, 6), sec('b', 6, 8)]);
     showTimeline.seek(0); showTimeline.play(); playFor(1);

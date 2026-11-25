@@ -9,14 +9,25 @@
  *   cue list otherwise.
  */
 import { get } from 'svelte/store';
-import { setShowSectionEffects, showTimeline } from '../../stores/showTimeline';
+import { onShowDocChange, onShowTimelineReset, setShowSectionEffects, showTimeline } from '../../stores/showTimeline';
 import { liveTakeover, type TakeoverSource } from '../../show/takeover/liveTakeover';
 import { runAsAutomation } from '../../stores/historyHooks';
 import type { SectionLiveSource, TimelineSection } from './sectionModel';
 import type { SectionEvent } from './sectionPlayer';
 
-/** Pieces each Live section took over (layer ids). */
-const engaged = new Map<string, string[]>();
+/** Pieces each Live section took over: layer id and the takeover's seq,
+ *  so a piece the VJ has since taken over by hand is not released. */
+const engaged = new Map<string, Array<{ layerId: string; seq: number }>>();
+
+/** Hand back what the section took over and still holds. */
+function releaseEngaged(list: ReadonlyArray<{ layerId: string; seq: number }>): void {
+  runAsAutomation(() => {
+    for (const { layerId, seq } of list) {
+      const o = liveTakeover.state.surfaces[layerId];
+      if (o && o.seq === seq && o.phase !== 'releasing') liveTakeover.release(layerId);
+    }
+  });
+}
 
 export function liveTakeoverSource(source: SectionLiveSource | undefined): TakeoverSource {
   if (!source) return { kind: 'vjMix' };
@@ -41,7 +52,7 @@ export function handleSectionEvent(e: SectionEvent): void {
   if (e.type === 'liveStart') {
     const rows = livePieceRows(e.section);
     const source = liveTakeoverSource(e.section.liveSource);
-    const ids: string[] = [];
+    const ids: Array<{ layerId: string; seq: number }> = [];
     runAsAutomation(() => {
       for (const r of rows) {
         // A piece the VJ already took over by hand stays theirs (the section
@@ -50,16 +61,16 @@ export function handleSectionEvent(e: SectionEvent): void {
         if (held && (held.phase === 'in' || held.phase === 'live')) continue;
         // The Timeline plays on through a Live section whatever the takeover
         // does underneath otherwise.
-        if (liveTakeover.engage(r.layerId, source, { trackId: r.id, fadeIn: 0.5, keepShowPlaying: true })) ids.push(r.layerId);
+        if (liveTakeover.engage(r.layerId, source, { trackId: r.id, fadeIn: 0.5, keepShowPlaying: true })) {
+          ids.push({ layerId: r.layerId, seq: liveTakeover.state.surfaces[r.layerId]?.seq ?? 0 });
+        }
       }
     });
     engaged.set(e.section.id, ids);
   } else if (e.type === 'liveEnd') {
     const ids = engaged.get(e.section.id) ?? [];
     engaged.delete(e.section.id);
-    runAsAutomation(() => {
-      for (const id of ids) liveTakeover.release(id);
-    });
+    releaseEngaged(ids);
   }
 }
 
@@ -89,8 +100,18 @@ function autoShowSummary(prep: import('../autoshow/autoShowRuntime').AutoShowPre
   };
 }
 
+/** The other document opened, or the show reset: a Live section's pieces go back. */
+export function releaseSectionTakeovers(): void {
+  const all = [...engaged.values()].flat();
+  engaged.clear();
+  releaseEngaged(all);
+}
+
 export function installSectionRuntime(): () => void {
   setShowSectionEffects(handleSectionEvent);
+  const offDoc = onShowDocChange(() => releaseSectionTakeovers());
+  // A reset ends every takeover itself: only forget what the sections held.
+  const offReset = onShowTimelineReset(() => engaged.clear());
   // Debug/automation surface (Show Runner), like window.__ghostArcade's others.
   try {
     const w = window as unknown as { __ghostArcade?: Record<string, unknown> };
@@ -135,8 +156,9 @@ export function installSectionRuntime(): () => void {
     };
   } catch { /* sealed */ }
   return () => {
+    offDoc();
+    offReset();
     setShowSectionEffects(null);
-    for (const ids of engaged.values()) for (const id of ids) liveTakeover.release(id);
-    engaged.clear();
+    releaseSectionTakeovers();
   };
 }
