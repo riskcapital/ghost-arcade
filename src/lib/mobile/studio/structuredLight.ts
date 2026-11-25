@@ -42,7 +42,17 @@ export type Decoded = {
   projX: Float32Array; // projector pixel coordinates (centre of the decoded cell) where valid
   projY: Float32Array;
   coverage: number; // fraction of camera pixels valid
+  /**
+   * Exact correspondences along the stripe edges, sub-pixel in the photo: where
+   * the decoded cell steps from k - 1 to k the projector coordinate is exactly
+   * k * cell on that axis. Cell centres are only good to half a cell; these
+   * are what a fit should lean on.
+   */
+  edges?: StripeEdges;
 };
+
+/** `axis` 0 = x (projector column `value`), 1 = y (row `value`); x, y in photo pixels (pixel centres at +0.5). */
+export type StripeEdges = { count: number; x: Float32Array; y: Float32Array; axis: Uint8Array; value: Float32Array };
 
 export type HomographyFit = {
   cameraToProjector: number[]; // 3x3 row-major, camera PIXELS -> projector PIXELS
@@ -175,7 +185,7 @@ export function decodeCaptures(
   captures: Capture[],
   options?: { minContrast?: number; minBitMargin?: number },
 ): Decoded {
-  const minContrast = options?.minContrast ?? 0.2;
+  const minContrast = options?.minContrast ?? 0.05;
   const minBitMargin = options?.minBitMargin ?? 0.15;
 
   if (captures.length !== plan.frames.length) {
@@ -268,11 +278,69 @@ export function decodeCaptures(
   }
 
   removeSpeckle(decoded, plan.cell);
+  decoded.edges = findStripeEdges(decoded, plan, pairsX as { normal: Luma; inverted: Luma }[], pairsY as { normal: Luma; inverted: Luma }[]);
 
   let count = 0;
   for (let i = 0; i < n; i++) count += decoded.valid[i];
   decoded.coverage = n > 0 ? count / n : 0;
   return decoded;
+}
+
+/** Longest run of unreadable pixels allowed between the two sides of a stripe edge. */
+const EDGE_GAP = 4;
+
+/**
+ * Finds the stripe edges: along each row and column, two readable pixels
+ * close together whose cells differ by one on an axis straddle the edge
+ * between those cells. The bit that flips there changes sign across it
+ * (normal minus inverted photo), so its zero crossing places the edge to a
+ * fraction of a pixel.
+ */
+function findStripeEdges(decoded: Decoded, plan: PatternPlan, pairsX: { normal: Luma; inverted: Luma }[], pairsY: { normal: Luma; inverted: Luma }[]): StripeEdges {
+  const { width, height, valid, projX, projY } = decoded;
+  const xs: number[] = [], ys: number[] = [], axes: number[] = [], values: number[] = [];
+  const flipBit = (a: number, b: number, bits: number) => {
+    // Gray codes of neighbouring cells differ in exactly one bit; bit 0 is the most significant.
+    const diff = (a ^ (a >> 1)) ^ (b ^ (b >> 1));
+    for (let bit = 0; bit < bits; bit++) if (diff === 1 << (bits - 1 - bit)) return bit;
+    return -1;
+  };
+  const scan = (count: number, length: number, at: (line: number, k: number) => number, place: (line: number, k: number) => [number, number]) => {
+    for (let line = 0; line < count; line++) {
+      let last = -1;
+      for (let k = 0; k < length; k++) {
+        const i = at(line, k);
+        if (!valid[i]) continue;
+        if (last >= 0 && k - last <= EDGE_GAP + 1) {
+          const a = at(line, last);
+          for (let axis = 0; axis < 2; axis++) {
+            const pa = axis ? projY[a] : projX[a], pb = axis ? projY[i] : projX[i];
+            const other = axis ? Math.abs(projX[a] - projX[i]) : Math.abs(projY[a] - projY[i]);
+            if (other > plan.cell * 1.01 || Math.abs(Math.abs(pb - pa) - plan.cell) > 1e-3) continue;
+            const ca = Math.floor(pa / plan.cell), cb = Math.floor(pb / plan.cell);
+            const pairs = axis ? pairsY : pairsX, bits = axis ? plan.bitsY : plan.bitsX;
+            const bit = flipBit(ca, cb, bits);
+            if (bit < 0) continue;
+            // The flipping bit's normal-minus-inverted difference along the run: find where it crosses zero.
+            const d = (j: number) => (pairs[bit].normal[j] as number) - (pairs[bit].inverted[j] as number);
+            let t = 0.5, prev = d(a);
+            for (let m = last + 1; m <= k; m++) {
+              const value = d(at(line, m));
+              if ((prev > 0) !== (value > 0) && prev !== value) { t = (m - 1 - last + prev / (prev - value)) / (k - last); break; }
+              prev = value;
+            }
+            const [x0, y0] = place(line, last), [x1, y1] = place(line, k);
+            xs.push(x0 + (x1 - x0) * t + 0.5); ys.push(y0 + (y1 - y0) * t + 0.5);
+            axes.push(axis); values.push(Math.max(ca, cb) * plan.cell);
+          }
+        }
+        last = k;
+      }
+    }
+  };
+  scan(height, width, (y, x) => y * width + x, (y, x) => [x, y]);
+  scan(width, height, (x, y) => y * width + x, (x, y) => [x, y]);
+  return { count: xs.length, x: Float32Array.from(xs), y: Float32Array.from(ys), axis: Uint8Array.from(axes), value: Float32Array.from(values) };
 }
 
 // ---------------------------------------------------------------------------

@@ -9,22 +9,42 @@
  */
 import { planPatterns, decodeCaptures, fitHomography, applyHomography, type Capture, type Decoded, type PatternFrame, type PatternPlan, type UV } from './structuredLight';
 import { stripeFrameCode, STRIPE_CELL } from './structuredLightCodes';
+import type { DepthScan } from './meshMap';
 
-export type AutoMapScreen = { id: string; name: string; width: number; height: number };
+/** An open Screen. `region`, when the desktop sends it, is where its picture sits in the output (0..1). */
+export type AutoMapScreen = { id: string; name: string; width: number; height: number; region?: { x: number; y: number; width: number; height: number } };
 export type AutoMapLink = { request(op: 'screens' | 'show' | 'end', extra?: Record<string, unknown>): Promise<Record<string, any>> };
-export type AutoMapCamera = { turn?: number; grab(): Promise<Capture>; jpeg?(): Promise<{ image: string; width: number; height: number }> };
+export type AutoMapCamera = {
+  turn?: number;
+  grab(): Promise<Capture>;
+  jpeg?(): Promise<{ image: string; width: number; height: number }>;
+  /** Hold exposure and focus once the white frame has set them (LiDAR camera). */
+  lock?(): Promise<void>;
+  /** Depth of the scene, lined up with the photos (LiDAR camera). */
+  depth?(): Promise<DepthScan>;
+};
 export type AutoMapProjector = {
   id: string; name: string; width: number; height: number;
+  /** Where this Screen's picture sits in the output, when the desktop said. */
+  region?: AutoMapScreen['region'];
   corners: UV[];        // the full picture's corners in the photo, TL TR BR BL
   rmsPx: number;        // fit error in projector pixels
   coverage: number;     // share of the photo that saw this projector
   plan: PatternPlan;    // kept so each outlined surface can be fitted on its own
   decoded: Decoded;
   white: Capture;       // the fully lit photo, for finding visible edges
+  /** Every stripe photo, in plan order: kept for the run's diagnostics (replayed offline). */
+  captures?: Capture[];
+  /** Milliseconds: photographing the stripes, decoding them. */
+  timings?: { captureMs: number; decodeMs: number };
 };
 export type AutoMapResult = {
   reference: { image: string; width: number; height: number };
   projectors: AutoMapProjector[];
+  /** LiDAR depth lined up with the photos, when the camera has it. */
+  depth?: DepthScan;
+  /** Why a LiDAR camera's depth is missing. */
+  depthError?: string;
 };
 
 /** Time for the projector and the camera pipeline to show the new frame. */
@@ -35,26 +55,32 @@ export async function runAutoMap(
   link: AutoMapLink,
   camera: AutoMapCamera,
   progress: (text: string, fraction?: number) => void = () => {},
-  options: { settleMs?: number; encode?: (luma: Float32Array, width: number, height: number) => string } = {},
+  options: { settleMs?: number; encode?: (luma: Float32Array, width: number, height: number) => string; screenId?: string } = {},
 ): Promise<AutoMapResult> {
   const settle = options.settleMs ?? SETTLE_MS;
   const listed = await link.request('screens');
-  const screens: AutoMapScreen[] = Array.isArray(listed.screens) ? listed.screens : [];
-  if (!screens.length) throw new Error('No Screen is open on a projector. On the desktop, use Open on display for each Screen first.');
+  const open: AutoMapScreen[] = Array.isArray(listed.screens) ? listed.screens : [];
+  // A desktop asking for one Screen (a room scan for Depth mode) gets only that one.
+  const screens = options.screenId && open.some((s) => s.id === options.screenId) ? open.filter((s) => s.id === options.screenId) : open;
+  if (!screens.length) throw new Error('Nothing is on a projector. On the desktop, open the output (one projector) or a Screen for each projector first.');
   if (Array.isArray(listed.cells) && !listed.cells.includes(STRIPE_CELL)) throw new Error('This desktop uses a different pattern size. Update both apps.');
   const projectors: AutoMapProjector[] = [];
   let brightest: Float32Array | undefined, width = 0, height = 0;
   let colour: { image: string; width: number; height: number } | undefined;
+  let depth: DepthScan | undefined, depthError: string | undefined;
   try {
     for (const [index, screen] of screens.entries()) {
       const plan = planPatterns(screen.width, screen.height, STRIPE_CELL);
       const captures: Capture[] = [];
+      const startedAt = Date.now();
       for (const [step, frame] of plan.frames.entries()) {
         progress(`${screen.name}: pattern ${step + 1} of ${plan.frames.length}`, (index + (step + 1) / plan.frames.length) / screens.length);
         await link.request('show', { screenId: screen.id, frame: stripeFrameCode(frame as PatternFrame, STRIPE_CELL) });
         await wait(settle);
         const shot = await camera.grab();
         if (step === 0 && index === 0 && camera.jpeg) colour = await camera.jpeg().catch(() => undefined);
+        // The white frame has set the exposure: keep it for every stripe that follows.
+        if (step === 0 && index === 0 && camera.lock) await camera.lock().catch(() => {});
         if (captures.length && (shot.width !== captures[0].width || shot.height !== captures[0].height)) throw new Error('The camera changed size during the capture. Keep the app open and try again.');
         captures.push(shot);
       }
@@ -65,7 +91,9 @@ export async function runAutoMap(
       for (let i = 0; i < brightest.length; i++) brightest[i] = Math.max(brightest[i], white.luma[i]);
       progress(`${screen.name}: finding surfaces`, (index + 1) / screens.length);
       await wait(0);
+      const capturedAt = Date.now();
       const decoded = decodeCaptures(plan, captures);
+      const timings = { captureMs: capturedAt - startedAt, decodeMs: Date.now() - capturedAt };
       let seen = 0;
       for (let i = 0; i < decoded.valid.length; i++) seen += decoded.valid[i];
       if (seen < 400) throw new Error(`${screen.name}: the stripes could not be read. Check the projector is in the photo, dim the room, and keep the phone still.`);
@@ -76,13 +104,33 @@ export async function runAutoMap(
         const fit = fitHomography(plan, decoded);
         if (fit.cornersInPhoto.every(p => p.x >= 0 && p.x <= 1 && p.y >= 0 && p.y <= 1)) { corners = fit.cornersInPhoto; rmsPx = fit.rmsPx; }
       } catch { /* not one plane: expected for an object */ }
-      projectors.push({ id: screen.id, name: screen.name, width: screen.width, height: screen.height, corners, rmsPx, coverage: decoded.coverage, plan, decoded, white });
+      projectors.push({ id: screen.id, name: screen.name, width: screen.width, height: screen.height, ...(validRegion(screen.region) ? { region: screen.region } : {}), corners, rmsPx, coverage: decoded.coverage, plan, decoded, white, captures, timings });
+    }
+    // Depth last, with the projector dark so its light cannot disturb the LiDAR.
+    if (camera.depth) {
+      progress('Measuring depth', 1);
+      const last = screens[screens.length - 1];
+      await link.request('show', { screenId: last.id, frame: stripeFrameCode({ kind: 'black' }, STRIPE_CELL) });
+      await wait(settle);
+      // Without depth the flat surfaces still map: say why it is missing instead of failing the scan.
+      try {
+        const measured = await camera.depth();
+        // Depth must cover the photos' field of view: the same shape, or it is left out.
+        if (Math.abs(measured.width / measured.height - width / height) < 0.02) depth = measured;
+        else depthError = 'The depth did not line up with the photos.';
+      } catch (error) {
+        depthError = error instanceof Error ? error.message : 'The depth could not be measured.';
+      }
     }
   } finally {
     await link.request('end').catch(() => {});
   }
   const encode = options.encode ?? lumaToJpeg;
-  return { reference: { image: colour && !options.encode ? colour.image : encode(brightest!, width, height), width, height }, projectors };
+  return { reference: { image: colour && !options.encode ? colour.image : encode(brightest!, width, height), width, height }, projectors, ...(depth ? { depth } : {}), ...(depthError ? { depthError } : {}) };
+}
+
+function validRegion(r: AutoMapScreen['region']): boolean {
+  return !!r && [r.x, r.y, r.width, r.height].every((v) => typeof v === 'number' && Number.isFinite(v)) && r.width > 0 && r.height > 0;
 }
 
 /** Grey photo from luma, stretched to its own range so a dim room still reads. */

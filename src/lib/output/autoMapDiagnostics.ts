@@ -5,8 +5,8 @@ import { invoke } from '../bridge';
  * Auto-map runs the phone sends (photos, decode, faces, timings, its overlay
  * picture), saved to userData/diagnostics/automap/<stamp>/ with a one-line
  * summary in the debug log. The phone side builds them
- * (src/lib/mobile/studio/autoMapDiagnostics.ts on the phone branch); its
- * tests replay a saved bundle.json through the solver.
+ * (src/lib/mobile/studio/autoMapDiagnostics.ts); its tests replay a saved
+ * bundle.json through the same solver.
  */
 type Face = { rank: number; rmsPx: number; edgePx?: number; minor: boolean; curved: boolean; outline?: { x: number; y: number }[] };
 export type ReceivedRun = { stamp: string; bundle: Record<string, any>; overlay?: string; photo?: string };
