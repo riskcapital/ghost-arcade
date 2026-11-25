@@ -77,3 +77,25 @@ describe('recording a pad the sequencer does not show', () => {
     expect(m.parts[0].tracks[5].vel[4]).toBeCloseTo(0.8, 6);
   });
 });
+
+describe('recording pad 28 (past the sixteen rows)', () => {
+  it('gives it a row with both hits, kept after a save and reload', () => {
+    const b = starterBeat('mk.boom-box');
+    b.parts = [emptyPart('Loop', 'loop', 1, 16)];
+    b.song = [];
+    loadBeat(b);
+    expect(get(musicStudio).machine.trackPads).not.toContain(27);
+    startMachine();
+    machineTransport.update(t => ({ ...t, record: true }));
+    clock.beat = 1;
+    playPad(27, 0.8);
+    clock.beat = 3;
+    playPad(27, 0.7);
+    const m = get(musicStudio).machine;
+    expect(m.trackPads).toContain(27);
+    expect(m.parts[0].tracks[27].vel.filter((v) => v > 0)).toHaveLength(2);
+    const restored = normalizeProjectState(JSON.parse(JSON.stringify(musicStudio.serialize())));
+    expect(restored.machine.trackPads).toContain(27);
+    expect(restored.machine.parts[0].tracks[27].vel.filter((v) => v > 0)).toHaveLength(2);
+  });
+});

@@ -43,6 +43,23 @@
   const steps = $derived(part ? partSteps(part) : 16);
 
   let view = $state<'pattern' | 'song'>('pattern');
+
+  // A pad recorded that had no row gets one at the foot: scroll to it and light it, so its hits are seen.
+  let rowsEl = $state<HTMLDivElement | null>(null);
+  let fresh = $state<number | null>(null);
+  let knownPads: number[] | null = null;
+  let freshTimer: ReturnType<typeof setTimeout> | null = null;
+  $effect(() => {
+    const pads = beat.trackPads;
+    const added = knownPads ? pads.filter((p) => !knownPads!.includes(p)) : [];
+    knownPads = [...pads];
+    if (!added.length) return;
+    const pad = added[added.length - 1];
+    fresh = pad;
+    if (freshTimer) clearTimeout(freshTimer);
+    freshTimer = setTimeout(() => (fresh = null), 1600);
+    requestAnimationFrame(() => rowsEl?.querySelector(`[data-pad="${pad}"]`)?.scrollIntoView({ block: 'nearest' }));
+  });
   /** The bar of a long part on screen. */
   let page = $state(0);
   let follow = $state(true);
@@ -410,11 +427,11 @@
           <span class="hint">Drag a step for velocity · right-click: roll · Alt-click: chance</span>
         </div>
 
-        <div class="rows" style="--steps: {stepsPerBar}" role="grid" aria-label="Steps">
+        <div class="rows" bind:this={rowsEl} style="--steps: {stepsPerBar}" role="grid" aria-label="Steps">
           {#each beat.trackPads as pad, row (pad)}
             {@const tr = trackOf(part, pad)}
             {@const solo = t.solo === pad}
-            <div class="row" class:sel={selected === pad} class:muted={tr.mute || (t.solo !== null && !solo)} class:moving={moving?.from === row} class:drop={moving && moving.to === row && moving.from !== row} role="row">
+            <div class="row" data-pad={pad} class:fresh={fresh === pad} class:sel={selected === pad} class:muted={tr.mute || (t.solo !== null && !solo)} class:moving={moving?.from === row} class:drop={moving && moving.to === row && moving.from !== row} role="row">
               <span class="grip" onpointerdown={(e) => gripDown(e, row)} onpointermove={gripMove} onpointerup={gripUp} role="button" tabindex="-1" aria-label="Drag to reorder" title="Drag to move this track">⋮</span>
               <button class="rname" onclick={() => { selected = pad; playPad(pad, 0.85); }} title="Play {kit.pads[pad]?.name}">{kit.pads[pad]?.name ?? `Pad ${pad + 1}`}</button>
               <button class="tiny" class:on={tr.mute} aria-pressed={tr.mute} onclick={() => editPart((p) => toggleMute(p, pad))} title="Mute this track">M</button>
@@ -558,6 +575,7 @@
   .hint { font-size: 10px; color: var(--studio-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 0 1 auto; }
 
   .rows { display: flex; flex-direction: column; gap: 1px; flex: 1; min-height: 0; overflow-y: auto; scrollbar-width: thin; }
+  .row.fresh { box-shadow: inset 2px 0 0 var(--studio-accent); background: var(--studio-accent-soft); }
   .row { min-width: calc(250px + var(--steps) * 15px); display: flex; align-items: center; gap: 3px; height: 13px; flex: 0 0 auto; }
   .row.muted { opacity: 0.4; }
   .row.moving { opacity: 0.5; }
