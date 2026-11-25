@@ -239,10 +239,16 @@
     {/if}
   {/if}
   <div class="group-label">Attach an effect</div>
+  <!-- In the 3D world only its own effects come from an object; Liquid is withdrawn (interactiveEffects.ts). -->
   <div class="tools">
-    <button class="ignite" disabled={effectsFull} onclick={() => onattach('fire')}>♨ Ignite</button>
-    <button disabled={effectsFull} onclick={() => onattach('smoke')}>Smoke</button>
-    <button disabled={effectsFull} onclick={() => onattach('liquid')}>Pour</button>
+    {#if world}
+      <button class="ignite" disabled={effectsFull} onclick={() => onattach('flames')}>♨ Fire &amp; smoke</button>
+      <button disabled={effectsFull} onclick={() => onattach('drips')}>Paint drips</button>
+      <button disabled={effectsFull} onclick={() => onattach('balls3d')}>Balls</button>
+    {:else}
+      <button class="ignite" disabled={effectsFull} onclick={() => onattach('fire')}>♨ Ignite</button>
+      <button disabled={effectsFull} onclick={() => onattach('smoke')}>Smoke</button>
+    {/if}
   </div>
   {#if effectsFull}
     <p class="hint limit">All effect slots are in use. Remove an effect to attach another.</p>
