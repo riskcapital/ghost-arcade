@@ -3912,13 +3912,14 @@ export const showTimeline = {
    * track list) and nothing changed. `rowOrder` (track ids): the order the
    * rows are drawn in, which `trackOffset` counts in.
    */
-  moveLayerClipsAcross(clipIds: string[], delta: number, trackOffset: number, rowOrder?: readonly string[]): boolean {
+  moveLayerClipsAcross(clipIds: string[], delta: number, trackOffset: number, rowOrder?: readonly string[], opts: { carryRowPoints?: boolean } = {}): boolean {
     const ids = new Set(clipIds);
     const before = get(store).layerTracks;
     const layerTracks = moveClipsAcrossTracks(before, ids, delta, trackOffset, rowOrder);
     if (!layerTracks) return false;
-    // The blocks' own lines move with them; the row points under each block
-    // go onto the row it landed on (as its ◆ keys did).
+    // The blocks' own lines move with them. The row's points stay: the
+    // editor moves the selected keys itself (`opts.carryRowPoints` for a
+    // caller that wants the row points under each block taken along).
     const landed = new Map<string, ShowLayerTrack>();
     for (const t of layerTracks) for (const c of t.clips) if (ids.has(c.id)) landed.set(c.id, t);
     store.update((s) => {
@@ -3926,9 +3927,9 @@ export const showTimeline = {
       for (const track of before) {
         for (const c of track.clips) {
           if (!ids.has(c.id)) continue;
-          const to = landed.get(c.id);
           lines = shiftLinesOnTarget(lines, { scope: 'block', id: c.id }, delta);
-          if (to) lines = carryRowLinesAcross(lines, { source: rowLineTarget(track), target: rowLineTarget(to), from: c.startTime, to: clipEnd(c), delta }, generateUUID);
+          const to = landed.get(c.id);
+          if (opts.carryRowPoints && to) lines = carryRowLinesAcross(lines, { source: rowLineTarget(track), target: rowLineTarget(to), from: c.startTime, to: clipEnd(c), delta }, generateUUID);
         }
       }
       return withDuration({ ...s, layerTracks, lines });

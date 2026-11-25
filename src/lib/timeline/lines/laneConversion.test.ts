@@ -199,6 +199,19 @@ describe('the Timeline document holds its lines', () => {
     expect(s.lines.find((l) => l.id === 'op')!.points[0].t).toBeCloseTo(mid + shift);
   });
 
+  it('a block dragged with others (or onto another row) takes its own lines; the row\'s points stay for the editor to move', () => {
+    const id = showTimeline.addLayerClip(rowTrackId('A'), { kind: 'image', name: 'a.png', src: '/a.png' }, 0)!;
+    const c = get(showTimeline).layerTracks.find((t) => t.layerId === 'A')!.clips[0];
+    showTimeline.setLines([
+      { id: 'b', target: { scope: 'block', id }, key: 'shader:x', kind: 'continuous', min: 0, max: 1, points: [{ t: c.startTime + 1, v: 1 }] },
+      opacity([{ t: c.startTime + 1, v: 0.5 }]),
+    ]);
+    expect(showTimeline.moveLayerClipsAcross([id], 2, 0)).toBe(true);
+    const lines = get(showTimeline).lines;
+    expect(lines.find((l) => l.id === 'b')!.points[0].t).toBeCloseTo(c.startTime + 3);
+    expect(lines.find((l) => l.id === 'op')!.points[0].t).toBeCloseTo(c.startTime + 1);
+  });
+
   it('a split copies the block\'s lines onto the right half', () => {
     const id = showTimeline.addLayerClip(rowTrackId('A'), { kind: 'image', name: 'a.png', src: '/a.png' }, 0)!;
     const c = get(showTimeline).layerTracks.find((t) => t.layerId === 'A')!.clips[0];

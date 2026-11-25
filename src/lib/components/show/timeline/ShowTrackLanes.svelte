@@ -40,6 +40,7 @@
   import { _currentLineLayout } from './lineUi';
   import { clearSelectedKeys, selectedKeys, selectKeys as selectLineKeys } from '../../../timeline/lines/timelineLines';
   import { keysBetween, shiftKeys, unionKeys } from '../../../timeline/lines/keyEdit';
+  import { keysOffBlocks } from '../../../timeline/lines/lineDocOps';
   import { selectForward } from './keyCommands';
   import { trackLaneInfo } from './trackParams';
   import { showSlice } from './timelineSlices';
@@ -324,7 +325,9 @@
     // Selected keys go along by the same amount (moveLayerClipsAcross moves
     // the blocks without their points).
     const allKeys = selectedKeys(get(showTimeline).lines);
-    let freeKeys = allKeys;
+    // Keys on the moving blocks' own lines go with their blocks.
+    let freeKeys = keysOffBlocks(get(showTimeline).lines, allKeys, ids);
+    const blockKeys = allKeys.filter((k) => !freeKeys.includes(k));
     follow(e, (ev) => {
       const list = currentTracks();
       const row = stackIndexAt(currentStack(), yInStack(ev.clientY));
@@ -356,7 +359,7 @@
       showSnapGuide.set(movesFreely(ev) ? null : snapGuideAt({ start: s, end: s + duration }, snapper.edges(), raw, s));
     }, (moved) => {
       if (moved) {
-        if (allKeys.length) selectLineKeys(freeKeys);
+        if (allKeys.length) selectLineKeys([...freeKeys, ...blockKeys.map((k) => ({ ...k, t: Math.max(0, k.t + applied.delta) }))]);
         return;
       }
       if (onClick === 'only' && ids.length > 1) { showTimeline.selectLayerClips([clip.id]); clearSelectedKeys(); }
@@ -525,7 +528,9 @@
     const allKeys = selectedKeys(s.lines);
     if (!ids.length && !allKeys.length) return;
     const starts = s.layerTracks.flatMap((t) => t.clips.filter((c) => idSet.has(c.id)).map((c) => c.startTime));
-    let freeKeys = allKeys;
+    // Keys on the moving blocks' own lines go with their blocks.
+    let freeKeys = keysOffBlocks(s.lines, allKeys, ids);
+    const blockKeys = allKeys.filter((k) => !freeKeys.includes(k));
     const minT = Math.min(...starts, ...allKeys.map((k) => k.t));
     const snapper = dragSnapper(ids);
     let applied = 0;
@@ -545,7 +550,7 @@
       showSnapGuide.set(movesFreely(ev) ? null : snapGuideAt({ start: t0 + delta, end: t0 + delta }, snapper.edges(), raw, t0 + delta));
     }, (moved) => {
       showSnapGuide.set(null);
-      if (moved && allKeys.length) selectLineKeys(freeKeys);
+      if (moved && allKeys.length) selectLineKeys([...freeKeys, ...blockKeys.map((k) => ({ ...k, t: Math.max(0, k.t + applied) }))]);
     }, 3);
   }
 

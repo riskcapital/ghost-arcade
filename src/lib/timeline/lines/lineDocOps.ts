@@ -165,6 +165,14 @@ export function carryRowLinesAcross(
   return out;
 }
 
+/** The keys that are not on the lines of these blocks (those move with their blocks). */
+export function keysOffBlocks<K extends { lineId: string }>(lines: readonly ControlLine[], keys: readonly K[], blockIds: Iterable<string>): K[] {
+  const ids = new Set(blockIds);
+  if (!ids.size || !keys.length) return keys as K[];
+  const onBlock = new Set(lines.filter((l) => l.target.scope === 'block' && ids.has(l.target.id)).map((l) => l.id));
+  return onBlock.size ? keys.filter((k) => !onBlock.has(k.lineId)) : (keys as K[]);
+}
+
 /** Blocks (or look blocks) were deleted: their lines go with them. */
 export function removeLinesForBlocks(lines: readonly ControlLine[], clipIds: Iterable<string>): ControlLine[] {
   const ids = new Set(clipIds);
