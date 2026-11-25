@@ -13,7 +13,7 @@ import { showPhaseTargets } from './showVideoPhase';
 import { ShowDriftWatch, type ShowDriftSession } from './showVideoDrift';
 import { probeVideoDuration, unknownLengthVideoUris } from './showClipLength';
 import { evaluateLanes } from './showTrackLanes';
-import { splitClip } from './showTrackEdit';
+import { clearRange, splitClip } from './showTrackEdit';
 import {
   buildCompositionTransitionLayers,
   compositionTransitionWeights,
@@ -539,5 +539,16 @@ describe('loop start edits', () => {
     const b = track('t', 'A', [clip('c', 0, 60, { media: video('loop.mp4', 10), loopStart: 5 })]);
     const f2 = frameAt([b], 2.1);
     expect(sources.sourceFor(f2.tracks[0], f2)!.trimStart).toBeCloseTo(0.5, 9);
+  });
+});
+
+describe('clearRange keeps a looping clip\'s loop', () => {
+  it('the piece after a range that starts a sliver into a looping clip loops over the same media range', () => {
+    // A 0.05 s sliver before the range: the right piece is cut by hand, not by splitClip.
+    const c = clip('c', 0, 20, { media: video('loop.mp4', 10), inPoint: 2, endBehaviour: 'loop' });
+    const out = clearRange([c], 0.05, 4);
+    expect(out).toHaveLength(1);
+    expect(out[0].startTime).toBe(4);
+    expect(out[0].loopStart).toBe(2);
   });
 });

@@ -206,7 +206,10 @@ export function clearRange(clips: readonly ShowLayerClip[], start: number, end: 
       if (pieces) out.push(pieces[1]);
       else {
         const inPoint = c.inPoint + (end - c.startTime) * clipRate(c);
-        out.push(withClampedFades({ ...c, id: generateUUID(), startTime: end, duration: cEnd - end, inPoint, fadeIn: 0, transitionIn: 'cut', transitionDuration: undefined }));
+        const right: ShowLayerClip = { ...c, id: generateUUID(), startTime: end, duration: cEnd - end, inPoint, fadeIn: 0, transitionIn: 'cut', transitionDuration: undefined };
+        // It loops over the same range as the whole clip did (as a split's right half).
+        if (c.endBehaviour === 'loop' || c.loopStart !== undefined) right.loopStart = clipLoopStart(c);
+        out.push(withClampedFades(right));
       }
     }
   }
