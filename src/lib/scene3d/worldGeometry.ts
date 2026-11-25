@@ -211,7 +211,9 @@ export function pickWorld(geo: WorldGeo, ray: Ray): GeoHit {
 
 /**
  * Where a face drips or burns from: its upper edges (those whose outward
- * side faces up), with the face's normal and depth. At most 16.
+ * side faces up), with the face's normal and depth. A level face (a top) has
+ * no edge facing up, so it is all of its edges: paint runs off every side and
+ * fire burns along the whole rim. At most 16.
  */
 export function faceSites(geo: WorldGeo, surfaceId: string): { a: Vec3; b: Vec3; n: Vec3; depth: number }[] {
   const f = geoFace(geo, surfaceId);
@@ -220,6 +222,7 @@ export function faceSites(geo: WorldGeo, surfaceId: string): { a: Vec3; b: Vec3;
   let area = 0;
   pts.forEach((a, i) => { const b = pts[(i + 1) % pts.length]; area += a.x * b.y - b.x * a.y; });
   const up = upOf(geo);
+  const level = dot(f.n, up) > 0.65;
   const sites: { a: Vec3; b: Vec3; n: Vec3; depth: number }[] = [];
   pts.forEach((a, i) => {
     const b = pts[(i + 1) % pts.length];
@@ -228,7 +231,7 @@ export function faceSites(geo: WorldGeo, surfaceId: string): { a: Vec3; b: Vec3;
     // Outward: to the right of each edge when the outline runs counterclockwise.
     const ox = (area > 0 ? ey : -ey) / len, oy = (area > 0 ? -ex : ex) / len;
     const out = add(scale(f.u, ox), scale(f.v, oy));
-    if (dot(out, up) > 0.35) sites.push({ a: facePoint(f, a), b: facePoint(f, b), n: f.n, depth: f.depth });
+    if (level || dot(out, up) > 0.35) sites.push({ a: facePoint(f, a), b: facePoint(f, b), n: f.n, depth: f.depth });
   });
   return sites.slice(0, 16);
 }

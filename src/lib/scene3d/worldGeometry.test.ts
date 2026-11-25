@@ -124,15 +124,21 @@ describe('a room', () => {
     expect(spawnZ(geo, p)).toBeCloseTo(0.7, 9);
   });
 
-  it('drips from the edges that face up: the front face from its top edge, the top from its back', () => {
+  it('drips from the edges that face up: the front face from its top edge, a level top from its whole rim', () => {
     const { scene, room } = boxRoom();
     const geo = worldGeometry(scene, { ...defaultReliefWorld(), source: 'room', room }, ASPECT);
     const front = faceSites(geo, 'front');
     expect(front).toHaveLength(1);
     expect(front[0].a[1]).toBeCloseTo(0.5, 9);
     expect(front[0].b[1]).toBeCloseTo(0.5, 9);
-    // A level top has no edge facing up.
-    expect(faceSites(geo, 'top')).toHaveLength(0);
+    // A level top has no edge facing up: every edge, at the top's height.
+    const top = faceSites(geo, 'top');
+    const outline = geo.faces.find((f) => f.surfaceId === 'top')!.points.length;
+    expect(top).toHaveLength(outline);
+    for (const site of top) {
+      expect(site.a[1]).toBeCloseTo(0.5, 9);
+      expect(site.b[1]).toBeCloseTo(0.5, 9);
+    }
   });
 
   it('throws from just above the top under the finger, and drops it there', async () => {
