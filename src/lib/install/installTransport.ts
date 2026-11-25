@@ -44,7 +44,7 @@ export function setInstallTransport(next: InstallTransport | null): void {
 }
 
 export async function defaultInstallTransport(): Promise<InstallTransport> {
-  const { showTimeline, parkedShowDoc, computeShowDuration } = await import('../stores/showTimeline');
+  const { showTimeline, parkedShowDoc, showDocDuration } = await import('../stores/showTimeline');
   // One engine plays the active document; the other is parked with its own
   // playhead. Acting on a document makes it the active one (quietly).
   const use = (doc: InstallDocument) => {
@@ -65,7 +65,7 @@ export async function defaultInstallTransport(): Promise<InstallTransport> {
       return {
         playing: false,
         time: p.currentTime ?? 0,
-        duration: computeShowDuration(p.presetClips ?? [], p.audioTracks ?? [], p.layerTracks ?? [], p.cameraLane ?? [], p.lookClips ?? []),
+        duration: showDocDuration(p),
         loop: !!p.loop,
       };
     },

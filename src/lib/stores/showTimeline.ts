@@ -1701,10 +1701,17 @@ function finishShow(action: ShowEndAction): void {
 }
 
 /** Recompute duration + reselect after any structural mutation. */
+/** A document's length: everything on it, its sound rows, lines and sections too. */
+export function showDocDuration(d: Partial<ShowDocFields>): number {
+  const sound = d.sound;
+  const audio = d.audioTracks ?? [];
+  const tracks = !sound || soundDocIsEmpty(sound) ? audio : [...audio, ...sound.live, ...sound.builds];
+  const duration = computeShowDuration(d.presetClips ?? [], tracks, d.layerTracks ?? [], d.cameraLane ?? [], d.lookClips ?? [], d.lines ?? [], d.ledClips ?? [], d.stageClips ?? []);
+  return d.sections?.length ? Math.max(duration, sectionsEnd(d.sections)) : duration;
+}
+
 function withDuration(s: ShowTimelineState): ShowTimelineState {
-  const tracks = soundDocIsEmpty(s.sound) ? s.audioTracks : [...s.audioTracks, ...s.sound.live, ...s.sound.builds];
-  const duration = computeShowDuration(s.presetClips, tracks, s.layerTracks, s.cameraLane, s.lookClips, s.lines, s.ledClips, s.stageClips);
-  return { ...s, duration: s.sections.length ? Math.max(duration, sectionsEnd(s.sections)) : duration };
+  return { ...s, duration: showDocDuration(s) };
 }
 
 /** The audio blocks changed: a beat grid detected from one of them follows it. */

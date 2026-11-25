@@ -62,4 +62,13 @@ describe('install transport', () => {
     t.stop('show'); // not active: leaves the Timeline alone
     expect(show.showTimeline.activeDoc()).toBe('timeline');
   });
+
+  it('the parked Timeline\'s length counts its lines and sections', async () => {
+    const t = await transport.defaultInstallTransport();
+    t.setActiveDocument('timeline');
+    show.showTimeline.setLines([{ id: 'l', target: { scope: 'layer', id: 'A' }, key: 'layer:opacity', kind: 'continuous', min: 0, max: 1, points: [{ t: 0, v: 0 }, { t: 42, v: 1 }] }]);
+    expect(t.state('timeline').duration).toBe(42);
+    t.setActiveDocument('show');
+    expect(t.state('timeline').duration).toBe(42);
+  });
 });
