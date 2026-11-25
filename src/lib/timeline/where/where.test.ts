@@ -166,6 +166,10 @@ describe('where motions', () => {
     expect(at(1.6)).toBeCloseTo(0.5, 9);
     expect(at(2.1)).toBe(1);
     expect(at(2.6)).toBe(0);
+    // A block starting between kicks steps on its first kick too.
+    const off = (t: number) => whereWindowAt(spec({ kind: 'kick' }), t, 0.9, 3, { ...ctx, kicks }).position;
+    expect(off(0.95)).toBe(0);
+    expect(off(1.1)).toBeCloseTo(0.5, 9);
     expect(whereWindowAt(spec({ kind: 'kick' }), 1.0, 0, 3, ctx).position).toBe(1); // 2 beats
     expect(countKicks(kicks, 1, 2)).toBe(3);
     const env = new Float32Array([0, 0.9, 0.6, 0.1, 0.8, 0.4, 0.3, 0.2, 0.7]);

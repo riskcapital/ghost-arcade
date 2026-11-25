@@ -25,7 +25,7 @@ import { cachedSongFeatures, sampleFeature } from '../lines/songFeatures';
 import { getTransformAspect } from '../../keyframes/layerParamKeys';
 import { pieceSpots } from '../where/spatialOrder';
 import { evaluateWhere } from '../where/whereEval';
-import { motionContext, whereLineValues } from '../where/whereRuntime';
+import { motionContext, songKicks, whereLineValues } from '../where/whereRuntime';
 import { stageClipEnd, type TimelineStageClip } from './stageClips';
 import { evaluateStageFx, screenFxPieces, type ScreenFxPiece, type StageFxFrame } from './stageFxEval';
 import { publishStageFx, resetStageFxState } from './stageFxState';
@@ -57,10 +57,11 @@ function songLevel(s: ShowTimelineState): ((t: number) => number | null) | null 
 }
 
 /** Where weights of the Screen FX blocks with a where line, at `time`. */
-function whereWeights(clips: readonly TimelineStageClip[], layers: readonly Layer[], time: number, tempo: ShowTempoMap | null, named: ShowTimelineState['whereOrders']) {
+function whereWeights(clips: readonly TimelineStageClip[], layers: readonly Layer[], time: number, tempo: ShowTempoMap | null, named: ShowTimelineState['whereOrders'], kicks: readonly number[] | null) {
   const out = new Map<string, Map<string, number>>();
   const spots = pieceSpots(layers);
-  const ctx = motionContext(tempo, null);
+  // A 'kick' where steps on the song's kicks (else on the beat).
+  const ctx = motionContext(tempo, kicks);
   const lines = currentLineFrame();
   for (const clip of clips) {
     if (!clip.where || time < clip.startTime || time >= stageClipEnd(clip)) continue;
@@ -82,7 +83,9 @@ export function stageFxFrameFor(s: ShowTimelineState, time: number, layers: read
     tempo: s.tempo,
     lines: currentLineFrame(),
     level: songLevel(s),
-    where: s.stageClips.some((c) => c.where) ? whereWeights(s.stageClips, layers, time, s.tempo, s.whereOrders) : null,
+    where: s.stageClips.some((c) => c.where)
+      ? whereWeights(s.stageClips, layers, time, s.tempo, s.whereOrders, s.stageClips.some((c) => c.where?.motion.kind === 'kick') ? songKicks(s, true) : null)
+      : null,
     freeRun: showFreeRunOffset,
   });
 }
