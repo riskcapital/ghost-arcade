@@ -85,6 +85,50 @@ describe('ChaseClock', () => {
   });
 });
 
+describe('ChaseClock edge cases', () => {
+  it('rolls on through midnight without dropping the lock', () => {
+    const c = new ChaseClock(3, 2000);
+    let t = 0;
+    for (let i = 0; i < 10; i++) { c.onFrame(86399.8 + i * 0.04, t); t += 40; }
+    // 23:59:59:xx wrapped to 00:00:00:yy
+    const after = (86399.8 + 10 * 0.04) - 86400;
+    c.onFrame(after, t);
+    const r = c.read(t + 1);
+    expect(r.lock).toBe('locked');
+    expect(r.seconds!).toBeGreaterThan(86400);
+  });
+
+  it('a locate far back in the day is still a jump, not a wrap', () => {
+    const c = new ChaseClock(3, 2000);
+    for (let i = 0; i < 5; i++) c.onFrame(72000 + i * 0.04, i * 40);
+    c.onFrame(10, 200);
+    expect(c.read(201).lock).toBe('searching');
+  });
+
+  it('rolling on from a locate carries on at once; from somewhere else it has to prove itself', () => {
+    const c = new ChaseClock(3, 2000);
+    c.onFrame(42, 0, false);
+    c.onFrame(42.04, 40);
+    expect(c.read(41).lock).toBe('locked');
+    const d = new ChaseClock(3, 2000);
+    d.onFrame(42, 0, false);
+    d.onFrame(500, 40);
+    expect(d.read(41).lock).toBe('searching');
+    d.onFrame(500.04, 80);
+    d.onFrame(500.08, 120);
+    expect(d.read(121).lock).toBe('locked');
+  });
+
+  it('a clock running at twice the rate keeps its lock through the same jitter', () => {
+    const c = new ChaseClock(3, 2000);
+    let t = 0;
+    for (let i = 0; i < 10; i++) { c.onFrame(i * 0.08, t, true, 2); t += 40; }
+    // The next frame 70 ms late: 0.14 s off its prediction in source seconds.
+    c.onFrame(10 * 0.08, 360 + 110, true, 2);
+    expect(c.read(471).lock).toBe('locked');
+  });
+});
+
 describe('chase from decoded sources', () => {
   it('LTC with a one-second dropout: locked, freewheel, locked, with sub-frame accuracy', () => {
     const rate: TimecodeRate = 25;

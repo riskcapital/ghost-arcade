@@ -143,6 +143,11 @@ export interface ChaseReading {
   rate: number;
 }
 
+/** Timecode runs 00:00:00:00 to 23:59:59:xx and then wraps. */
+export const TIMECODE_DAY_SECONDS = 86400;
+/** A source parked at a place that starts rolling within this of it carries on from the park. */
+const PARK_START_WINDOW_SECONDS = 1;
+
 export class ChaseClock {
   private anchor: { seconds: number; atMs: number; rate: number } | null = null;
   private lastFrameAt = 0;
@@ -174,16 +179,28 @@ export class ChaseClock {
    * false for a locate (MTC full frame): the source is parked there.
    * `rate` is how fast it runs on between frames (source seconds per
    * second): a musical clock at another tempo than the map runs show time
-   * faster or slower than real time.
+   * faster or slower than real time. `trustStart`: a musical clock's start
+   * is taken wherever it lands (its positions are computed, not decoded).
    */
-  onFrame(seconds: number, atMs: number, running = true, rate = 1): void {
+  onFrame(seconds: number, atMs: number, running = true, rate = 1, trustStart = false): void {
     const r = Number.isFinite(rate) && rate > 0 ? rate : 1;
     if (this.anchor) {
       const dt = atMs - this.lastFrameAt;
       if (dt > 0 && dt < 1000) this.interval = this.interval ? this.interval * 0.8 + dt * 0.2 : dt;
       const predicted = this.sourceRunning ? this.anchor.seconds + ((atMs - this.anchor.atMs) / 1000) * this.anchor.rate : this.anchor.seconds;
-      const tolerance = Math.max(0.1, (2.5 * (this.interval || 40)) / 1000);
-      const continuous = Math.abs(seconds - predicted) <= tolerance || (!this.sourceRunning && running);
+      // Frame jitter in source seconds: a clock running at twice the map's
+      // tempo moves twice as far in the same jitter.
+      const tolerance = Math.max(0.1, (2.5 * (this.interval || 40)) / 1000) * Math.max(1, this.anchor.rate);
+      // Timecode wraps at 24 h: 23:59:59:29 rolling on to 00:00:00:00 is the
+      // same run, not a locate (unwrapped only when it then lines up).
+      if (this.sourceRunning && running) {
+        const wrapped = seconds + TIMECODE_DAY_SECONDS * Math.round((predicted - seconds) / TIMECODE_DAY_SECONDS);
+        if (wrapped !== seconds && Math.abs(wrapped - predicted) <= tolerance) seconds = wrapped;
+      }
+      // Rolling on from a park: from where it was parked (a locate, then
+      // play), or else a jump that has to prove itself like any other.
+      const startsFromPark = !this.sourceRunning && running && (trustStart || Math.abs(seconds - this.anchor.seconds) <= PARK_START_WINDOW_SECONDS);
+      const continuous = Math.abs(seconds - predicted) <= tolerance || startsFromPark;
       this.streak = continuous ? this.streak + 1 : 1;
       this.still = running && Math.abs(seconds - this.anchor.seconds) < 1e-6 ? this.still + 1 : 0;
     } else {
@@ -338,7 +355,7 @@ class TimecodeChaseController {
       ? Math.max(0.25, Math.min(4, sourceBpm / showBpm))
       : 1;
     // The chase clock works in source seconds; beats arrive as show time.
-    this.clock.onFrame(showSeconds + this.current.offset, atMs, running, rate);
+    this.clock.onFrame(showSeconds + this.current.offset, atMs, running, rate, true);
     this.lastLabel = null;
     this.frames++;
     this.sourceBpm = sourceBpm;
@@ -619,12 +636,20 @@ async function startMtcInput(chase: TimecodeChaseController, inputId: string): P
   // Our own access with SysEx on: full-frame locates are SysEx, and the
   // shared MIDI manager asks without it.
   const access = await navigator.requestMIDIAccess({ sysex: true });
-  const parser = new MtcParser();
+  // One parser per port: quarter frames from two ports ("All MIDI Inputs")
+  // never mix into one corrupt timecode.
+  const parsers = new Map<EventTarget, MtcParser>();
+  const parserFor = (port: EventTarget | null) => {
+    const key = port ?? access;
+    let p = parsers.get(key);
+    if (!p) parsers.set(key, (p = new MtcParser()));
+    return p;
+  };
   const listening = new Set<MIDIInput>();
   const onMessage = (e: Event) => {
     const m = e as MIDIMessageEvent;
     if (!m.data) return;
-    for (const ev of parser.feed(m.data, m.timeStamp || performance.now())) {
+    for (const ev of parserFor(m.currentTarget ?? m.target).feed(m.data, m.timeStamp || performance.now())) {
       const s = chase.current;
       const tc = s.rate === 'auto' || s.rate === ev.timecode.rate ? ev.timecode : { ...ev.timecode, rate: s.rate };
       const seconds = tc === ev.timecode ? ev.seconds : ev.seconds - timecodeToSeconds(ev.timecode) + timecodeToSeconds(tc);
@@ -655,7 +680,8 @@ async function startMtcInput(chase: TimecodeChaseController, inputId: string): P
 async function startMidiClockInput(chase: TimecodeChaseController, inputId: string): Promise<SourceHandle> {
   if (typeof navigator === 'undefined' || !navigator.requestMIDIAccess) throw new Error('Web MIDI is not available');
   const access = await navigator.requestMIDIAccess({ sysex: false });
-  const parser = new MidiClockParser();
+  // One parser per port, as for MTC: two clocks never average into one tempo.
+  const parsers = new Map<EventTarget, MidiClockParser>();
   const listening = new Set<MIDIInput>();
   const onMessage = (e: Event) => {
     const m = e as MIDIMessageEvent;
@@ -664,6 +690,9 @@ async function startMidiClockInput(chase: TimecodeChaseController, inputId: stri
     const status = data[0];
     if (status !== 0xf2 && status !== 0xf8 && status !== 0xfa && status !== 0xfb && status !== 0xfc) return;
     const atMs = m.timeStamp || performance.now();
+    const port = m.currentTarget ?? m.target ?? access;
+    let parser = parsers.get(port);
+    if (!parser) parsers.set(port, (parser = new MidiClockParser()));
     const ev = parser.feed(data, atMs);
     if (!ev) return;
     const { map } = chase.showClock();
