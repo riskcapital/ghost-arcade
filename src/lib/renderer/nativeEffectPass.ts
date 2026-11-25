@@ -11649,7 +11649,14 @@ export function buildNativeEffectPassChainGraph(options: NativeEffectPassChainOp
       byte_length: 112,
       initial_f32: packNativeEffectPassUniforms(passOptions),
     });
-    renderPasses.push(buildNativeEffectPassRenderPass(passOptions, manifest, uniformId, `-${index + 1}`));
+    const renderPass = buildNativeEffectPassRenderPass(passOptions, manifest, uniformId, `-${index + 1}`);
+    // An intermediate step is read only by the next pass of this chain, and
+    // the effect and cube-LUT shaders read their source at mip 0 only
+    // (textureSampleLevel(..., 0.0)): its mip chain was built and never read,
+    // four extra GPU passes per step. The chain's output keeps its mips (the
+    // compositor samples it at any size).
+    if (index < effects.length - 1) renderPass.generate_mips = false;
+    renderPasses.push(renderPass);
     currentSourceId = targetSourceId;
   });
 
