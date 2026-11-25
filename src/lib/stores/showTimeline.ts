@@ -171,7 +171,7 @@ import { evaluateShowLooks, type ShowLookState } from '../show/tracks/showLooks'
 import { normalizeLines, type ControlLine } from '../timeline/lines/lineModel';
 import type { LineBinding } from '../timeline/lines/lineControls';
 import { lanesToLines, rowLineTarget } from '../timeline/lines/laneConversion';
-import { linesEnd, normalizeBindings, removeLinesForBlocks, shiftLinesOnTarget, shiftLinesWithBlock } from '../timeline/lines/lineDocOps';
+import { carryRowLinesAcross, linesEnd, normalizeBindings, removeLinesForBlocks, shiftLinesOnTarget, shiftLinesWithBlock, shiftRowLinesFrom, splitLinesForBlock } from '../timeline/lines/lineDocOps';
 import { normalizeLedClip, normalizeLedClips, type TimelineLedClip } from '../timeline/leds/ledClips';
 import { normalizeStageClip, normalizeStageClips, type StageClipRow, type TimelineStageClip } from '../timeline/stagefx/stageClips';
 import { normalizeNamedOrders, normalizeWhere, type WhereNamedOrder } from '../timeline/where/whereModel';
@@ -3688,6 +3688,7 @@ export const showTimeline = {
     const wanted = clipIds ? new Set(clipIds) : null;
     const selected = new Set(s.selectedClipIds);
     const created: string[] = [];
+    let lines = s.lines;
     const layerTracks = s.layerTracks.map((track) => {
       if (track.locked) return track;
       const clip = findClipAt(track.clips, t);
@@ -3697,6 +3698,8 @@ export const showTimeline = {
       const halves = splitClip(clip, t);
       if (!halves) return track;
       created.push(halves[1].id);
+      // The block's own lines carry on over both halves.
+      lines = splitLinesForBlock(lines, { clipId: clip.id, rightId: halves[1].id, start: clip.startTime, t, end: clipEnd(clip) }, generateUUID);
       return { ...track, clips: track.clips.flatMap((c) => (c.id === clip.id ? halves : [c])) };
     });
     // Nothing selected under the playhead: split every track instead.
@@ -3705,7 +3708,7 @@ export const showTimeline = {
       return c ? [c.id] : [];
     }));
     if (!created.length) return created;
-    store.update((x) => ({ ...x, layerTracks }));
+    store.update((x) => ({ ...x, layerTracks, lines }));
     recordShowEdit();
     republishTracks();
     return created;
@@ -3717,21 +3720,39 @@ export const showTimeline = {
     // Only blocks really removed lose their lines (a locked row keeps both).
     const removed = new Set<string>();
     let changed = false;
-    store.update((s) => withDuration({
-      ...s,
-      layerTracks: s.layerTracks.map((track) => {
+    // A ripple moves the later blocks: the row's points after each gap and
+    // the moved blocks' own lines go with them.
+    let rippled: ControlLine[] | null = null;
+    store.update((s) => {
+      let lines = s.lines;
+      const layerTracks = s.layerTracks.map((track) => {
         if (track.locked || !track.clips.some((c) => ids.has(c.id))) return track;
         changed = true;
         for (const c of track.clips) if (ids.has(c.id)) removed.add(c.id);
         if (!opts.ripple) return { ...track, clips: deleteClips(track.clips, ids) };
         const result = rippleDelete(track.clips, ids);
         let lanes = track.lanes;
-        for (const shift of result.shifts) lanes = shiftLaneKeys(lanes, shift.from, Number.POSITIVE_INFINITY, shift.delta);
+        const rowTarget = rowLineTarget(track);
+        for (const shift of result.shifts) {
+          lanes = shiftLaneKeys(lanes, shift.from, Number.POSITIVE_INFINITY, shift.delta);
+          lines = shiftRowLinesFrom(lines, rowTarget, shift.from, shift.delta);
+        }
+        const before = new Map(track.clips.map((c) => [c.id, c.startTime]));
+        for (const c of result.clips) {
+          const delta = c.startTime - (before.get(c.id) ?? c.startTime);
+          if (Math.abs(delta) > 1e-9) lines = shiftLinesOnTarget(lines, { scope: 'block', id: c.id }, delta);
+        }
         return { ...track, clips: result.clips, lanes };
-      }),
-      selectedClipIds: s.selectedClipIds.filter((id) => !ids.has(id)),
-      selection: s.selection && ids.has(s.selection.id) ? null : s.selection,
-    }));
+      });
+      if (lines !== s.lines) rippled = lines;
+      return withDuration({
+        ...s,
+        layerTracks,
+        ...(rippled ? { lines: rippled } : {}),
+        selectedClipIds: s.selectedClipIds.filter((id) => !ids.has(id)),
+        selection: s.selection && ids.has(s.selection.id) ? null : s.selection,
+      });
+    });
     if (!changed) return;
     store.update((s) => {
       const lines = removeLinesForBlocks(s.lines, removed);
@@ -3829,9 +3850,25 @@ export const showTimeline = {
    */
   moveLayerClipsAcross(clipIds: string[], delta: number, trackOffset: number, rowOrder?: readonly string[]): boolean {
     const ids = new Set(clipIds);
-    const layerTracks = moveClipsAcrossTracks(get(store).layerTracks, ids, delta, trackOffset, rowOrder);
+    const before = get(store).layerTracks;
+    const layerTracks = moveClipsAcrossTracks(before, ids, delta, trackOffset, rowOrder);
     if (!layerTracks) return false;
-    store.update((s) => withDuration({ ...s, layerTracks }));
+    // The blocks' own lines move with them; the row points under each block
+    // go onto the row it landed on (as its ◆ keys did).
+    const landed = new Map<string, ShowLayerTrack>();
+    for (const t of layerTracks) for (const c of t.clips) if (ids.has(c.id)) landed.set(c.id, t);
+    store.update((s) => {
+      let lines = s.lines;
+      for (const track of before) {
+        for (const c of track.clips) {
+          if (!ids.has(c.id)) continue;
+          const to = landed.get(c.id);
+          lines = shiftLinesOnTarget(lines, { scope: 'block', id: c.id }, delta);
+          if (to) lines = carryRowLinesAcross(lines, { source: rowLineTarget(track), target: rowLineTarget(to), from: c.startTime, to: clipEnd(c), delta }, generateUUID);
+        }
+      }
+      return withDuration({ ...s, layerTracks, lines });
+    });
     recordShowEdit(`layer-move:${[...ids].sort().join(',')}`);
     republishTracks();
     return true;
