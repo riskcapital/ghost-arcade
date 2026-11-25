@@ -552,7 +552,7 @@ fn ball_look(b: Ball) -> BallLook {
 fn ball_color(h: BallHit, look: BallLook) -> vec3f {
   if (look.glass > 0.5) {
     // Glass: the sky and the sun mirrored, a rim of its tint.
-    let facing = max(dot(h.n, h.v), 0.0);
+    let facing = saturate(dot(h.n, h.v));
     let fresnel = 0.04 + 0.96 * pow(1.0 - facing, 5.0);
     let half_v = normalize(view.light.xyz + h.v);
     let spec = pow(max(dot(h.n, half_v), 0.0), 900.0) * view.light.w * 10.0 * shadow_at(h.pos, h.n);
@@ -913,6 +913,17 @@ struct LiquidOut {
 
 @vertex
 fn vs_liquid(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> LiquidOut {
+  return liquid_splat(vi, ii, 5.0, 2.5);
+}
+
+// The fluid's particles move together, so only the fastest stretch, and not far:
+// a long streak per particle would show through the body as a seam.
+@vertex
+fn vs_liquid_fluid(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> LiquidOut {
+  return liquid_splat(vi, ii, 1.0, 0.8);
+}
+
+fn liquid_splat(vi: u32, ii: u32, stretch_k: f32, stretch_max: f32) -> LiquidOut {
   let d = drips[ii];
   var out: LiquidOut;
   out.index = ii;
@@ -923,7 +934,7 @@ fn vs_liquid(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -
   let speed = length(across);
   let axis = select(vec2f(0.0, 1.0), across / max(speed, 1e-5), speed > 1e-4);
   let side = vec2f(-axis.y, axis.x);
-  let stretch = 1.0 + min(2.5, speed * 5.0);
+  let stretch = 1.0 + min(stretch_max, speed * stretch_k);
   let q = (axis * c.y * stretch + side * c.x) * d.pos.w * LIQUID_REACH;
   let world = d.pos.xyz + view.cam_right.xyz * q.x + view.cam_up.xyz * q.y;
   out.clip = view.view_proj * vec4f(world, 1.0);
@@ -961,8 +972,29 @@ fn fs_liquid_where(in: LiquidOut) -> @location(0) vec4f {
   return vec4f((d.pos.xyz + to_cam * bulge) * w, gloss * w);
 }
 
+// Front: the nearest drop under each pixel, as a sphere with real depth, so
+// the surface sits in front of or behind the blocks by its nearest paint, not
+// by the average of a pool that runs from the wall to the front.
+struct LiquidFront { @location(0) color: vec4f, @builtin(frag_depth) depth: f32 }
+
+@fragment
+fn fs_liquid_front(in: LiquidOut) -> LiquidFront {
+  let d = drips[in.index];
+  var out: LiquidFront;
+  let r2 = dot(in.uv, in.uv);
+  if (r2 > 1.0) { discard; }
+  // A sphere a little over the drop's own size, facing the camera.
+  let to_cam = normalize(view.cam_pos.xyz - d.pos.xyz);
+  let hit = d.pos.xyz + to_cam * sqrt(1.0 - r2) * d.pos.w * 1.2;
+  let c = view.view_proj * vec4f(hit, 1.0);
+  out.depth = clamp(c.z / c.w, 0.0, 1.0);
+  out.color = vec4f(hit, 1.0);
+  return out;
+}
+
 @group(0) @binding(28) var liquid_field: texture_2d<f32>;
 @group(0) @binding(29) var liquid_where: texture_2d<f32>;
+@group(0) @binding(42) var liquid_front: texture_2d<f32>;
 
 fn liquid_at(p: vec2i) -> vec4f {
   let size = vec2i(textureDimensions(liquid_field));
@@ -1000,8 +1032,14 @@ fn liquid_shade(clip: vec4f) -> DripFrag {
   let gx = liquid_at(p + vec2i(e, 0)).a - liquid_at(p - vec2i(e, 0)).a;
   let gy = liquid_at(p + vec2i(0, e)).a - liquid_at(p - vec2i(0, e)).a;
   let where_ = textureLoad(liquid_where, p, 0);
+  // Lit where the paint around it lies on average, so the light runs smoothly
+  // over the body; it hides behind the blocks by its nearest drop, where one is drawn.
   let hit = where_.xyz / w;
+  let front = textureLoad(liquid_front, p, 0);
+  let nearest = select(hit, front.xyz, front.w > 0.5);
   let gloss = clamp(where_.w / w, 0.0, 1.0);
+  // Deep paint is darker and richer than a thin film over the surface.
+  let thick = 1.0 - exp(-w * 0.25);
   let to_cam = normalize(view.cam_pos.xyz - hit);
   // Screen y runs down. The surface curves at its edges and lies flat over a
   // deep pool, so a run of drops reads as one body of paint, not a row of beads.
@@ -1009,15 +1047,18 @@ fn liquid_shade(clip: vec4f) -> DripFrag {
   let tilt = vec2f(-gx, gy) * (1.4 / (1.0 + w)) * (0.25 + 0.75 * flat_);
   let n = normalize(view.cam_right.xyz * tilt.x + view.cam_up.xyz * tilt.y + to_cam * 0.55);
   var m: Material;
-  m.base = (f.rgb / w) * 0.8;
+  m.base = (f.rgb / w) * mix(0.62, 0.32, thick);
   m.metal = 0.0;
   m.rough = mix(0.45, 0.04, gloss);
   m.emissive = max(dparam(0u, D_GLOW), 0.0) * 3.0;
   m.opacity = 1.0;
   m.catcher = 0.0;
-  let col = fogged(lighting(m, hit, n, to_cam) + fire_lighting(m, hit, n, to_cam), hit);
+  // Glossy paint: a fresnel sheen at grazing angles on top of its lit body.
+  let fres = 0.04 + 0.96 * pow(saturate(1.0 - dot(n, to_cam)), 5.0);
+  let sheen = (f.rgb / w) * 0.35 + vec3f(0.6);
+  let col = fogged(lighting(m, hit, n, to_cam) + fire_lighting(m, hit, n, to_cam) + sheen * fres * gloss * 0.5, hit);
   out.color = vec4f(col * cover, cover);
-  let c = view.view_proj * vec4f(hit, 1.0);
+  let c = view.view_proj * vec4f(nearest, 1.0);
   out.depth = clamp(c.z / c.w, 0.0, 1.0);
   return out;
 }
@@ -1453,7 +1494,495 @@ fn fs_smoke(in: FlameOut) -> @location(0) vec4f {
 }
 `;
 
+// ── Fluid: position-based fluids ─────────────────────────────────────────
+// Ported from Fluid Studio (shaders/sort.wgsl, shaders/pbf.wgsl): Macklin and
+// Muller's position-based fluids on a counting-sorted cell grid one kernel
+// radius wide. Every normalisation Fluid Studio learned the hard way is kept:
+// the XSPH sum divided by its weights, the curl divided by rest density, the
+// curl's operand order, only compression corrected, corrections clamped to a
+// quarter of h, and the neighbour candidates cached per iteration but tested
+// fresh. Particles are Drip records, so the liquid surface draws them as it
+// draws the paint, and they collide with the world's blocks, wall and floor.
+
+/** Cached 3x3x3 candidates per particle (Fluid Studio's MAX_NEIGHBOURS). */
+export const FLUID_MAX_NEIGHBOURS = 192;
+/** Floats in the fluid's uniform. */
+export const FLUID_PARAM_FLOATS = 24;
+
+export const SCENE3D_FLUID_WGSL = /* wgsl */ `${SCENE3D_COMMON_WGSL}
+${WORLD_COMMON}
+${WORLD_SIM}
+${DRIP_COMMON}
+
+struct FluidParams {
+  grid: vec4f,    // cells along x, y, z; cells in all
+  origin: vec4f,  // the grid's low corner; h, the cell and kernel size
+  solve: vec4f,   // rest density, epsilon, artificial pressure strength, its exponent
+  tune: vec4f,    // artificial pressure distance (fraction of h), XSPH viscosity, vorticity, relaxation
+  pool: vec4f,    // particles, kinds, particle radius, cling (0..1)
+  spare: vec4f,
+}
+@group(0) @binding(21) var<storage, read_write> fluid: array<Drip>;
+@group(0) @binding(30) var<uniform> fp: FluidParams;
+@group(0) @binding(31) var<storage, read_write> predicted: array<vec4f>;
+@group(0) @binding(32) var<storage, read_write> lambdas: array<f32>;
+@group(0) @binding(33) var<storage, read_write> deltas: array<vec4f>;
+@group(0) @binding(34) var<storage, read_write> curls: array<vec4f>;
+@group(0) @binding(35) var<storage, read_write> neighbours: array<u32>;
+@group(0) @binding(36) var<storage, read_write> neighbour_counts: array<u32>;
+@group(0) @binding(37) var<storage, read_write> cell_counts: array<atomic<u32>>;
+@group(0) @binding(38) var<storage, read_write> cell_offset: array<u32>;
+@group(0) @binding(39) var<storage, read_write> block_sums: array<u32>;
+@group(0) @binding(40) var<storage, read_write> sorted: array<u32>;
+@group(0) @binding(41) var<storage, read_write> cursor: array<atomic<u32>>;
+
+const MAX_NEIGHBOURS: u32 = ${FLUID_MAX_NEIGHBOURS}u;
+const SCAN_BLOCK: u32 = 256u;
+
+fn particle_count() -> u32 { return u32(fp.pool.x); }
+fn cell_total() -> u32 { return u32(fp.grid.w); }
+fn dims() -> vec3i { return vec3i(fp.grid.xyz); }
+fn h_() -> f32 { return fp.origin.w; }
+// The frame's step, held within what the solve stays stable over.
+fn dt() -> f32 { return clamp(view.clock.x, 1.0 / 240.0, 1.0 / 30.0); }
+fn alive(i: u32) -> bool { return fluid[i].pos.w > 0.0; }
+
+fn in_grid(c: vec3i) -> bool { return all(c >= vec3i(0)) && all(c < dims()); }
+fn cell_index(c: vec3i) -> u32 { let n = dims(); return u32(c.x + c.y * n.x + c.z * n.x * n.y); }
+fn cell_of(p: vec3f) -> vec3i { return vec3i(floor((p - fp.origin.xyz) / h_())); }
+// Clamped into the grid: a particle a little outside still belongs somewhere.
+fn particle_cell(p: vec3f) -> u32 { return cell_index(clamp(cell_of(p), vec3i(0), dims() - 1)); }
+
+fn w_poly6(r2: f32, h: f32) -> f32 {
+  let h2 = h * h;
+  if (r2 >= h2) { return 0.0; }
+  let t = h2 - r2;
+  return 1.566681471061 / (h2 * h2 * h2 * h2 * h) * t * t * t;
+}
+fn grad_w_spiky(d: vec3f, h: f32) -> vec3f {
+  let r = length(d);
+  if (r >= h || r < 1.0e-9) { return vec3f(0.0); }
+  let t = h - r;
+  return (d / r) * (-14.323944878271 / (h * h * h * h * h * h) * t * t);
+}
+
+// ── Life: ages, takes away and pours in ──
+
+fn fluid_kind_of(i: u32) -> i32 {
+  for (var k = 0u; k < u32(fp.pool.y); k++) {
+    let s = dkinds[k].slots;
+    if (f32(i) >= s.x && f32(i) < s.x + s.y) { return i32(k); }
+  }
+  return -1;
+}
+
+fn fluid_born(k: u32, i: u32, tick: u32) -> Drip {
+  let h1 = hash1(i * 97u + tick * 13u + 1u);
+  let h2 = hash1(i * 89u + tick * 7u + 2u);
+  let h3 = hash1(i * 83u + tick * 5u + 3u);
+  let r = fp.pool.z;
+  // A round stream, as wide as the emitter, poured from the front half of the
+  // world so it lands on the blocks and runs over them rather than behind them.
+  let deep = max(phys.bounds.z - r * 2.0, r * 2.0 + 0.01);
+  let z = deep * 0.8;
+  let at = vec2f(dparam(k, D_X), dparam(k, D_Y));
+  let mouth = unproject(at, z);
+  let wide = max(length(unproject(at + vec2f(dparam(k, D_RADIUS), 0.0), z) - mouth), r);
+  let toward = normalize(unproject(at, z + 0.1) - mouth);
+  let a = h1 * 6.2831853;
+  let out_ = sqrt(h2) * wide;
+  var d: Drip;
+  d.pos = vec4f(mouth + proj_across() * cos(a) * out_ + toward * sin(a) * out_ + proj_upward() * (h3 - 0.5) * r, r);
+  d.vel = vec4f(gravity() * 0.05, 0.0);
+  d.info = vec4f(f32(k), hash1(i * 71u + tick * 11u + 5u) + 1e-4, 1.0, max(dparam(k, D_LIFETIME), 0.5) * (0.85 + 0.3 * h3));
+  d.extra = vec4f(0.0);
+  return d;
+}
+
+fn outside(p: vec3f) -> bool {
+  let lo = fp.origin.xyz;
+  let hi = lo + fp.grid.xyz * h_();
+  return lost(p) || any(p < lo - vec3f(h_())) || any(p > hi + vec3f(h_()));
+}
+
+@compute @workgroup_size(256)
+fn cs_fluid_life(@builtin(global_invocation_id) gid: vec3u) {
+  let i = gid.x;
+  if (i >= particle_count()) { return; }
+  var d = fluid[i];
+  let ki = fluid_kind_of(i);
+  if (ki < 0) { d.pos = AWAY; fluid[i] = d; return; }
+  let k = u32(ki);
+  let slots = dkinds[k].slots;
+  let on = dkinds[k].emit.w > 0.5;
+  let local = i - u32(slots.x);
+  let tick = u32(view.clock.y);
+  let frame_dt = view.clock.x;
+  if (d.info.y == 0.0) {
+    // First frame: everyone waits a while, so a pour starts as a stream.
+    d.pos = AWAY;
+    d.vel = vec4f(0.0, 0.0, 0.0, -hash1(i * 31u + 5u) * 2.0);
+    d.info = vec4f(f32(k), hash1(i * 7919u + 17u) + 1e-4, 0.0, 0.0);
+    d.extra = vec4f(slots.w, 0.0, 0.0, 0.0);
+  }
+  if (d.pos.w > 0.0) {
+    d.vel.w += frame_dt;
+    // Buried in a block (it got through somehow): it goes rather than stays trapped.
+    if (!on || d.vel.w > d.info.w || outside(d.pos.xyz) || world_sdf(d.pos.xyz) < -fp.pool.z * 3.0) {
+      d.pos = AWAY;
+      d.vel = vec4f(0.0, 0.0, 0.0, -0.05);
+    }
+  } else if (on) {
+    let in_use = min(slots.y, max(dparam(k, D_AMOUNT), 0.0));
+    let emission = slots.z;
+    if (emission > 1.5 && slots.w != d.extra.x) {
+      // A burst: a quarter of the pool at once.
+      if (f32(local) < max(in_use * 0.25, 1.0)) { d = fluid_born(k, i, tick + u32(slots.w) * 977u); }
+      d.extra.x = slots.w;
+    } else if (emission < 1.5) {
+      d.vel.w += frame_dt;
+      if (d.vel.w >= 0.0 && f32(local) < in_use) {
+        let flow = clamp(dparam(k, D_FLOW), 0.0, 1.0);
+        let life = max(dparam(k, D_LIFETIME), 0.5);
+        var hazard = flow / (life * max(1.0 - flow, 0.02));
+        if (emission > 0.5) {
+          let period = max(dparam(k, D_PERIOD), 0.2);
+          let open = fract(frame.time / period) * period < dparam(k, D_DURATION);
+          hazard = select(0.0, 6.0 * flow / max(dparam(k, D_DURATION), 0.05), open);
+        }
+        if (hash1(i * 613u + tick * 1031u + 7u) < 1.0 - exp(-hazard * frame_dt)) {
+          let seen = d.extra.x;
+          d = fluid_born(k, i, tick);
+          d.extra.x = seen;
+        }
+      }
+    }
+  }
+  fluid[i] = d;
+}
+
+// ── Bins: a counting sort of the living particles by cell ──
+
+@compute @workgroup_size(256)
+fn cs_fluid_clear(@builtin(global_invocation_id) gid: vec3u) {
+  if (gid.x < cell_total()) {
+    atomicStore(&cell_counts[gid.x], 0u);
+    atomicStore(&cursor[gid.x], 0u);
+  }
+}
+
+@compute @workgroup_size(256)
+fn cs_fluid_count(@builtin(global_invocation_id) gid: vec3u) {
+  let i = gid.x;
+  if (i >= particle_count() || !alive(i)) { return; }
+  atomicAdd(&cell_counts[particle_cell(fluid[i].pos.xyz)], 1u);
+}
+
+var<workgroup> scratch: array<u32, 256>;
+
+@compute @workgroup_size(256)
+fn cs_fluid_scan(@builtin(global_invocation_id) gid: vec3u, @builtin(local_invocation_id) lid: vec3u, @builtin(workgroup_id) wid: vec3u) {
+  let id = gid.x;
+  let t = lid.x;
+  var v = 0u;
+  if (id < cell_total()) { v = atomicLoad(&cell_counts[id]); }
+  scratch[t] = v;
+  workgroupBarrier();
+  for (var stride = 1u; stride < SCAN_BLOCK; stride = stride * 2u) {
+    var add = 0u;
+    if (t >= stride) { add = scratch[t - stride]; }
+    workgroupBarrier();
+    scratch[t] = scratch[t] + add;
+    workgroupBarrier();
+  }
+  if (id < cell_total()) { cell_offset[id] = scratch[t] - v; }
+  if (t == SCAN_BLOCK - 1u) { block_sums[wid.x] = scratch[t]; }
+}
+
+@compute @workgroup_size(1)
+fn cs_fluid_scan_blocks() {
+  let blocks = (cell_total() + SCAN_BLOCK - 1u) / SCAN_BLOCK;
+  var running = 0u;
+  for (var b = 0u; b < blocks; b++) {
+    let v = block_sums[b];
+    block_sums[b] = running;
+    running += v;
+  }
+}
+
+@compute @workgroup_size(256)
+fn cs_fluid_offsets(@builtin(global_invocation_id) gid: vec3u, @builtin(workgroup_id) wid: vec3u) {
+  if (gid.x >= cell_total()) { return; }
+  cell_offset[gid.x] = cell_offset[gid.x] + block_sums[wid.x];
+}
+
+@compute @workgroup_size(256)
+fn cs_fluid_scatter(@builtin(global_invocation_id) gid: vec3u) {
+  let i = gid.x;
+  if (i >= particle_count() || !alive(i)) { return; }
+  let c = particle_cell(fluid[i].pos.xyz);
+  let slot = atomicAdd(&cursor[c], 1u);
+  sorted[cell_offset[c] + slot] = i;
+}
+
+// Each bin in index order, so the sums below come out the same every run.
+@compute @workgroup_size(256)
+fn cs_fluid_sort_bins(@builtin(global_invocation_id) gid: vec3u) {
+  let c = gid.x;
+  if (c >= cell_total()) { return; }
+  let start = cell_offset[c];
+  let n = atomicLoad(&cell_counts[c]);
+  if (n < 2u) { return; }
+  for (var i = 1u; i < n; i++) {
+    let key = sorted[start + i];
+    var j = i;
+    loop {
+      if (j == 0u) { break; }
+      let prev = sorted[start + j - 1u];
+      if (prev <= key) { break; }
+      sorted[start + j] = prev;
+      j = j - 1u;
+    }
+    sorted[start + j] = key;
+  }
+}
+
+// ── The solve ──
+
+@compute @workgroup_size(256)
+fn cs_fluid_predict(@builtin(global_invocation_id) gid: vec3u) {
+  let i = gid.x;
+  if (i >= particle_count() || !alive(i)) { return; }
+  let v = fluid[i].vel.xyz + gravity() * dt();
+  predicted[i] = vec4f(fluid[i].pos.xyz + v * dt(), 1.0);
+  fluid[i].vel = vec4f(v, fluid[i].vel.w);
+}
+
+// Candidates, not neighbours: the bins are fixed for the frame, positions are not.
+@compute @workgroup_size(256)
+fn cs_fluid_neighbours(@builtin(global_invocation_id) gid: vec3u) {
+  let i = gid.x;
+  if (i >= particle_count()) { return; }
+  let total = particle_count();
+  if (!alive(i)) { neighbour_counts[i] = 0u; return; }
+  let base = cell_of(predicted[i].xyz);
+  var n = 0u;
+  for (var dz = -1; dz <= 1; dz++) {
+    for (var dy = -1; dy <= 1; dy++) {
+      for (var dx = -1; dx <= 1; dx++) {
+        let c = base + vec3i(dx, dy, dz);
+        if (!in_grid(c)) { continue; }
+        let ci = cell_index(c);
+        let start = cell_offset[ci];
+        let cnt = atomicLoad(&cell_counts[ci]);
+        for (var s = 0u; s < cnt; s++) {
+          if (n >= MAX_NEIGHBOURS) { continue; }
+          neighbours[n * total + i] = sorted[start + s];
+          n++;
+        }
+      }
+    }
+  }
+  neighbour_counts[i] = n;
+}
+
+@compute @workgroup_size(256)
+fn cs_fluid_lambda(@builtin(global_invocation_id) gid: vec3u) {
+  let i = gid.x;
+  if (i >= particle_count() || !alive(i)) { return; }
+  let total = particle_count();
+  let pi = predicted[i].xyz;
+  let h = h_();
+  let rest = fp.solve.x;
+  var density = 0.0;
+  var grad_i = vec3f(0.0);
+  var sum_grad_sq = 0.0;
+  let count = neighbour_counts[i];
+  for (var s = 0u; s < count; s++) {
+    let j = neighbours[s * total + i];
+    let d = pi - predicted[j].xyz;
+    density += w_poly6(dot(d, d), h);
+    if (j == i) { continue; }
+    let g = grad_w_spiky(d, h) / rest;
+    grad_i += g;
+    sum_grad_sq += dot(g, g);
+  }
+  // Only compression is corrected: a liquid resists squeezing, not pulling apart.
+  let constraint = max(density / rest - 1.0, 0.0);
+  sum_grad_sq += dot(grad_i, grad_i);
+  lambdas[i] = -constraint / (sum_grad_sq + fp.solve.y);
+  deltas[i].w = density;
+}
+
+@compute @workgroup_size(256)
+fn cs_fluid_delta(@builtin(global_invocation_id) gid: vec3u) {
+  let i = gid.x;
+  if (i >= particle_count() || !alive(i)) { return; }
+  let total = particle_count();
+  let pi = predicted[i].xyz;
+  let h = h_();
+  let li = lambdas[i];
+  let dq = fp.tune.x * h;
+  let w_dq = w_poly6(dq * dq, h);
+  var delta = vec3f(0.0);
+  let count = neighbour_counts[i];
+  for (var s = 0u; s < count; s++) {
+    let j = neighbours[s * total + i];
+    if (j == i) { continue; }
+    let d = pi - predicted[j].xyz;
+    var s_corr = 0.0;
+    if (w_dq > 1.0e-12) { s_corr = -fp.solve.z * pow(w_poly6(dot(d, d), h) / w_dq, fp.solve.w); }
+    delta += (li + lambdas[j] + s_corr) * grad_w_spiky(d, h);
+  }
+  deltas[i] = vec4f(delta / fp.solve.x, deltas[i].w);
+}
+
+// Apply the correction (clamped to a quarter of h), keep inside the grid, and
+// out of the world: off the blocks, the wall and the floor.
+@compute @workgroup_size(256)
+fn cs_fluid_apply(@builtin(global_invocation_id) gid: vec3u) {
+  let i = gid.x;
+  if (i >= particle_count() || !alive(i)) { return; }
+  let h = h_();
+  var d = deltas[i].xyz * fp.tune.w;
+  let len = length(d);
+  if (len > h * 0.25) { d *= (h * 0.25) / len; }
+  var p = predicted[i].xyz + d;
+  let lo = fp.origin.xyz + vec3f(h * 0.5);
+  let hi = fp.origin.xyz + fp.grid.xyz * h - vec3f(h * 0.5);
+  p = clamp(p, lo, hi);
+  let r = fp.pool.z;
+  let s = world_sdf(p) - r;
+  if (s < 0.0) {
+    // Out through the side it came in from: deep in a block the nearest face
+    // can be its back, and pushing out there traps the particle against the wall.
+    let old = fluid[i].pos.xyz;
+    let n = select(world_normal(p), world_normal(old), world_sdf(old) - r > 0.0);
+    p -= n * s;
+  }
+  predicted[i] = vec4f(p, 1.0);
+}
+
+// The liquid is what the projector lights: once a frame, after the solve,
+// nothing is left behind the nearest surface along the projector's ray, so it
+// runs down the faces it can light and pools in front of them instead of
+// hiding behind the blocks or the room's objects.
+@compute @workgroup_size(256)
+fn cs_fluid_front(@builtin(global_invocation_id) gid: vec3u) {
+  let i = gid.x;
+  if (i >= particle_count() || !alive(i)) { return; }
+  predicted[i] = vec4f(in_front(predicted[i].xyz, fp.pool.z), 1.0);
+}
+
+// The first surface along the ray from the projector through p; p moved just
+// in front of it when it lies behind.
+fn in_front(p: vec3f, r: f32) -> vec3f {
+  let eye = settings.proj_pos.xyz;
+  let to = p - eye;
+  let far = length(to);
+  let dir = to / max(far, 1e-6);
+  var t = 0.0;
+  for (var k = 0; k < 24; k++) {
+    let d = world_sdf(eye + dir * t);
+    if (d < 1.0e-3 || t > far) { break; }
+    t += d;
+  }
+  if (t < far - r) { return eye + dir * (t - r); }
+  return p;
+}
+
+// v = (x* - x) / dt, then XSPH viscosity (divided by its weights), and cling:
+// against a surface the liquid loses its sliding speed.
+@compute @workgroup_size(256)
+fn cs_fluid_finalise(@builtin(global_invocation_id) gid: vec3u) {
+  let i = gid.x;
+  if (i >= particle_count() || !alive(i)) { return; }
+  let total = particle_count();
+  let pi = predicted[i].xyz;
+  var v = (pi - fluid[i].pos.xyz) / dt();
+  let visc = fp.tune.y;
+  if (visc > 0.0) {
+    let h = h_();
+    var v_avg = vec3f(0.0);
+    var wsum = 0.0;
+    let count = neighbour_counts[i];
+    for (var s = 0u; s < count; s++) {
+      let j = neighbours[s * total + i];
+      if (j == i) { continue; }
+      let d = pi - predicted[j].xyz;
+      let w = w_poly6(dot(d, d), h);
+      if (w <= 0.0) { continue; }
+      let vj = (predicted[j].xyz - fluid[j].pos.xyz) / dt();
+      v_avg += (vj - v) * w;
+      wsum += w;
+    }
+    if (wsum > 1.0e-9) { v += visc * v_avg / wsum; }
+  }
+  let cling = fp.pool.w;
+  if (cling > 0.0 && world_sdf(pi) < fp.pool.z * 1.6) {
+    let n = world_normal(pi);
+    let along = v - n * dot(v, n);
+    v -= along * cling * 0.35;
+  }
+  // A step that went wild (a particle shot out of a block) is not kept.
+  let fast = length(v);
+  let most = h_() * 0.5 / dt();
+  if (fast > most * 4.0) { v *= (most * 4.0) / fast; }
+  fluid[i].vel = vec4f(v, fluid[i].vel.w);
+}
+
+@compute @workgroup_size(256)
+fn cs_fluid_curl(@builtin(global_invocation_id) gid: vec3u) {
+  let i = gid.x;
+  if (i >= particle_count()) { return; }
+  if (fp.tune.z <= 0.0 || !alive(i)) { curls[i] = vec4f(0.0); return; }
+  let total = particle_count();
+  let pi = predicted[i].xyz;
+  let vi = fluid[i].vel.xyz;
+  let h = h_();
+  var curl = vec3f(0.0);
+  let count = neighbour_counts[i];
+  for (var s = 0u; s < count; s++) {
+    let j = neighbours[s * total + i];
+    if (j == i) { continue; }
+    // Gradient first: the other order is -omega, and confinement then empties the vortex.
+    curl += cross(grad_w_spiky(pi - predicted[j].xyz, h), fluid[j].vel.xyz - vi);
+  }
+  curl = curl / fp.solve.x;
+  curls[i] = vec4f(curl, length(curl));
+}
+
+@compute @workgroup_size(256)
+fn cs_fluid_vorticity(@builtin(global_invocation_id) gid: vec3u) {
+  let i = gid.x;
+  if (i >= particle_count() || !alive(i) || fp.tune.z <= 0.0) { return; }
+  let total = particle_count();
+  let pi = predicted[i].xyz;
+  let h = h_();
+  let mag_i = curls[i].w;
+  var eta = vec3f(0.0);
+  let count = neighbour_counts[i];
+  for (var s = 0u; s < count; s++) {
+    let j = neighbours[s * total + i];
+    if (j == i) { continue; }
+    eta += (curls[j].w - mag_i) * grad_w_spiky(pi - predicted[j].xyz, h);
+  }
+  let mag = length(eta);
+  if (mag < 1.0e-9) { return; }
+  let v = fluid[i].vel.xyz + fp.tune.z * cross(eta / mag, curls[i].xyz) * dt();
+  fluid[i].vel = vec4f(v, fluid[i].vel.w);
+}
+
+@compute @workgroup_size(256)
+fn cs_fluid_commit(@builtin(global_invocation_id) gid: vec3u) {
+  let i = gid.x;
+  if (i >= particle_count() || !alive(i)) { return; }
+  fluid[i].pos = vec4f(predicted[i].xyz, fluid[i].pos.w);
+}
+`;
+
 export const SCENE3D_WORLD_SHADERS: { id: string; stage: 'compute' | 'render'; entry: string; source: string }[] = [
+  { id: 'scene3d/fluid', stage: 'compute', entry: 'cs_fluid_predict', source: SCENE3D_FLUID_WGSL },
   { id: 'scene3d/balls', stage: 'compute', entry: 'cs_balls_step', source: SCENE3D_BALLS_WGSL },
   { id: 'scene3d/balls-draw', stage: 'render', entry: 'fs_ball', source: SCENE3D_BALLS_DRAW_WGSL },
   { id: 'scene3d/drips', stage: 'compute', entry: 'cs_drips', source: SCENE3D_DRIPS_WGSL },

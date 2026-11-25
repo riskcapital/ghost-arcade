@@ -434,7 +434,7 @@ fn shade(m: Material, n: vec3f, v: vec3f, l: vec3f, radiance: vec3f) -> vec3f {
   let k = (m.rough + 1.0) * (m.rough + 1.0) / 8.0;
   let g = (ndv / (ndv * (1.0 - k) + k)) * (ndl / (ndl * (1.0 - k) + k));
   let f0 = mix(vec3f(0.04), m.base, m.metal);
-  let f = f0 + (1.0 - f0) * pow(1.0 - max(dot(h, v), 0.0), 5.0);
+  let f = f0 + (1.0 - f0) * pow(saturate(1.0 - dot(h, v)), 5.0);
   let spec = d * g * f / max(4.0 * ndv * ndl, 1e-3);
   let diffuse = (1.0 - f) * (1.0 - m.metal) * m.base / PI;
   return (diffuse + spec) * radiance * ndl;
@@ -457,7 +457,7 @@ fn lighting(m: Material, world: vec3f, n: vec3f, v: vec3f) -> vec3f {
   }
   // The sky lights everything a little, and metals mirror it.
   let f0 = mix(vec3f(0.04), m.base, m.metal);
-  let env_spec = sky_at(reflect(-v, n)) * mix(f0, vec3f(1.0), pow(1.0 - max(dot(n, v), 0.0), 5.0)) * (1.0 - m.rough * 0.7);
+  let env_spec = sky_at(reflect(-v, n)) * mix(f0, vec3f(1.0), pow(saturate(1.0 - dot(n, v)), 5.0)) * (1.0 - m.rough * 0.7);
   col += m.base * (1.0 - m.metal) * sky_at(n) + env_spec;
   // A faint floor of light so unlit sides are not pure black.
   col += m.base * 0.015;
@@ -492,7 +492,7 @@ fn fs_glass(in: LitOut) -> @location(0) vec4f {
   var n = normalize(in.normal);
   let v = normalize(view.cam_pos.xyz - in.world);
   if (dot(n, v) < 0.0) { n = -n; }
-  let fresnel = 0.04 + 0.96 * pow(1.0 - max(dot(n, v), 0.0), 5.0);
+  let fresnel = 0.04 + 0.96 * pow(saturate(1.0 - dot(n, v)), 5.0);
   let h = normalize(view.light.xyz + v);
   let spec = pow(max(dot(n, h), 0.0), mix(2000.0, 40.0, m.rough)) * view.light.w * 6.0 * shadow_at(in.world, n);
   let col = (sky_at(reflect(-v, n)) * fresnel + spec * settings.key_color.rgb + m.base * m.emissive) * (1.0 - m.rough * 0.5) + m.base * m.opacity * 0.08;

@@ -30,6 +30,7 @@ import {
 import { roomCamera, worldScene } from '../scene3d/worldScene';
 import type { ReliefWorld } from '../scene3d/worldModel';
 import { buildScene3DGraph, SCENE3D_TIERS, type Scene3DQuality } from './scene3dNative';
+import { fluidGraph, fluidGrid, fluidKinds, fluidLayout, fluidParams } from './scene3dFluid';
 import {
   BALL_BLOCK_FLOATS,
   BALL_FLOATS,
@@ -403,6 +404,9 @@ export function buildWorldPart(options: WorldPartOptions): WorldPart {
   const layout = ballLayout(scene);
   const paint = dripLayout(scene);
   const fire = flameLayout(scene);
+  const fluid = fluidLayout(scene);
+  const fluidSize = (fluid.effects.find((e) => e.enabled) ?? fluid.effects[0])?.params.size ?? effectParams('fluid').find((d) => d.key === 'size')!.value;
+  const fluidCells = fluidGrid(geo, fluidSize).n;
   const value = (name: string, kind: 'uniform' | 'storage', data: Float32Array) => ({ id: id(name), kind, byte_length: data.byteLength, initial_b64: b64(data) });
   const ballValues = [
     value('ball-phys', 'uniform', worldPhysics(scene, world, geo, layout, paint, fire)),
@@ -413,13 +417,15 @@ export function buildWorldPart(options: WorldPartOptions): WorldPart {
     value('flame-kinds', 'storage', flameKinds(geo, fire)),
     value('fire-lights', 'uniform', fireLights(geo, fire, options.input)),
     value('ball-zones', 'storage', ballZoneOutlines(scene)),
+    value('fluid-params', 'uniform', fluidParams(geo, fluid)),
+    value('fluid-kinds', 'storage', fluidKinds(fluid)),
   ];
   const ballBytes = layout.count * BALL_FLOATS * 4;
   const wet = wetSize(aspect);
   textures.push({ id: id('wet-stain'), ...wet, format: 'rgba16float' }, { id: id('wet-gloss'), ...wet, format: 'rgba16float' });
   // The liquid paint's screen fields, at the scene's own size.
   const hdr = textures.find((t) => (t as { id: string }).id === id('hdr')) as { width: number; height: number } | undefined;
-  if (hdr) textures.push({ id: id('liquid-field'), width: hdr.width, height: hdr.height, format: 'rgba16float' }, { id: id('liquid-where'), width: hdr.width, height: hdr.height, format: 'rgba16float' }, { id: id('liquid-blur'), width: hdr.width, height: hdr.height, format: 'rgba16float' });
+  if (hdr) textures.push({ id: id('liquid-field'), width: hdr.width, height: hdr.height, format: 'rgba16float' }, { id: id('liquid-where'), width: hdr.width, height: hdr.height, format: 'rgba16float' }, { id: id('liquid-blur'), width: hdr.width, height: hdr.height, format: 'rgba16float' }, { id: id('liquid-front'), width: hdr.width, height: hdr.height, format: 'rgba16float' }, { id: id('liquid-z'), width: hdr.width, height: hdr.height, format: 'depth32float' });
   const buffers = [
     ...graph.config.buffers,
     ...ballValues,
@@ -455,6 +461,12 @@ export function buildWorldPart(options: WorldPartOptions): WorldPart {
       b(17, 'ball-phys', 'uniform'), b(18, 'ball-input', 'uniform'), b(24, 'flames', 'storage'), b(25, 'flame-kinds', 'read-only-storage'),
     ],
   });
+  // The fluid: its own buffers and the solve's passes, after the paint.
+  const liquid = fluidGraph(fluid, { cells: fluidCells[0] * fluidCells[1] * fluidCells[2] }, id, [
+    b(0, 'settings', 'uniform'), { binding: 1, resource: frameBuffer.id, kind: 'uniform' }, b(2, 'view', 'read-only-storage'), b(17, 'ball-phys', 'uniform'),
+  ]);
+  buffers.push(...(liquid.buffers as typeof buffers));
+  passes.push(...(liquid.passes as typeof passes));
 
   const drawBindings = [
     b(0, 'settings', 'uniform'), { binding: 1, resource: frameBuffer.id, kind: 'uniform' }, b(2, 'view', 'read-only-storage'),
@@ -524,15 +536,34 @@ export function buildWorldPart(options: WorldPartOptions): WorldPart {
     bindings: [...dripDraw, { binding: 28, kind: 'graph-texture', texture: id(from) }],
   });
   after('liquid-where', blur('liquid-blur-x', 'fs_liquid_blur_x', 'liquid-field', 'liquid-blur'));
+  // The fluid adds to the same fields, so paint and fluid flow into one surface.
+  const fluidDraw = dripDraw.map((x) => (x.binding === 21 ? b(21, 'fluid', 'read-only-storage') : x.binding === 22 ? b(22, 'fluid-kinds', 'read-only-storage') : x));
+  if (fluid.count) {
+    const fluidField = (name: string, texture: string, fragment: string) => ({
+      ...field(texture, fragment), name, vertex_entry: 'vs_liquid_fluid', texture: id(texture), clear: false, instance_count: fluid.count, bindings: fluidDraw,
+    });
+    after('liquid-where', fluidField('liquid-field-fluid', 'liquid-field', 'fs_liquid_field'));
+    after('liquid-field-fluid', fluidField('liquid-where-fluid', 'liquid-where', 'fs_liquid_where'));
+  }
   after('liquid-blur-x', blur('liquid-blur-y', 'fs_liquid_blur_y', 'liquid-blur', 'liquid-field'));
   // The position field blurred the same way, so position over amount stays true.
   after('liquid-blur-y', blur('liquid-where-x', 'fs_liquid_blur_x', 'liquid-where', 'liquid-blur'));
   after('liquid-where-x', blur('liquid-where-y', 'fs_liquid_blur_y', 'liquid-blur', 'liquid-where'));
+  // The nearest drop under each pixel, with its own depth buffer.
+  const front = (name: string, bindings: object[], instances: number, first: boolean) => ({
+    name, shader_id: 'scene3d/drips-draw', vertex_entry: 'vs_liquid', fragment_entry: 'fs_liquid_front',
+    target: 'texture', texture: id('liquid-front'), clear: first, clear_color: [0, 0, 0, 0],
+    depth: true, depth_write: true, ...(first ? {} : { depth_load: true }), depth_texture: id('liquid-z'),
+    vertex_count: 6, instance_count: instances, bindings,
+  });
+  after('liquid-where-y', front('liquid-front', dripDraw, paint.count, true));
+  if (fluid.count) after('liquid-front', { ...front('liquid-front-fluid', fluidDraw, fluid.count, false), vertex_entry: 'vs_liquid_fluid' });
   const liquidTextures = [
     { binding: 28, kind: 'graph-texture', texture: id('liquid-field') },
     { binding: 29, kind: 'graph-texture', texture: id('liquid-where') },
+    { binding: 42, kind: 'graph-texture', texture: id('liquid-front') },
   ];
-  after('liquid-where-y', {
+  after(fluid.count ? 'liquid-front-fluid' : 'liquid-front', {
     name: 'drips', shader_id: 'scene3d/drips-draw', vertex_entry: 'vs_full', fragment_entry: flatTexture ? 'fs_liquid_relief' : 'fs_liquid',
     target: 'texture', texture: id('hdr'), clear: false, blend: 'alpha', depth: true, depth_write: true, depth_load: true, depth_texture: id('depth'),
     vertex_count: 3,
@@ -579,10 +610,11 @@ export function buildWorldPart(options: WorldPartOptions): WorldPart {
           value('ball-kinds', 'storage', ballKinds(moved, geo, balls)),
           value('drip-kinds', 'storage', dripKinds(geo, drips)),
           value('flame-kinds', 'storage', flameKinds(geo, flames)),
+          ...(fluid.count ? [value('fluid-params', 'uniform', fluidParams(geo, fluidLayout(moved))), value('fluid-kinds', 'storage', fluidKinds(fluidLayout(moved)))] : []),
         ] : []),
       ].map(({ id, initial_b64 }) => ({ id, initial_b64, key: initial_b64 }));
     },
-    topology: `${geo.mode}|${world.flat}|${flatTexture ? JSON.stringify(flatSize(width, height)) : ''}|balls:${layout.count}:${layout.effects.length}|drips:liquid:${paint.count}:${paint.effects.length}:${JSON.stringify(wet)}|flames:${fire.count}:${fire.effects.length}|${graph.topology}`,
+    topology: `${geo.mode}|${world.flat}|${flatTexture ? JSON.stringify(flatSize(width, height)) : ''}|balls:${layout.count}:${layout.effects.length}|drips:liquid:${paint.count}:${paint.effects.length}:${JSON.stringify(wet)}|flames:${fire.count}:${fire.effects.length}|fluid:${fluid.count}:${fluid.effects.length}:${fluidCells.join('x')}|${graph.topology}`,
     flatTexture,
     zoneHits: ballZones(scene).length ? { bufferId: id('zone-hits'), zoneIds: ballZones(scene).map((z) => z.id) } : null,
   };

@@ -153,10 +153,34 @@ describe('the 3D world in an Interactive layer', () => {
     // The drops as one liquid surface: they splat two fields, the fields are
     // blurred, then the surface is drawn, all after the balls.
     const balls = names.indexOf('balls');
-    expect(names.slice(balls + 1, balls + 8)).toEqual(['liquid-field', 'liquid-where', 'liquid-blur-x', 'liquid-blur-y', 'liquid-where-x', 'liquid-where-y', 'drips']);
+    expect(names.slice(balls + 1, balls + 9)).toEqual(['liquid-field', 'liquid-where', 'liquid-blur-x', 'liquid-blur-y', 'liquid-where-x', 'liquid-where-y', 'liquid-front', 'drips']);
+    // The nearest drop keeps its own depth, so the surface hides behind the blocks by it.
+    expect(r.find((p) => p.name === 'liquid-front')).toMatchObject({ depth: true, depth_write: true, clear: true });
     expect(r.find((p) => p.name === 'liquid-field')!.blend).toBe('add');
     expect(r.find((p) => p.name === 'drips')!.bindings.find((b) => b.binding === 28)).toMatchObject({ texture: r.find((p) => p.name === 'liquid-blur-y')!.texture });
     expect((g.config.passes as unknown as Pass[]).map((p) => p.name)).toContain('drips');
+  });
+
+  it('simulates a real fluid that pours into the same liquid surface as the paint', () => {
+    const fluid = { ...makeEffect('fluid'), target: 'b' };
+    const g = build({ ...scene(), effects: [fluid, ...effects] });
+    const r = renders(g);
+    const names = r.map((p) => p.name);
+    // Its particles splat into the paint's fields, after the paint, before the blur.
+    expect(names.indexOf('liquid-field-fluid')).toBeGreaterThan(names.indexOf('liquid-where'));
+    expect(names.indexOf('liquid-where-fluid')).toBeLessThan(names.indexOf('liquid-blur-x'));
+    expect(r.find((p) => p.name === 'liquid-field-fluid')).toMatchObject({ clear: false, blend: 'add', vertex_entry: 'vs_liquid_fluid' });
+    expect(names.indexOf('liquid-front-fluid')).toBe(names.indexOf('liquid-front') + 1);
+    const compute = (g.config.passes as unknown as Pass[]).map((p) => p.name);
+    // Binned, then solved: density constraints a fixed number of times, then velocity.
+    const solve = compute.filter((n) => n.startsWith('fluid-lambda'));
+    expect(solve.length).toBeGreaterThanOrEqual(4);
+    expect(compute.indexOf('fluid-sort-bins')).toBeLessThan(compute.indexOf('fluid-predict'));
+    expect(compute.indexOf('fluid-commit')).toBeGreaterThan(compute.indexOf('fluid-vorticity'));
+    // A pass may bind at most 8 storage buffers.
+    for (const p of g.config.passes as unknown as { name: string; bindings: { kind: string }[] }[]) {
+      if (p.name.startsWith('fluid')) expect(p.bindings.filter((x) => x.kind.includes('storage')).length, p.name).toBeLessThanOrEqual(8);
+    }
   });
 
   it('drips from the upper edges of the block it is on', async () => {
