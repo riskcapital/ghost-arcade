@@ -118,19 +118,17 @@ const SHA_K = new Uint32Array([
   0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3, 0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208,
   0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,
 ]);
-/** SHA-256 in plain script, for WebViews where crypto.subtle is not offered. */
+/**
+ * SHA-256 in plain script, for WebViews where crypto.subtle is not offered.
+ * It reads the scan block by block and pads only the last block or two, so a
+ * 64 MB scan is not copied (an iPhone keeps one copy in memory, not two).
+ */
 export function sha256HexSync(bytes: Uint8Array): string {
   const h = new Uint32Array([0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19]);
   const w = new Uint32Array(64);
   const total = bytes.length;
-  const padded = new Uint8Array(((total + 9 + 63) >> 6) << 6);
-  padded.set(bytes);
-  padded[total] = 0x80;
-  const view = new DataView(padded.buffer);
-  view.setUint32(padded.length - 8, Math.floor(total / 0x20000000), false);
-  view.setUint32(padded.length - 4, (total << 3) >>> 0, false);
-  for (let off = 0; off < padded.length; off += 64) {
-    for (let i = 0; i < 16; i++) w[i] = view.getUint32(off + i * 4, false);
+  const block = (data: Uint8Array, off: number) => {
+    for (let i = 0; i < 16; i++) { const p = off + i * 4; w[i] = ((data[p] << 24) | (data[p + 1] << 16) | (data[p + 2] << 8) | data[p + 3]) >>> 0; }
     for (let i = 16; i < 64; i++) {
       const a = w[i - 15], b = w[i - 2];
       const s0 = ((a >>> 7) | (a << 25)) ^ ((a >>> 18) | (a << 14)) ^ (a >>> 3);
@@ -146,7 +144,17 @@ export function sha256HexSync(bytes: Uint8Array): string {
       hh = g; g = f; f = e; e = (d + t1) >>> 0; d = c; c = b; b = a; a = (t1 + t2) >>> 0;
     }
     h[0] += a; h[1] += b; h[2] += c; h[3] += d; h[4] += e; h[5] += f; h[6] += g; h[7] += hh;
-  }
+  };
+  const whole = total - (total % 64);
+  for (let off = 0; off < whole; off += 64) block(bytes, off);
+  // The tail, the 0x80 marker and the length in bits: one block, or two when the tail is long.
+  const tail = new Uint8Array(total % 64 < 56 ? 64 : 128);
+  tail.set(bytes.subarray(whole));
+  tail[total - whole] = 0x80;
+  const view = new DataView(tail.buffer);
+  view.setUint32(tail.length - 8, Math.floor(total / 0x20000000), false);
+  view.setUint32(tail.length - 4, (total << 3) >>> 0, false);
+  for (let off = 0; off < tail.length; off += 64) block(tail, off);
   return Array.from(h, (v) => v.toString(16).padStart(8, '0')).join('');
 }
 export async function sha256Hex(bytes: Uint8Array): Promise<string> {
@@ -241,7 +249,8 @@ export function sendScan(options: ScanSendOptions): { done: Promise<ScanSendOutc
   const sendChunk = (index: number) => {
     if (!offer) return;
     const chunks = Math.ceil(total / offer.chunkBytes);
-    if (!Number.isInteger(index) || index < 0 || index >= chunks) return;
+    // Nothing to send for that index (all sent, say): keep waiting for the desktop's answer.
+    if (!Number.isInteger(index) || index < 0 || index >= chunks) { expectAnswer(); return; }
     repeats = index === lastIndex ? repeats + 1 : 0;
     lastIndex = index;
     if (repeats > 4) { post({ type: 'studio_scan_abort', requestId }); end({ state: 'failed', message: 'The scan kept arriving damaged. Check the Wi-Fi connection and send again.' }); return; }
@@ -341,6 +350,8 @@ type Transfer = {
 const REQUEST_ID = /^[\w.:-]{1,128}$/;
 const MAX_OPEN_TRANSFERS = 3;
 const MAX_BAD_CHUNKS = 5;
+/** An offer nobody accepts or declines is dropped after this long (the phone itself gives up at 2 minutes). */
+const ASKING_MS = 150_000;
 
 export function validScanOffer(message: any): ScanOffer | null {
   if (!message || typeof message !== 'object' || message.type !== 'studio_scan_offer') return null;
@@ -437,12 +448,19 @@ export class ScanReceiver {
       if (partial) {
         const [oldId, old] = partial;
         await old.queue;
-        this.transfers.delete(oldId);
-        Object.assign(transfer, { sinkId: old.sinkId, next: old.next, received: old.received, name: old.name });
-      } else {
+        // Still the same half-received file after the wait (not dropped or finished meanwhile)?
+        if (this.transfers.get(oldId) === old && old.sinkId) {
+          this.transfers.delete(oldId);
+          Object.assign(transfer, { sinkId: old.sinkId, next: old.next, received: old.received, name: old.name });
+        }
+      }
+      if (!transfer.sinkId) {
         const begun = await this.options.sink.begin(offer.name, offer.bytes);
+        // Aborted, cancelled or expired while the file was being made: let it go.
+        if (this.transfers.get(offer.requestId) !== transfer) { await this.options.sink.abort(begun.id).catch(() => {}); return; }
         transfer.sinkId = begun.id; transfer.name = begun.name;
       }
+      if (this.transfers.get(offer.requestId) !== transfer) return;
     } catch (error) {
       await this.drop(offer.requestId);
       this.status(offer.requestId, 'failed', { error: error instanceof Error ? error.message : 'The desktop could not create the file.' });
@@ -467,11 +485,14 @@ export class ScanReceiver {
     }
     try {
       await this.options.sink.write(transfer.sinkId, transfer.received, data);
+      // Cancelled, swept or disposed during the write: drop() has already let the file go.
+      if (this.transfers.get(requestId) !== transfer) return;
       transfer.next += 1; transfer.received += data.length;
       if (transfer.next < transfer.chunks) { this.changed(); again(); return; }
       const sinkId = transfer.sinkId;
       transfer.sinkId = ''; // finish() owns the file from here, pass or fail
       const saved = await this.options.sink.finish(sinkId, offer.sha256);
+      if (this.transfers.get(requestId) !== transfer) return;
       this.transfers.delete(requestId);
       this.changed();
       this.status(requestId, 'saved', { name: saved.name, received: saved.bytes });
@@ -493,9 +514,14 @@ export class ScanReceiver {
   async sweep() {
     const idleMs = this.options.idleMs ?? 120_000, now = this.now();
     for (const [requestId, transfer] of [...this.transfers]) {
+      if (this.transfers.get(requestId) !== transfer) continue; // gone during an earlier drop's wait
       if (transfer.state === 'receiving' && now - transfer.touched > idleMs) {
         await this.drop(requestId);
         this.status(requestId, 'failed', { error: 'The scan stopped arriving. Send it again.' });
+      } else if (transfer.state === 'asking' && now - transfer.touched > ASKING_MS) {
+        // Nobody answered the desktop's question (the phone stopped waiting at 2 minutes): free the slot.
+        await this.drop(requestId);
+        this.status(requestId, 'failed', { error: 'Nobody accepted the scan on the desktop.' });
       }
     }
   }

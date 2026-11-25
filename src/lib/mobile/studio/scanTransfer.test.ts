@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { createHash } from 'node:crypto';
 import {
   SCAN_MAX_BYTES, SCAN_MIN_CHUNK_BYTES, SCAN_UNSUPPORTED_MESSAGE, ScanReceiver,
   base64ToBytes, bytesToBase64, crc32, readScanTransferCapability, sanitizeScanName, scanTransferCapability,
@@ -88,6 +89,11 @@ describe('scan transfer helpers', () => {
     expect(sha256HexSync(new Uint8Array(0))).toBe('e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855');
     const big = payload(200_003);
     expect(sha256HexSync(big)).toBe(await sha256Hex(big));
+    // Every way the last block can fall (one padded block, or two), against the platform's own hash.
+    for (const n of [55, 56, 63, 64, 65, 119, 120, 128]) {
+      const bytes = payload(n);
+      expect(sha256HexSync(bytes), `${n} bytes`).toBe(createHash('sha256').update(bytes).digest('hex'));
+    }
     expect(crc32(new TextEncoder().encode('123456789'))).toBe(0xcbf43926);
     expect(base64ToBytes(bytesToBase64(big))).toEqual(big);
     expect(base64ToBytes('not base64!')).toBeNull();
@@ -255,5 +261,37 @@ describe('scan transfer, phone to desktop', () => {
     await receiver.sweep();
     expect(statuses.at(-1)).toMatchObject({ requestId: 'quiet', state: 'failed' });
     expect(store.open.size).toBe(0);
+  });
+
+  it('frees the slot of an offer nobody answers on the desktop', async () => {
+    let now = 1000;
+    const store = memorySink();
+    const statuses: ScanStatus[] = [];
+    const receiver = new ScanReceiver({ sink: store.sink, send: (s) => statuses.push(s), confirm: () => new Promise<boolean>(() => {}), onSaved: () => {}, now: () => now });
+    void receiver.handle({ type: 'studio_scan_offer', requestId: 'unanswered', version: 1, name: 'u', bytes: 50_000, points: 1, sha256: 'c'.repeat(64), chunkBytes: SCAN_MIN_CHUNK_BYTES });
+    await Promise.resolve();
+    expect(statuses.at(-1)).toMatchObject({ requestId: 'unanswered', state: 'waiting' });
+    now += 60_000;
+    await receiver.sweep();
+    expect(statuses.at(-1)).toMatchObject({ state: 'waiting' });
+    now += 120_000;
+    await receiver.sweep();
+    expect(statuses.at(-1)).toMatchObject({ requestId: 'unanswered', state: 'failed' });
+  });
+
+  it('lets go of the file when the phone aborts while the desktop is still making it', async () => {
+    const store = memorySink();
+    let release: () => void = () => {};
+    const slow: ScanSink = { ...store.sink, begin: (name, bytes) => new Promise((resolve) => { release = () => resolve(store.sink.begin(name, bytes)); }) };
+    const statuses: ScanStatus[] = [];
+    const receiver = new ScanReceiver({ sink: slow, send: (s) => statuses.push(s), confirm: async () => true, onSaved: () => {} });
+    const offered = receiver.handle({ type: 'studio_scan_offer', requestId: 'early', version: 1, name: 'e', bytes: 50_000, points: 1, sha256: 'c'.repeat(64), chunkBytes: SCAN_MIN_CHUNK_BYTES });
+    await new Promise((r) => setTimeout(r, 0));
+    await receiver.cancel('early');
+    release();
+    await offered;
+    await new Promise((r) => setTimeout(r, 0));
+    expect(store.open.size).toBe(0);
+    expect(statuses.some((s) => s.state === 'ready')).toBe(false);
   });
 });

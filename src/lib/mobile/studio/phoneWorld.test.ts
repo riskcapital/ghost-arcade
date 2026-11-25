@@ -34,6 +34,7 @@ describe('capabilities for a paired phone', () => {
     expect(caps.worldTools).toEqual(['attract', 'repel', 'vortex', 'throw', 'push', 'pour', 'ignite']);
     expect(caps.depthCapture).toEqual({ version: 1, maxSurfaces: 48, maxSamplesPerSurface: 4000, maxSamplesTotal: 60000, maxOutline: 64, maxBytes: 8000000 });
     expect(caps.output).toEqual({ width: 3840, height: 1600 });
+    expect(caps.calibrationTransfer).toBe(1);
     expect(studioCapabilities(null, { width: NaN, height: 0 }).output).toEqual({ width: 1920, height: 1080 });
     expect(JSON.parse(JSON.stringify(caps)).depthCapture).toEqual(DEPTH_CAPTURE_CAPABILITY);
   });

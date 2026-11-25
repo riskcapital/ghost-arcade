@@ -88,6 +88,7 @@
   import { openScreenOutputList, setScreenPatternFrames } from './lib/stores/screenOutputStatus';
   import { fluxRegionsFor, receivePhoneFlux, setFluxRegionsSource } from './lib/output/phoneFlux';
   import { STRIPE_BLACK, STRIPE_CELLS, STRIPE_FRAME_LIMIT } from './lib/mobile/studio/structuredLightCodes';
+  import { calibrationAssembler, offeredCalibration } from './lib/mobile/studio/calibrationTransfer';
   import {tick as studioTick} from 'svelte';
   import {defaultInteractive,validateScene as validateInteractiveScene,type InteractiveScene,type Interaction} from './lib/mobile/studio/interactive';
   import {liveWorldView, queueWorldAction, setLivePointer, setLiveWorldView} from './lib/interactive/interactiveLive';
@@ -510,6 +511,8 @@
     stepPhoneScan({type:'start',requestId,phone,target,now:Date.now()});
     if(phoneScanFlow.kind!=='asking'||phoneScanFlow.requestId!==requestId)return;
     const p=get(project),open=get(openScreenOutputList);
+    // The scan lights the projector with stripes: with nothing open on one, the phone would only see a dark room.
+    if(!open.length){stepPhoneScan({type:'failed',requestId,message:'Nothing is on a projector. Open the output (or a Screen) on the projector first, then scan.'});return;}
     sendPhoneVisionSignal({type:'studio_depth_scan_request',to:phone,requestId,layerId:target,...(open.length===1?{screenId:open[0].id}:{}),output:{width:Math.round(p.width||1920),height:Math.round(p.height||1080)}});
   }
   async function showPhonePairing(){
@@ -4620,6 +4623,21 @@
   // bank-aware case in handleServerMessage.
   function safeBank(b: any): 'A' | 'B' { return b === 'B' ? 'B' : 'A'; }
 
+  const phoneCalibrationParts=calibrationAssembler();
+  function acceptPhoneCalibration(requestId:unknown,json:string|null){
+    try{
+      if(json===null)throw Error('Invalid calibration size.');
+      // Surfaces measured by the stripe scan stand on their own: accept
+      // them even if the older whole-photo part of the package is unusable.
+      let scanned=false;
+      try{const list=JSON.parse(json).mappedSurfaces;scanned=Array.isArray(list)&&list.length>0;}catch{}
+      if(!scanned)readMobileCalibration(json);
+      pendingPhoneCalibration=json;
+      // Show what arrived instead of leaving it behind a closed panel.
+      showInteractiveStudio=true;studioPage='calibration';
+      sendPhoneVisionSignal({type:'studio_calibration_status',requestId,accepted:true});
+    }catch(error){sendPhoneVisionSignal({type:'studio_calibration_status',requestId,accepted:false,error:error instanceof Error?error.message:'Invalid calibration.'});}
+  }
   /** Phone apps already named in the log (a phone asks for capabilities until it is answered). */
   const phoneClientsLogged=new Set<string>();
   function handleServerMessage(msg: { type: string; [key: string]: unknown }) {
@@ -4653,7 +4671,7 @@
         // Desktop-driven run: the phone's camera is open and takes a photo
         // whenever asked. window.__gaAutoMap is the handle a run uses.
         const remote = ((window as any).__gaAutoMap ??= {
-          camera: null, pending: new Map<number, (frame: any) => void>(), seq: 0,
+          camera: null, pending: new Map<number, (frame: any) => void>(), seq: 0, showing: null as unknown,
           screens: () => get(openScreenOutputList),
           show: (screenId: string, frame: number) => setScreenPatternFrames(Object.fromEntries(get(openScreenOutputList).map(s => [s.id, s.id === screenId ? frame : STRIPE_BLACK]))),
           clear: () => setScreenPatternFrames(null),
@@ -4668,15 +4686,29 @@
           },
         });
         if (msg.op === 'camera_ready') { remote.camera = { requestId, at: Date.now(), turn: msg.turn }; break; }
-        if (msg.op === 'camera_gone') { if (remote.camera?.requestId === requestId) remote.camera = null; break; }
+        if (msg.op === 'camera_gone') {
+          if (remote.camera?.requestId === requestId) {
+            remote.camera = null;
+            // A photo asked of a camera that has gone will not come.
+            for (const done of remote.pending.values()) done({ error: 'The phone camera closed.' });
+            remote.pending.clear();
+          }
+          // The pairing server says so when the phone of a running scan disconnects: stop the stripes now.
+          if (remote.showing === requestId) { remote.showing = null; setScreenPatternFrames(null); }
+          break;
+        }
         if (msg.op === 'frame') { const done = remote.pending.get(seq as number); remote.pending.delete(seq as number); done?.(msg); break; }
         if (msg.op === 'screens') {
           sendPhoneVisionSignal({ type: 'studio_automap_reply', requestId, seq, screens: open, cells: STRIPE_CELLS });
         } else if (msg.op === 'show' && open.some(s => s.id === msg.screenId) && Number.isInteger(msg.frame) && (msg.frame as number) >= 0 && (msg.frame as number) < STRIPE_FRAME_LIMIT) {
           setScreenPatternFrames(Object.fromEntries(open.map(s => [s.id, s.id === msg.screenId ? (msg.frame as number) : STRIPE_BLACK])));
-          // Answer once the projector has had time to show it.
-          setTimeout(() => sendPhoneVisionSignal({ type: 'studio_automap_reply', requestId, seq, shown: true }), 120);
+          remote.showing = requestId;
+          // Answer once the projector has had time to show it, with the raster it is drawn at now, so the
+          // phone can tell if the Screen changed size after it planned the stripes (their bit counts would differ).
+          const target = open.find(s => s.id === msg.screenId)!;
+          setTimeout(() => sendPhoneVisionSignal({ type: 'studio_automap_reply', requestId, seq, shown: true, width: target.width, height: target.height }), 120);
         } else if (msg.op === 'end') {
+          if (remote.showing === requestId) remote.showing = null;
           setScreenPatternFrames(null);
           sendPhoneVisionSignal({ type: 'studio_automap_reply', requestId, seq, done: true });
         } else {
@@ -4688,19 +4720,13 @@
         // One auto-map run from the phone, in chunks: saved to userData/diagnostics/automap and logged.
         void import('./lib/output/autoMapDiagnostics').then(m => m.receiveDiagnosticsChunk(msg as any)).catch(e => console.warn('[AutoMap] diagnostics not saved:', e));
         break;
-      case 'studio_calibration_offer': {
-        try{
-          if(typeof msg.json!=='string'||msg.json.length>8_000_000)throw Error('Invalid calibration size.');
-          // Surfaces measured by the stripe scan stand on their own: accept
-          // them even if the older whole-photo part of the package is unusable.
-          let scanned=false;
-          try{const list=JSON.parse(msg.json).mappedSurfaces;scanned=Array.isArray(list)&&list.length>0;}catch{}
-          if(!scanned)readMobileCalibration(msg.json);
-          pendingPhoneCalibration=msg.json;
-          // Show what arrived instead of leaving it behind a closed panel.
-          showInteractiveStudio=true;studioPage='calibration';
-          sendPhoneVisionSignal({type:'studio_calibration_status',requestId:msg.requestId,accepted:true});
-        }catch(error){sendPhoneVisionSignal({type:'studio_calibration_status',requestId:msg.requestId,accepted:false,error:error instanceof Error?error.message:'Invalid calibration.'});}
+      case 'studio_calibration_offer':
+        acceptPhoneCalibration(msg.requestId,offeredCalibration(msg));
+        break;
+      // A large package (a painting's photo) in pieces: accepted once the last one is in.
+      case 'studio_calibration_chunk': {
+        const json=phoneCalibrationParts.receive(msg);
+        if(json!==null)acceptPhoneCalibration(msg.requestId,json);
         break;
       }
       case 'studio_scene':

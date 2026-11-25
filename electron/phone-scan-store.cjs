@@ -87,7 +87,7 @@ function createPhoneScanStore(directory) {
       }
       fs.writeSync(transfer.fd, data, 0, data.length, transfer.written);
       transfer.hash.update(data);
-      if (transfer.head.length < 4) transfer.head = Buffer.concat([transfer.head, data.subarray(0, 4 - transfer.head.length)]);
+      if (transfer.head.length < 5) transfer.head = Buffer.concat([transfer.head, data.subarray(0, 5 - transfer.head.length)]);
       transfer.written += data.length;
       return { written: transfer.written };
     },
@@ -97,7 +97,8 @@ function createPhoneScanStore(directory) {
       try {
         if (transfer.written !== transfer.bytes) throw new Error('The scan did not arrive in full.');
         if (transfer.hash.digest('hex') !== String(sha256 || '').toLowerCase()) throw new Error('The scan did not arrive intact. Send it again.');
-        if (transfer.head.toString('latin1') !== 'ply\n') throw new Error('This file is not a point cloud scan.');
+        // "ply" then a line end: \n, or \r\n from a writer on Windows.
+        if (!/^ply\r?$/.test(transfer.head.toString('latin1').split('\n')[0]) || !transfer.head.includes(0x0a)) throw new Error('This file is not a point cloud scan.');
         fs.closeSync(transfer.fd);
         const target = inside(transfer.name);
         if (fs.existsSync(target)) throw new Error('A scan with this name already exists.');

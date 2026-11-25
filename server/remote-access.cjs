@@ -5,6 +5,7 @@ const HOST_MESSAGES = new Set([
   'sync', 'library_sync', 'vj_clips_sync', 'compositions_sync', 'shader_library_sync',
   'beat_pulse', 'output_freeze_state', 'studio_scene_status', 'studio_capabilities',
   'studio_calibration_status', 'studio_scan_status', 'studio_depth_capture_status', 'studio_depth_scan_request', 'phone_camera_answer',
+  'studio_automap_reply',
   'phone_vision_status', 'show_state',
 ]);
 const BUNDLED_SHADER = /^(\.?\/)?ISF\/([^/\\?#:]+\/)*[^/\\?#:]+\.fs$/;
@@ -104,10 +105,19 @@ function diagnosticsMessageAllowed(msg) {
     && Number.isInteger(msg.count) && msg.count >= 1 && msg.count <= 64 && Number.isInteger(msg.index) && msg.index >= 0 && msg.index < msg.count
     && typeof msg.data === 'string' && msg.data.length <= DIAG_CHUNK_MAX;
 }
+// A calibration package too large for one message (a painting's photo can be
+// several MB), sent in pieces of at most 1 MB of JSON text each.
+const CALIBRATION_CHUNK_MAX = 1024 * 1024;
+const CALIBRATION_CHUNKS_MAX = 24;
+function calibrationChunkAllowed(msg) {
+  return !!msg && msg.type === 'studio_calibration_chunk' && typeof msg.requestId === 'string' && SCAN_ID.test(msg.requestId)
+    && Number.isInteger(msg.count) && msg.count >= 1 && msg.count <= CALIBRATION_CHUNKS_MAX && Number.isInteger(msg.index) && msg.index >= 0 && msg.index < msg.count
+    && typeof msg.data === 'string' && msg.data.length <= CALIBRATION_CHUNK_MAX;
+}
 function describeClient(raw) {
   if (!raw || typeof raw !== 'object') return null;
   const part = (v) => (typeof v === 'string' || typeof v === 'number' ? String(v).replace(/[^\w.+ -]/g, '').slice(0, 40) : '');
   const client = { app: part(raw.app), version: part(raw.version), build: part(raw.build), name: part(raw.name) };
   return client.app || client.version ? client : null;
 }
-module.exports = { HOST_MESSAGES, authorizedHost, isLoopback, permittedSource, scanMessageAllowed, scanMessageEnds, depthMessageAllowed, depthMessageEnds, diagnosticsMessageAllowed, describeClient };
+module.exports = { HOST_MESSAGES, authorizedHost, isLoopback, permittedSource, scanMessageAllowed, scanMessageEnds, depthMessageAllowed, depthMessageEnds, diagnosticsMessageAllowed, calibrationChunkAllowed, describeClient };

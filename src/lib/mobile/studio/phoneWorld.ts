@@ -37,6 +37,8 @@ export type StudioCapabilities = {
   output: { width: number; height: number };
   /** What a phone's trigger zone may do on the desktop, with the names it needs to pick one. */
   showActions: PhoneShowActions;
+  /** 1: a calibration package may come as an object, or in pieces when large (calibrationTransfer.ts). Older desktops take only `json` text up to 8 MB. */
+  calibrationTransfer: 1;
 };
 
 /** A thing a show action names, by id, with the name the desktop shows. */
@@ -82,6 +84,7 @@ export function studioCapabilities(scanTransfer: unknown, output: { width: numbe
     depthCapture: DEPTH_CAPTURE_CAPABILITY,
     output: { width: size(output.width, 1920), height: size(output.height, 1080) },
     showActions,
+    calibrationTransfer: 1,
   };
 }
 

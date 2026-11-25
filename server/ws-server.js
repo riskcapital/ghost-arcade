@@ -31,7 +31,7 @@ const {
   pairingTokenMatches,
   presentedPairingToken,
 } = require('./pairing.cjs');
-const { HOST_MESSAGES, authorizedHost, permittedSource, scanMessageAllowed, scanMessageEnds, depthMessageAllowed, depthMessageEnds, diagnosticsMessageAllowed, describeClient } = require('./remote-access.cjs');
+const { HOST_MESSAGES, authorizedHost, permittedSource, scanMessageAllowed, scanMessageEnds, depthMessageAllowed, depthMessageEnds, diagnosticsMessageAllowed, calibrationChunkAllowed, describeClient } = require('./remote-access.cjs');
 const { writeFileAtomicSync } = require('../electron/atomic-write.cjs');
 
 // Shader library directory - in packaged Electron, extraResources land in resources/
@@ -533,9 +533,7 @@ wss.on('connection', (ws, req) => {
       // A phone that goes away mid-feed never sends its stop: tell the desktop,
       // so it lets go of the session at once instead of waiting for WebRTC to
       // notice the silence.
-      if (key.startsWith('camera:') && ws !== desktopClient) {
-        sendDesktop({ type: 'phone_camera_stop', sessionId: key.slice('camera:'.length), reason: 'phone-disconnected' });
-      }
+      if (ws !== desktopClient) phoneRouteGone(key);
     }
     if (ws.studioClient) sendStudioPeers();
 
@@ -983,6 +981,11 @@ function handleMessage(sender, msg) {
     case 'studio_calibration_status':
       relayPrivate(sender, msg, 'calibration', msg.requestId, msg.type === 'studio_calibration_offer');
       break;
+    // A large calibration package in pieces (calibrationTransfer.ts), phone to desktop only.
+    case 'studio_calibration_chunk':
+      if (sender === desktopClient || !calibrationChunkAllowed(msg)) break;
+      relayPrivate(sender, msg, 'calibration', msg.requestId, true);
+      break;
     // A saved scan travelling from one phone to the desktop, in chunks. Only
     // the phone that made the offer can add to it, and only the desktop can
     // answer (studio_scan_status is a host message).
@@ -1178,6 +1181,21 @@ function sendStudioPeers() {
   const peers = [];
   for (const client of clients) if (client !== desktopClient && client.readyState === WebSocket.OPEN && client.studioClient && peers.length < 8) peers.push(client.studioClient);
   sendDesktop({ type: 'studio_peers', peers });
+}
+
+/**
+ * A phone that goes away mid-task never sends its end: tell the desktop, so
+ * it lets go at once instead of waiting for a timeout. Each route kind gets
+ * the message the desktop already understands as "this one is over".
+ */
+function phoneRouteGone(key) {
+  const at = key.indexOf(':'), kind = key.slice(0, at), id = key.slice(at + 1);
+  const reason = 'phone-disconnected';
+  if (kind === 'camera') sendDesktop({ type: 'phone_camera_stop', sessionId: id, reason });
+  // Auto map: a phone-driven run stops showing stripes; a waiting camera is no longer there.
+  else if (kind === 'automap') sendDesktop({ type: 'studio_automap_request', requestId: id, seq: 0, op: 'camera_gone', reason });
+  else if (kind === 'depth') sendDesktop({ type: 'studio_depth_scan_progress', requestId: id, stage: 'error', message: 'The phone disconnected.', reason });
+  else if (kind === 'scan') sendDesktop({ type: 'studio_scan_abort', requestId: id, reason });
 }
 
 function sendDesktop(msg) {
