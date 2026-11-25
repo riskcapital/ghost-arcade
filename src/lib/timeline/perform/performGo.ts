@@ -8,7 +8,7 @@
  * here writes a store while the show plays.
  */
 import { derived, get, writable, type Readable } from 'svelte/store';
-import { playerSections, showTimeline, showSectionStatus } from '../../stores/showTimeline';
+import { onShowDocChange, onShowTimelineReset, playerSections, showTimeline, showSectionStatus } from '../../stores/showTimeline';
 import { cueList, type CueFireSource } from '../../show/cueList';
 import { distinct, showSlice } from '../../components/show/timeline/timelineSlices';
 import { sectionAt } from '../sections/sectionModel';
@@ -17,6 +17,14 @@ import { goDecision, goWords, manualStandby, nextStandby, nowItem, type GoDecisi
 
 /** A step put on standby by hand (double-click in the list); GO uses it once. */
 export const handStandby = writable<HandStandby | null>(null);
+// It belongs to the document and the show it was picked in.
+onShowDocChange(() => handStandby.set(null));
+onShowTimelineReset(() => handStandby.set(null));
+
+/** The hand standby while its step is still in the list (a deleted section or cue lets go). */
+function liveHand(stack: readonly StackItem[], hand: HandStandby | null): HandStandby | null {
+  return hand && stack.some((i) => i.id === hand.id) ? hand : null;
+}
 
 const cueState = derived(cueList, (s) => s);
 const markers = distinct(derived(cueState, (s) => s.markers));
@@ -39,7 +47,10 @@ function handId(hand: HandStandby): string {
 /** The id of the step on standby (by hand, else the next one). */
 export const standbyId: Readable<string | null> = distinct(derived(
   [performStack, showSlice('currentTime'), manual, handStandby],
-  ([stack, t, man, hand]) => (hand ? handId(hand) : nextStandby(stack, t, man)?.id ?? null),
+  ([stack, t, man, raw]) => {
+    const hand = liveHand(stack, raw);
+    return hand ? handId(hand) : nextStandby(stack, t, man)?.id ?? null;
+  },
 ));
 
 /** The id of the step the show is in (the last timed step at the playhead). */
@@ -53,7 +64,7 @@ export function goNow(): { decision: GoDecision; standby: StackItem | null; stac
   const s = get(showTimeline);
   const status = get(showSectionStatus);
   const stack = buildCueStack(s.sections, cueList.state.markers.filter((m) => (m.doc ?? 'show') === 'timeline'), cueList.state.cues);
-  const hand = get(handStandby);
+  const hand = liveHand(stack, get(handStandby));
   const man = manualStandby(stack, cueList.state.standbyCueId, cueList.state.currentCueId);
   const standby = hand ? stack.find((i) => i.id === hand.id) ?? null : nextStandby(stack, s.currentTime, man);
   const decision = goDecision({
@@ -137,6 +148,8 @@ export function performReset(): void {
 export function standByOn(item: StackItem): void {
   const cur = get(handStandby);
   if (cur && cur.id === item.id) { handStandby.set(null); return; }
+  // A marker with no cue has nothing for GO to do: it never stands by.
+  if (item.kind === 'marker' && !item.marker.cueId) return;
   handStandby.set(item.kind === 'section'
     ? { kind: 'section', id: item.id }
     : item.kind === 'marker'
