@@ -430,6 +430,34 @@ jobs:
       - name: Check the add-ons and their licence check are in the build
         run: node scripts/check-release-content.mjs dist
 
+      # ─── Signed app-code update ────────────────────────────────────────
+      # The renderer (dist/) as ghost-arcade-code-<version>.zip plus its
+      # signed manifest, for apps whose shell id matches this commit's
+      # (scripts/code-update-shell.mjs; electron/updates/code-update.cjs).
+      # dist/ is the same on every platform, so this job packs it once.
+      # Until the CODE_UPDATE_SIGNING_KEY secret exists the script prints a
+      # note and packs nothing, and the upload below is skipped.
+      - name: Pack signed code update
+        run: node scripts/pack-code-update.mjs --dist dist --out dist-code-update
+        env:
+          CODE_UPDATE_SIGNING_KEY: ${{ secrets.CODE_UPDATE_SIGNING_KEY }}
+          CODE_UPDATE_KID: ${{ secrets.CODE_UPDATE_KID }}
+
+      - name: Upload code update to release
+        if: startsWith(github.ref, 'refs/tags/v') && hashFiles('dist-code-update/*') != ''
+        uses: softprops/action-gh-release@v2
+        with:
+          repository: riskcapital/ghost-arcade-releases
+          token: ${{ secrets.RELEASES_TOKEN }}
+          tag_name: ${{ github.ref_name }}
+          files: |
+            dist-code-update/*.zip
+            dist-code-update/*.json
+          draft: false
+          prerelease: false
+          generate_release_notes: false
+          overwrite_files: true
+
       # ─── Native render core ────────────────────────────────────────────
       # 2.0 is native-only. Without this binary electron-builder produces an
       # installer whose app boots into NATIVE OFFLINE, so the core has to be

@@ -60,6 +60,16 @@ if (existsSync('electron/addons/keys.cjs')) {
   }
 }
 
+// Signed app-code updates: the app carries its shell id (written by
+// scripts/code-update-shell.mjs before the frontend build), or it could
+// never install one.
+for (const file of ['electron/updates/code-update.cjs', 'electron/updates/keys.cjs']) {
+  if (!existsSync(file)) problems.push(`${file} is missing`);
+}
+if (!existsSync('electron/updates/shell-id.json')) {
+  problems.push('electron/updates/shell-id.json is missing: run the build with npm run build (its prebuild writes it)');
+}
+
 if (problems.length) {
   console.error('Release content check failed:\n- ' + problems.join('\n- '));
   process.exit(1);
