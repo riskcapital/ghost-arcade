@@ -66,6 +66,8 @@ import {
   renameTrack,
   loopFxChannel,
   setTrackSound,
+  keysSound,
+  soundValue,
   xyNotesForLayer,
   type LoopSound,
   undoLayer,
@@ -154,9 +156,10 @@ interface Rt {
   redoXy: XyLayer[];
   /** What Clear took, for one undo. */
   cleared: { layers: MidiLayer[]; beats: number; xy?: XyLayer[] } | null;
-  /** A "This tab" track recording: the tab showing when it was armed, and the instrument the keys played then. */
+  /** A "This tab" track recording: the tab showing when it was armed. */
   tab: StudioSet | null;
-  tabInstrument: InstrumentId | null;
+  /** A recording: the sound the keys played when it was armed. */
+  armSound: LoopSound | null;
   clickBeat: number;
   /** The layers before the full editor changed them: one undo brings them back. */
   editBefore: MidiLayer[] | null;
@@ -166,7 +169,7 @@ let host: StationHost | null = null;
 const rts: Rt[] = Array.from({ length: LOOP_TRACK_COUNT }, () => freshRt());
 
 function freshRt(): Rt {
-  return { phase: 'empty', recStart: 0, recEnd: null, freeSince: null, origin: 0, dubFrom: 0, dubTo: null, playAt: null, stopAt: null, scheduledBeat: 0, pendingOffs: [], xyOffs: [], xySounding: false, redo: [], redoXy: [], cleared: null, tab: null, tabInstrument: null, clickBeat: 0, editBefore: null };
+  return { phase: 'empty', recStart: 0, recEnd: null, freeSince: null, origin: 0, dubFrom: 0, dubTo: null, playAt: null, stopAt: null, scheduledBeat: 0, pendingOffs: [], xyOffs: [], xySounding: false, redo: [], redoXy: [], cleared: null, tab: null, armSound: null, clickBeat: 0, editBefore: null };
 }
 
 export function attachLoopStation(h: StationHost): void {
@@ -406,30 +409,39 @@ function takeFrom(source: LoopSource | undefined, instrument: InstrumentId, cap:
 /**
  * What track `i` recorded in [from, to), as a layer. A "This tab" track's
  * first recording takes the tab's own instrument (the XY pad, the dub shots,
- * the drum pads) when that is what was played, else the keys; either way the
- * track keeps it from then on.
+ * the drum pads) when that is what was played. Otherwise a first recording
+ * takes the sound the keys played (instrument with its patch or tone, as the
+ * keys play now or played when it was armed), and the track keeps that sound
+ * from then on; an overdub records on the track's own sound.
  */
-function takeLayer(i: number, from: number, to: number, origin: number, beats: number, cap: Captured = captured()): Layer {
+function takeLayer(i: number, from: number, to: number, origin: number, beats: number, cap: Captured = captured(), first = false): Layer {
   const rt = rts[i];
   const s = get(musicStudio);
   const grid = quantizeBeats(s.quantize);
   const tab = rt.tab;
-  const keys = rt.tabInstrument ?? s.instrument;
+  const armed = rt.armSound;
   rt.tab = null;
-  rt.tabInstrument = null;
+  rt.armSound = null;
+  const t = track(i);
   if (tab) {
     const src = tabSource(tab);
     const taken = src ? takeFrom(src, SOURCE_INSTRUMENT[src], cap, from, to, origin, beats, grid) : null;
     if (src && taken && (taken.notes.length || taken.xy.length)) {
-      musicStudio.updateLoopStation((d) => ({ ...d, tracks: d.tracks.map((t, k) => (k === i ? setTrackSound(t, { instrument: SOURCE_INSTRUMENT[src], source: src }, INSTRUMENT_LABELS) : t)) }));
+      musicStudio.updateLoopStation((d) => ({ ...d, tracks: d.tracks.map((x, k) => (k === i ? setTrackSound(x, { instrument: SOURCE_INSTRUMENT[src], source: src }, INSTRUMENT_LABELS) : x)) }));
       return taken;
     }
-    const played = takeFrom(undefined, keys, cap, from, to, origin, beats, grid);
-    if (played.notes.length) musicStudio.updateLoopTrack(i, { instrument: keys });
-    return played;
   }
-  const t = track(i);
-  return takeFrom(t.source, t.instrument ?? keys, cap, from, to, origin, beats, grid);
+  if ((first || tab) && !t.source) {
+    for (const sound of [keysSound(s), armed]) {
+      if (!sound?.instrument) continue;
+      const played = takeFrom(undefined, sound.instrument, cap, from, to, origin, beats, grid);
+      if (!played.notes.length) continue;
+      if (soundValue(t) !== soundValue(sound)) musicStudio.updateLoopStation((d) => ({ ...d, tracks: d.tracks.map((x, k) => (k === i ? setTrackSound(x, sound, INSTRUMENT_LABELS) : x)) }));
+      return played;
+    }
+    if (tab) return { notes: [], xy: [] };
+  }
+  return takeFrom(t.source, t.instrument ?? armed?.instrument ?? s.instrument, cap, from, to, origin, beats, grid);
 }
 
 function hasContent(i: number): boolean {
@@ -578,7 +590,7 @@ function arm(i: number, beat: number): void {
   const t = track(i);
   // "This tab": what it records is settled when the recording closes (takeLayer).
   rt.tab = !t.instrument && !t.source ? get(musicStudio).set : null;
-  rt.tabInstrument = get(musicStudio).instrument;
+  rt.armSound = keysSound(get(musicStudio));
   rt.freeSince = null;
   if (d.length === 0 && !busy) {
     // Nothing plays and the length is free: start now; the loop sets the tempo.
@@ -635,7 +647,7 @@ function finishFree(i: number, beat: number): void {
     hits: cap.hits.filter((n) => inside(n.beat)).map(rescale),
     // Where the puck was held at the start too.
     moves: cap.moves.filter((p) => p.beat < beat).map((p) => ({ ...p, beat: (p.beat - from) * scale })),
-  });
+  }, true);
   audioStore.setManualBPM(tempo.bpm);
   // Now is the downbeat: the loop just ended its first pass.
   const synced = resyncLaunchClock();
@@ -1042,7 +1054,7 @@ function stepMidi(i: number, beat: number, horizon: number, timeAt: (b: number) 
   }
   if (rt.phase === 'record' && rt.recEnd !== null && beat >= rt.recEnd - 0.02) {
     const beats = rt.recEnd - rt.recStart;
-    const layer = takeLayer(i, rt.recStart, rt.recEnd, rt.recStart, beats);
+    const layer = takeLayer(i, rt.recStart, rt.recEnd, rt.recStart, beats, captured(), true);
     commitFirstLayer(i, layer, beats, rt.recStart, rt.recEnd);
     changed = true;
   }

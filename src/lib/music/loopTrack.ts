@@ -677,6 +677,26 @@ export interface LoopSound {
   source?: LoopSource;
 }
 
+/** What the keys and the on-screen keyboard play, as a studio holds it. */
+export interface KeysState {
+  instrument: InstrumentId;
+  synthPatch: string;
+  keysPatch: string;
+  synthTone: string | null;
+  keysTone: string | null;
+}
+
+/**
+ * The sound the keys play now, as a loop track's sound: on the synth or keys
+ * its library tone or built-in patch, so a loop recorded on it keeps
+ * sounding the same when the keys move on to another sound.
+ */
+export function keysSound(s: KeysState): LoopSound {
+  if (s.instrument === 'synth') return s.synthTone ? { instrument: 'synth', tone: s.synthTone } : { instrument: 'synth', patch: s.synthPatch };
+  if (s.instrument === 'keys') return s.keysTone ? { instrument: 'keys', tone: s.keysTone } : { instrument: 'keys', patch: s.keysPatch };
+  return { instrument: s.instrument };
+}
+
 /**
  * The sound menu's value for a track, as the keyboard's menu writes them:
  * "synth:pluck", "keys:organ", "tone:<id>", "inst:<id>", "src:xy" (a tab

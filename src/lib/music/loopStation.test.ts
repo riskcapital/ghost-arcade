@@ -340,6 +340,31 @@ describe('editing a recorded MIDI loop', () => {
     expect(ons.every((e) => e.instrument === 'synth' && e.tone === 'some-tone' && e.patch === undefined)).toBe(true);
   });
 
+  it('keeps the sound the keys played when it was recorded', () => {
+    musicStudio.setInstrument('keys');
+    musicStudio.setKeysPatch('organ');
+    record([4]);
+    expect(track0()).toMatchObject({ instrument: 'keys', patch: 'organ' });
+    // The keys move on to another sound: the loop stays on organ.
+    musicStudio.setInstrument('synth');
+    musicStudio.setTone('synth', 'some-tone');
+    sent = [];
+    runTo(40);
+    const ons = sent.filter((e) => e.type === 'on');
+    expect(ons.length).toBeGreaterThan(0);
+    expect(ons.every((e) => e.instrument === 'keys' && e.patch === 'organ' && !e.tone)).toBe(true);
+  });
+
+  it('a first recording takes the sound the keys played over the track\'s preset one', () => {
+    setLoopTrackSound(0, { instrument: 'synth', patch: 'pad' });
+    musicStudio.setInstrument('keys');
+    musicStudio.setTone('keys', 'warm-keys');
+    record([4]);
+    expect(track0()).toMatchObject({ instrument: 'keys', tone: 'warm-keys' });
+    expect(track0().patch).toBeUndefined();
+    expect(track0().layers[0]).toHaveLength(1);
+  });
+
   it('sends nothing with its fader at 0', () => {
     record([4]);
     musicStudio.updateLoopTrack(0, { level: 0 });

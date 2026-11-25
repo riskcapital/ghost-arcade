@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  keysSound,
   loopFxChannel,
   normalizeTrack,
   parseSoundValue,
@@ -331,5 +332,16 @@ describe('a loop track sound', () => {
     const t = normalizeTrack(JSON.parse(JSON.stringify({ ...blankTrack(0), instrument: 'synth', patch: 'pluck' })), 0);
     expect(t.patch).toBe('pluck');
     expect(loopFxChannel(2)).toBe('loop:2');
+  });
+});
+
+describe('keysSound', () => {
+  const base = { instrument: 'synth' as const, synthPatch: 'pluck', keysPatch: 'organ', synthTone: null, keysTone: null };
+  it('names the patch or tone the keys play, so a loop keeps it', () => {
+    expect(keysSound(base)).toEqual({ instrument: 'synth', patch: 'pluck' });
+    expect(keysSound({ ...base, synthTone: 'glass' })).toEqual({ instrument: 'synth', tone: 'glass' });
+    expect(keysSound({ ...base, instrument: 'keys' })).toEqual({ instrument: 'keys', patch: 'organ' });
+    expect(keysSound({ ...base, instrument: 'keys', keysTone: 'rhodes' })).toEqual({ instrument: 'keys', tone: 'rhodes' });
+    expect(keysSound({ ...base, instrument: 'drums' })).toEqual({ instrument: 'drums' });
   });
 });
