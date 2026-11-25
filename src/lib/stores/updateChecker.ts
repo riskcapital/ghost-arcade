@@ -5,6 +5,7 @@
 
 import { writable } from 'svelte/store';
 import { CHANGELOG_PAGE_URL, DOWNLOAD_PAGE_URL, releaseNotesForVersion } from '../releaseNotes';
+import { checkCodeUpdate } from './codeUpdate';
 
 const RELEASES_API = 'https://api.github.com/repos/riskcapital/ghost-arcade-releases/releases/latest';
 const CURRENT_VERSION = __APP_VERSION__;
@@ -52,7 +53,35 @@ function compareVersions(a: string, b: string): number {
   return 0;
 }
 
+function publish(latestVersion: string, body: string): void {
+  // Strictly newer — equal or older versions must NOT trigger the banner.
+  const isNewer = compareVersions(latestVersion, CURRENT_VERSION) > 0;
+  const notes = releaseNotesForVersion(latestVersion, body);
+  updateInfo.set({
+    available: isNewer,
+    currentVersion: CURRENT_VERSION,
+    latestVersion,
+    releaseUrl: DOWNLOAD_PAGE_URL,
+    releaseNotes: notes.highlights.join('\n'),
+    releaseTitle: notes.title,
+    releaseHighlights: notes.highlights,
+    downloadPageUrl: DOWNLOAD_PAGE_URL,
+    changelogUrl: CHANGELOG_PAGE_URL,
+    downloadUrls: {},
+  });
+  if (isNewer) console.log(`[Update] New version available: v${latestVersion} (current: v${CURRENT_VERSION})`);
+}
+
 export async function checkForUpdates(): Promise<void> {
+  // The desktop app asks main first: it reads the same release and also
+  // says whether it is a signed code update for this app (installs in
+  // place, no full download). A build without code updates, or a failed
+  // look, falls back to asking GitHub from here.
+  const code = await checkCodeUpdate();
+  if (code?.enabled && !code.lastError) {
+    if (code.latest) publish(code.latest.version, code.latest.notes ?? '');
+    return;
+  }
   try {
     const res = await fetch(RELEASES_API, {
       headers: { 'Accept': 'application/vnd.github.v3+json' },
@@ -64,34 +93,7 @@ export async function checkForUpdates(): Promise<void> {
     const latestVersion = latestTag.replace(/^v/, '');
 
     if (!latestVersion) return;
-
-    // Strictly newer — equal or older versions must NOT trigger
-    // the update banner. The user reported "v1.1.3 is available"
-    // appearing on v1.3.1, traced to cached state in the OTHER
-    // checker (versionCheck.ts); this store is in-memory only so
-    // it shouldn't suffer from that, but enforce the invariant
-    // defensively here too in case GitHub ever returns a weird
-    // latest pointer (e.g. a re-tagged older release).
-    const isNewer = compareVersions(latestVersion, CURRENT_VERSION) > 0;
-
-    const notes = releaseNotesForVersion(latestVersion, data.body || '');
-
-    updateInfo.set({
-      available: isNewer,
-      currentVersion: CURRENT_VERSION,
-      latestVersion,
-      releaseUrl: DOWNLOAD_PAGE_URL,
-      releaseNotes: notes.highlights.join('\n'),
-      releaseTitle: notes.title,
-      releaseHighlights: notes.highlights,
-      downloadPageUrl: DOWNLOAD_PAGE_URL,
-      changelogUrl: CHANGELOG_PAGE_URL,
-      downloadUrls: {},
-    });
-
-    if (isNewer) {
-      console.log(`[Update] New version available: v${latestVersion} (current: v${CURRENT_VERSION})`);
-    }
+    publish(latestVersion, data.body || '');
   } catch (err) {
     // Silent fail - don't bother user if check fails
   }
