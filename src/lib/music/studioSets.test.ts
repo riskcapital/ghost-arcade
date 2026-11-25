@@ -105,3 +105,12 @@ describe('cables', () => {
     expect(normalizeCables(null)).toEqual(defaultCables());
   });
 });
+
+describe('the beat sounds the same in every set', async () => {
+  const { beatThroughMachineFx, defaultCables } = await import('./studioSets');
+  it('goes through the drum machine\'s effects everywhere while the machine set patches the drums into them', () => {
+    const cables = defaultCables();
+    expect(beatThroughMachineFx(cables)).toBe(true);
+    expect(beatThroughMachineFx({ ...cables, machine: [] })).toBe(false);
+  });
+});

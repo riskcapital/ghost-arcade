@@ -138,6 +138,7 @@ import {
   chordNotes,
   AUDIO_SOURCES,
   instrumentsThroughFx,
+  beatThroughMachineFx,
   scaleNote,
   snapToScale,
   type StudioSet,
@@ -767,7 +768,9 @@ function scheduleSequencer(): void {
   const horizon = beat + (LOOKAHEAD_SECONDS * 1000) / beatMs;
   if (horizon <= sequencer.scheduledBeat) return;
   const timeAt = (b: number) => Math.max(now, now + ((b - beat) * beatMs) / 1000);
-  for (const step of stepsBetween(s.pattern, sequencer.scheduledBeat, horizon)) {
+  // One beat: while the drum machine plays, the step pattern's drums stay out (the acid line still plays).
+  const machineBeat = machineHooks?.playing?.() ?? false;
+  for (const step of machineBeat ? [] : stepsBetween(s.pattern, sequencer.scheduledBeat, horizon)) {
     if (s.drumMutes.includes(step.voice)) continue;
     // A hit just recorded onto this step was already heard live.
     if (heardLive.delete(`${step.voice}:${beatTick(step.beat)}`)) continue;
@@ -3084,7 +3087,8 @@ export function ensureMusicRuntime(): void {
     const volumes = morphedVolumes(s);
     for (const id of INSTRUMENTS) audio.setVolume(id, volumes[id]);
     audio.setParams(soundParams(s));
-    audio.setRouting(s.set, instrumentsThroughFx(s.cables[s.set]));
+    // The beat sounds the same in every set: patched into the drum machine's effects there, it goes through them everywhere.
+    audio.setRouting(s.set, instrumentsThroughFx(s.cables[s.set]), beatThroughMachineFx(s.cables));
     syncAnalogRoutes(s);
     syncMacroFx(true);
     audio.setMasterVolume(s.masterVolume);

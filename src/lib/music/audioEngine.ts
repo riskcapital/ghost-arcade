@@ -164,6 +164,8 @@ export class MusicAudioEngine {
   private racks: Partial<Record<StudioSet, FxRack>> = {};
   private activeSet: StudioSet = 'bath';
   private throughFx = new Set<InstrumentId>();
+  /** The drums go through the drum machine's own rack in every set (the beat is the same everywhere). */
+  private beatRack = false;
   private droneLfo: { osc: OscillatorNode; depth: GainNode } | null = null;
   private droneVoices = new Set<{ filter: BiquadFilterNode; shimmer: GainNode; air: GainNode; note: number }>();
   private acid: { osc: OscillatorNode; filter: BiquadFilterNode; amp: GainNode; note: number } | null = null;
@@ -453,23 +455,26 @@ export class MusicAudioEngine {
    * it. A new set starts on a fresh rack; the old set's echoes and reverb
    * tails fade out and are cleared.
    */
-  setRouting(set: StudioSet, throughFx: Set<InstrumentId>): void {
+  setRouting(set: StudioSet, throughFx: Set<InstrumentId>, beatRack = false): void {
     const changed = set !== this.activeSet;
     // Called on every studio change (a knob turn too): rewiring the strips
     // when nothing moved would click, so only a real change rewires.
-    const same = !changed && throughFx.size === this.throughFx.size && [...throughFx].every((id) => this.throughFx.has(id));
+    const same = !changed && beatRack === this.beatRack && throughFx.size === this.throughFx.size && [...throughFx].every((id) => this.throughFx.has(id));
     if (same && this.racks[this.activeSet]) return;
     this.activeSet = set;
     this.throughFx = new Set(throughFx);
-    if (changed) this.retireRacks(SET_CHANGE_FADE_SECONDS);
+    this.beatRack = beatRack;
+    // The drum machine's rack keeps going across a set change when the beat goes through it.
+    if (changed) this.retireRacks(SET_CHANGE_FADE_SECONDS, beatRack ? 'machine' : null);
     if (this.ctx) this.applyRouting();
   }
 
   /** Fade every effects rack out over `seconds` and drop it; the next routing builds a fresh one. */
-  private retireRacks(seconds: number): void {
+  private retireRacks(seconds: number, keep: StudioSet | null = null): void {
     const ctx = this.ctx;
-    const racks = Object.values(this.racks).filter((r): r is FxRack => !!r);
-    this.racks = {};
+    const kept = keep ? this.racks[keep] : undefined;
+    const racks = Object.entries(this.racks).filter(([id, r]) => !!r && id !== keep).map(([, r]) => r as FxRack);
+    this.racks = kept && keep ? { [keep]: kept } : {};
     if (!ctx) return;
     const t = ctx.currentTime;
     for (const rack of racks) {
@@ -901,15 +906,21 @@ export class MusicAudioEngine {
 
   private applyRouting(): void {
     if (!this.ctx || !this.bus || !this.masterGain) return;
-    let rack = this.racks[this.activeSet];
-    if (!rack) {
-      rack = new FxRack(this.ctx, this.activeSet);
-      rack.setParams(this.params, this.tempo, true);
-      rack.output.connect(this.masterGain);
-      this.racks[this.activeSet] = rack;
-    }
+    const rackFor = (set: StudioSet): FxRack => {
+      let rack = this.racks[set];
+      if (!rack) {
+        rack = new FxRack(this.ctx!, set);
+        rack.setParams(this.params, this.tempo, true);
+        rack.output.connect(this.masterGain!);
+        this.racks[set] = rack;
+      }
+      return rack;
+    };
+    const rack = rackFor(this.activeSet);
+    const beatRack = this.beatRack ? rackFor('machine') : null;
     for (const [id, strip] of this.strips) {
-      const dest = !isInputChannel(id) && this.throughFx.has(id) ? rack.input : this.masterGain;
+      // A cable in this set wins; else the drums go through the drum machine's rack when the beat does.
+      const dest = !isInputChannel(id) && this.throughFx.has(id) ? rack.input : id === 'drums' && beatRack ? beatRack.input : this.masterGain;
       if (strip.dest === dest) continue;
       // Only the main output moves: the sends, meter and stem taps stay.
       if (strip.dest) { try { strip.gate.disconnect(strip.dest); } catch { /* not connected */ } }

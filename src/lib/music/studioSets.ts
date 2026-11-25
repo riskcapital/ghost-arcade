@@ -347,6 +347,15 @@ export function instrumentsThroughFx(cables: Cable[]): Set<InstrumentId> {
   return new Set(cables.filter((c) => c.to === 'fx:in' && c.from.startsWith('audio:')).map((c) => c.from.slice(6) as InstrumentId));
 }
 
+/**
+ * The beat goes through the drum machine's effects in every set when the
+ * drum machine set patches the drums into them (as it does by default), so
+ * the one beat sounds the same wherever it is played from.
+ */
+export function beatThroughMachineFx(cables: Partial<Record<StudioSet, Cable[]>>): boolean {
+  return instrumentsThroughFx(cables.machine ?? []).has('drums');
+}
+
 export function defaultCables(): Record<StudioSet, Cable[]> {
   return {
     bath: [
