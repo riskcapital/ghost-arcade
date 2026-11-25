@@ -16,7 +16,7 @@
 
 const CODE_UPDATE_KEYS = Object.freeze({
   'code-dev': Object.freeze({ publicKey: '39e075c994ea8c9503e71711db8273ed67460006ec187e40dad32e175175ac73', dev: true }),
-  // 'code-2026-11': Object.freeze({ publicKey: '<64 hex from scripts/generate-update-key.mjs>' }),
+  'code-2026-11': Object.freeze({ publicKey: 'd78dea6dfa47ce519939441877df0aaecebd1329d45b04b2f1980fcf8755cacf' }),
 });
 
 /** kid → 64-hex public key, for this kind of build. */
