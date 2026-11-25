@@ -71,7 +71,7 @@ impl SlotRef {
 
     /// A 2D view of this slot: `mip_count` levels from `base_mip`.
     pub(crate) fn view(&self, label: &str, base_mip: u32, mip_count: u32) -> wgpu::TextureView {
-        self.texture.create_view(&wgpu::TextureViewDescriptor {
+        crate::gpu_object_cache::view(&self.texture, &wgpu::TextureViewDescriptor {
             label: Some(label),
             format: Some(self.texture.format()),
             dimension: Some(wgpu::TextureViewDimension::D2),
@@ -314,7 +314,7 @@ impl SourceFrameStore {
 
     /// The whole shared array as one view (Shared mode).
     pub(crate) fn shared_array_view(&self) -> Option<wgpu::TextureView> {
-        self.inner.borrow().shared.as_ref().map(|texture| texture.create_view(&wgpu::TextureViewDescriptor {
+        self.inner.borrow().shared.as_ref().map(|texture| crate::gpu_object_cache::view(texture, &wgpu::TextureViewDescriptor {
             label: Some("Ghost Render Core Source Frame View"),
             dimension: Some(wgpu::TextureViewDimension::D2Array),
             ..Default::default()

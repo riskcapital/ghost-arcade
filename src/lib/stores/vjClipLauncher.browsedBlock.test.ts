@@ -136,3 +136,48 @@ describe('editing a clip that plays from a block the user browsed away from', ()
     expect(get(vjClipLauncher).clipGrid).toBe(before.clipGrid);
   });
 });
+
+describe('grid structure ids (what the output windows and the phone re-send)', () => {
+  it('stay the same across value edits and change on structural ones', () => {
+    const { vjClipLauncher, vjGridStructureId, vjPhoneGridStructureId } = launcher;
+    expect(layers.project.importProject(twoBlockProject())).toBe(true);
+    vjClipLauncher.triggerClipNow(0, 0);
+    vjClipLauncher.addClipEffect(0, 0, blur('fx-k'));
+    const ids = () => {
+      const s = get(vjClipLauncher);
+      return {
+        blocks: vjGridStructureId(s.blocks),
+        grid: vjGridStructureId(s.clipGrid),
+        bankB: vjGridStructureId(s.bankBClipGrid),
+        phone: vjPhoneGridStructureId(s.blocks),
+      };
+    };
+    const start = ids();
+    const startBlocks = get(vjClipLauncher).blocks;
+
+    // A shader value edit copies the grid and blocks (it is saved)...
+    vjClipLauncher.updateActiveClipShaderValue(0, 'a', 0.3);
+    expect(get(vjClipLauncher).blocks).not.toBe(startBlocks);
+    expect(get(vjClipLauncher).blocks[0].clipGrid[0][0]?.shaderValues).toEqual({ a: 0.3 });
+    // ...but nothing a receiver lays out changed.
+    expect(ids()).toEqual(start);
+    vjClipLauncher.updateActiveClipShaderValues(0, { a: 0.4 });
+    vjClipLauncher.batchUpdateShaderValues(0, { a: 0.6 });
+    expect(ids()).toEqual(start);
+
+    // A clip effect knob: the output windows keep their id, the phone (which
+    // shows grid effects) re-sends.
+    vjClipLauncher.updateClipEffectParams(0, 0, 'fx-k', { radius: 4 });
+    expect(get(vjClipLauncher).blocks[0].clipGrid[0][0]?.effects?.[0].params).toEqual({ radius: 4 });
+    const afterFx = ids();
+    expect({ ...afterFx, phone: start.phone }).toEqual(start);
+    expect(afterFx.phone).not.toBe(start.phone);
+
+    // Structural edits always get new ids.
+    vjClipLauncher.setClip(1, 1, shader('new') as any);
+    const afterSet = ids();
+    expect(afterSet.blocks).not.toBe(afterFx.blocks);
+    expect(afterSet.grid).not.toBe(afterFx.grid);
+    expect(afterSet.phone).not.toBe(afterFx.phone);
+  });
+});

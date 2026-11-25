@@ -14,6 +14,10 @@ mod graph_textures;
 mod graph_readbacks;
 mod scene_frame;
 mod core_frame_counter;
+mod churn_probe;
+mod gpu_object_cache;
+mod pass_timing;
+mod effect_specialize;
 mod media_decode;
 mod media_orphans;
 mod autorelease_pool;
@@ -1167,6 +1171,16 @@ struct CoreStatus {
     gpu_frames_completed: u64,
     gpu_backpressure_skips: u64,
     frames_presented: u64,
+    /// GA_CORE_CHURN_PROBE=1 only (churn_probe.rs).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    gpu_object_churn: Option<churn_probe::ChurnCounts>,
+    /// Effect passes drawn with their own pipeline / with the shared effect
+    /// shader (effect_specialize.rs).
+    effect_shader_specialised_draws: u64,
+    effect_shader_shared_draws: u64,
+    /// GA_CORE_PASS_TIMING=1 only (pass_timing.rs).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    gpu_pass_timing: Option<pass_timing::PassTimingReport>,
     commands_applied: u64,
     commands_dropped: u64,
     layers_seen: u32,
@@ -5455,7 +5469,8 @@ struct App {
     /// blend and dome reprojection.
     output_stage: OutputStage,
     /// Multi-output slices currently presenting on their own displays.
-    slice_outputs: Vec<SliceOutputSpec>,
+    /// Shared, so the frame's copy of the list is a reference count, not a deep copy.
+    slice_outputs: Arc<Vec<SliceOutputSpec>>,
     /// Source the recorder asked for besides the program output, if any.
     record_target: Option<RecordTargetSpec>,
     render_clock_mode: String,
@@ -5942,7 +5957,7 @@ impl App {
             output_frozen: false,
             composite_effects: Vec::new(),
             output_stage: OutputStage::default(),
-            slice_outputs: Vec::new(),
+            slice_outputs: Arc::new(Vec::new()),
             record_target: None,
             render_clock_mode: "live".to_string(),
             render_clock_time: None,
@@ -6840,6 +6855,10 @@ impl App {
             gpu_frames_completed,
             gpu_backpressure_skips: self.stats.gpu_backpressure_skips,
             frames_presented: gpu_frames_completed,
+            gpu_object_churn: churn_probe::counts(),
+            gpu_pass_timing: pass_timing::report(),
+            effect_shader_specialised_draws: effect_specialize::draws().0,
+            effect_shader_shared_draws: effect_specialize::draws().1,
             commands_applied: self.stats.commands_applied,
             commands_dropped: self.stats.commands_dropped,
             layers_seen: self.layers_seen,
@@ -8077,7 +8096,7 @@ impl App {
     /// screen window keeps the old master warp while the preview moves.
     fn refresh_slice_master_stage(&mut self) {
         let master = self.output_stage;
-        for spec in &mut self.slice_outputs {
+        for spec in Arc::make_mut(&mut self.slice_outputs).iter_mut() {
             // Map Sim projector views draw without the master warp or dome.
             if spec.projector_view.is_some() {
                 continue;
@@ -8223,7 +8242,7 @@ impl App {
         if let Some(renderer) = self.renderer.as_mut() {
             renderer.slice_targets.retain(|id, _| ids.contains(id));
         }
-        self.slice_outputs = specs;
+        self.slice_outputs = Arc::new(specs);
         Ok(json!({ "slices": ids }))
     }
 
@@ -14001,6 +14020,8 @@ impl App {
         if let Some(renderer) = self.renderer.as_mut() {
             renderer.allow_async_compile = self.render_clock_mode != "manual";
             renderer.frame_epoch = renderer.frame_epoch.wrapping_add(1);
+            gpu_object_cache::begin_frame();
+            pass_timing::begin_frame();
             renderer.pipeline_cap = self.pipeline_metadata_cache_cap.max(1) as usize;
             renderer.graph_budget_bytes = graph_budget;
         }
@@ -14072,7 +14093,7 @@ impl App {
         let output_gate = self.output_gate();
         let post_effects = self.composite_effect_slots();
         let output_stage = self.output_stage;
-        let slice_specs = self.slice_outputs.clone();
+        let slice_specs = Arc::clone(&self.slice_outputs);
         let deck_monitors_have_content = !deck_monitor_a.is_empty() || !deck_monitor_b.is_empty();
         let deck_monitors_were_lit = self.deck_monitors_lit;
         let mut deck_monitors_rendered = false;
@@ -15230,8 +15251,9 @@ impl App {
         }
         // Hardware/HAP frames occupy an aspect-preserving rectangle in the
         // shared square texture. Effects operate in normalized content space.
-        for (plan, descriptor) in render_plans.iter().zip(params["render_passes"].as_array().into_iter().flatten()) {
-            if descriptor["shader_id"].as_str() != Some("effect-pass/render") { continue; }
+        let mut render_plans = render_plans;
+        for (plan, descriptor) in render_plans.iter_mut().zip(params["render_passes"].as_array().into_iter().flatten()) {
+            if descriptor["shader_id"].as_str() != Some(effect_specialize::EFFECT_SHADER_ID) { continue; }
             let source = plan.bindings.iter().find(|b| b.binding == 0);
             let uniform = plan.bindings.iter().find(|b| b.binding == 2);
             if let (Some(source), Some(uniform)) = (source, uniform) {
@@ -15243,6 +15265,12 @@ impl App {
                     && buffer.initial_bytes.len() >= 112 {
                     for (index, value) in rect.iter().enumerate() {
                         buffer.initial_bytes[96 + index * 4..100 + index * 4].copy_from_slice(&value.to_le_bytes());
+                    }
+                    if let Some((cache_key, source)) = effect_specialize::code_in_uniform(&buffer.initial_bytes)
+                        .and_then(|code| effect_specialize::specialise(&plan.cache_key, &plan.source, code))
+                    {
+                        plan.cache_key = cache_key;
+                        plan.source = source;
                     }
                 }
             }
@@ -16796,7 +16824,7 @@ impl App {
     /// the same mesh.
     fn apply_mirror_mesh(&mut self, command: &Value) -> Result<(), String> {
         let mesh = Arc::new(MirrorMesh::from_command(command)?);
-        for spec in &mut self.slice_outputs {
+        for spec in Arc::make_mut(&mut self.slice_outputs).iter_mut() {
             if spec.mirror_mesh_id.as_deref() == Some(mesh.id.as_str()) {
                 spec.mirror_mesh = Some(Arc::clone(&mesh));
             }
@@ -22874,6 +22902,8 @@ impl RenderState {
         });
 
         window.set_title(&format!("Ghost Render Core - {}", adapter_info.name));
+        pass_timing::init(&device, &queue);
+        effect_specialize::set_backend(adapter_info.backend);
         let gpu_timing = requested_features
             .contains(wgpu::Features::TIMESTAMP_QUERY)
             .then(|| {
@@ -25311,6 +25341,7 @@ impl RenderState {
                 &mut texture_views,
                 &[],
             )?;
+            churn_probe::bind_group();
             let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some(&format!(
                     "Ghost Native Compute Graph Bind Group {}",
@@ -25612,15 +25643,17 @@ impl RenderState {
             &mut texture_views,
             &[],
         )?;
-        let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some(&pass_plan.name),
-            layout: &cached.bind_group_layout,
-            entries: &entries,
-        });
+        let bind_group = gpu_object_cache::bind_group(
+            &self.device,
+            Some(&pass_plan.name),
+            &cached.bind_group_layout,
+            &entries,
+        );
         {
+            let pass_time = pass_timing::slot(&pass_plan.name);
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some(&pass_plan.name),
-                timestamp_writes: None,
+                timestamp_writes: pass_timing::compute_writes(&pass_time),
             });
             pass.set_pipeline(&cached.pipeline);
             pass.set_bind_group(0, &bind_group, &[]);
@@ -25721,7 +25754,6 @@ impl RenderState {
             }
             _ => None,
         };
-        let pipeline_key = native_graph_render_pipeline_key(&render_plan.cache_key, output_format);
         let layout_specs = render_plan
             .bindings
             .iter()
@@ -25730,6 +25762,39 @@ impl RenderState {
                 kind: binding.kind,
             })
             .collect::<Vec<_>>();
+        // An effect pass with its own pipeline (effect_specialize.rs) draws
+        // with the shared effect shader until that pipeline is built, when
+        // the pipeline budget is nearly used up, or if it fails to build.
+        let generic_plan;
+        let render_plan = match effect_specialize::generic_for(&render_plan.cache_key) {
+            Some(generic) => {
+                // Keep the shared pipeline from aging out of the budget: it
+                // is what a newly added effect draws with while its own builds.
+                let generic_key = native_graph_render_pipeline_key(&generic.cache_key, output_format);
+                if self.native_graph_render_pipelines.contains_key(&generic_key) {
+                    self.pipeline_used.insert(generic_key, self.frame_epoch);
+                }
+                let key = native_graph_render_pipeline_key(&render_plan.cache_key, output_format);
+                let room = self.native_graph_render_pipelines.contains_key(&key)
+                    || (self.native_pipeline_cache_count() as usize) + 16 < self.pipeline_cap;
+                let ready = room && self
+                    .ensure_native_graph_render_pipeline(&key, render_plan, &layout_specs, output_format, !report && self.allow_async_compile)
+                    .is_ok();
+                effect_specialize::note_draw(ready);
+                if ready {
+                    render_plan
+                } else {
+                    generic_plan = NativeComputeGraphRenderPlan {
+                        cache_key: generic.cache_key,
+                        source: generic.source,
+                        ..render_plan.clone()
+                    };
+                    &generic_plan
+                }
+            }
+            None => render_plan,
+        };
+        let pipeline_key = native_graph_render_pipeline_key(&render_plan.cache_key, output_format);
         self.ensure_native_graph_render_pipeline(
             &pipeline_key,
             render_plan,
@@ -25753,15 +25818,17 @@ impl RenderState {
             &mut texture_views,
             &sample_overrides,
         )?;
-        let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some(&render_plan.name),
-            layout: &cached.bind_group_layout,
-            entries: &entries,
-        });
+        let bind_group = gpu_object_cache::bind_group(
+            &self.device,
+            Some(&render_plan.name),
+            &cached.bind_group_layout,
+            &entries,
+        );
         let source_frame_target_view;
         let composite_target_view;
         let target_view = if let Some(index) = composite_target_index {
-            composite_target_view = self.composite_frame_textures[index].create_view(
+            composite_target_view = gpu_object_cache::view(
+                &self.composite_frame_textures[index],
                 &wgpu::TextureViewDescriptor {
                     label: Some("Ghost Native Composite Frame Target View"),
                     format: Some(self.config.format),
@@ -25849,12 +25916,13 @@ impl RenderState {
                 depth_slice: None,
             };
             let color_attachments = [Some(color_attachment)];
+            let pass_time = pass_timing::slot(&render_plan.name);
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some(&render_plan.name),
                 // A depth-only pass (a shadow map) has no colour output.
                 color_attachments: if render_plan.depth_only { &[] } else { &color_attachments },
                 depth_stencil_attachment,
-                timestamp_writes: None,
+                timestamp_writes: pass_timing::render_writes(&pass_time),
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
@@ -26044,7 +26112,8 @@ impl RenderState {
                         .source_slot
                         .unwrap_or(0)
                         .min(COMPOSITE_FRAME_SLOTS - 1);
-                    texture_views.push(self.composite_frame_textures[index].create_view(
+                    texture_views.push(gpu_object_cache::view(
+                        &self.composite_frame_textures[index],
                         &wgpu::TextureViewDescriptor {
                             label: Some("Ghost Native Composite Frame Texture View"),
                             format: Some(self.config.format),
@@ -26512,6 +26581,7 @@ impl RenderState {
                 (Some(index), Some(ring)) => &ring.bind_groups[index],
                 _ => &self.native_shader_bind_group,
             };
+            let pass_time = pass_timing::slot("native-shader");
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("Ghost Render Core Native Shader Pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -26524,7 +26594,7 @@ impl RenderState {
                     depth_slice: None,
                 })],
                 depth_stencil_attachment: None,
-                timestamp_writes: None,
+                timestamp_writes: pass_timing::render_writes(&pass_time),
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
@@ -26598,6 +26668,7 @@ impl RenderState {
                             resource: wgpu::BindingResource::TextureView(&self.isf_dummy_texture_view),
                         });
                     }
+                    churn_probe::bind_group();
                     self.device.create_bind_group(&wgpu::BindGroupDescriptor {
                         label: Some("Ghost Render Core Native Shader Ring Bind Group"),
                         layout: &self.native_shader_bind_group_layout,
@@ -26745,7 +26816,7 @@ impl RenderState {
                     wgpu::Extent3d { width: edge, height: edge, depth_or_array_layers: 1 },
                 );
             } else {
-                let target = self.native_shader_input_texture.create_view(&wgpu::TextureViewDescriptor {
+                let target = gpu_object_cache::view(&self.native_shader_input_texture, &wgpu::TextureViewDescriptor {
                     label: Some("Ghost Render Core Native Shader Input Layer"),
                     dimension: Some(wgpu::TextureViewDimension::D2),
                     base_array_layer: layer as u32,
@@ -26902,6 +26973,7 @@ impl RenderState {
                 })
             };
             let textures = [make("Ghost Render Core ISF Pass Target A"), make("Ghost Render Core ISF Pass Target B")];
+            churn_probe::texture_view(); churn_probe::texture_view();
             let views = [
                 textures[0].create_view(&wgpu::TextureViewDescriptor::default()),
                 textures[1].create_view(&wgpu::TextureViewDescriptor::default()),
@@ -27000,11 +27072,12 @@ impl RenderState {
                     resource: wgpu::BindingResource::TextureView(view),
                 });
             }
-            let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("Ghost Render Core ISF Pass Bind Group"),
-                layout: &self.native_shader_bind_group_layout,
-                entries: &entries,
-            });
+            let bind_group = gpu_object_cache::bind_group(
+                &self.device,
+                Some("Ghost Render Core ISF Pass Bind Group"),
+                &self.native_shader_bind_group_layout,
+                &entries,
+            );
 
             let (dest_view, pipeline_key) = match target_index {
                 Some(index) => {
@@ -27021,6 +27094,7 @@ impl RenderState {
                 return Err(format!("ISF pass {pass_index} pipeline was not cached"));
             };
             {
+                let pass_time = pass_timing::slot("isf-pass");
                 let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                     label: Some("Ghost Render Core ISF Pass"),
                     color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -27033,7 +27107,7 @@ impl RenderState {
                         depth_slice: None,
                     })],
                     depth_stencil_attachment: None,
-                    timestamp_writes: None,
+                    timestamp_writes: pass_timing::render_writes(&pass_time),
                     occlusion_query_set: None,
                     multiview_mask: None,
                 });
@@ -28152,6 +28226,9 @@ impl RenderState {
         label: &'static str,
         timestamp_writes: Option<wgpu::RenderPassTimestampWrites<'_>>,
     ) {
+        // The frame timer (gpu_timing) owns this pass when it times it.
+        let pass_time = if timestamp_writes.is_none() { pass_timing::slot(label) } else { None };
+        let timestamp_writes = timestamp_writes.or_else(|| pass_timing::render_writes(&pass_time));
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some(label),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -28201,6 +28278,7 @@ impl RenderState {
             bytemuck::cast_slice(&overlay_items[..item_count]),
         );
 
+        let pass_time = pass_timing::slot(label);
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some(label),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -28213,7 +28291,7 @@ impl RenderState {
                 depth_slice: None,
             })],
             depth_stencil_attachment: None,
-            timestamp_writes: None,
+            timestamp_writes: pass_timing::render_writes(&pass_time),
             occlusion_query_set: None,
             multiview_mask: None,
         });
@@ -28371,12 +28449,12 @@ impl RenderState {
         if !frozen && output_gate > 0.0 {
         self.draw_fullscreen_to_view(
             &mut encoder,
-            &self.composite_frame_textures[0].create_view(&Default::default()),
+            &gpu_object_cache::view(&self.composite_frame_textures[0], &Default::default()),
             "Ghost Render Core Snapshot Pass",
             timestamp_writes,
         );
         self.encode_composition_effects(&mut encoder, composite_graph_jobs, composite_output_index)?;
-        let creative_view = self.composite_frame_textures[self.creative_frame_index].create_view(&Default::default());
+        let creative_view = gpu_object_cache::view(&self.composite_frame_textures[self.creative_frame_index], &Default::default());
         self.draw_stage3d_mesh_to_view(
             &mut encoder,
             &creative_view,
@@ -28533,12 +28611,12 @@ impl RenderState {
         };
         self.draw_fullscreen_to_view(
             &mut mirror_encoder,
-            &self.composite_frame_textures[0].create_view(&Default::default()),
+            &gpu_object_cache::view(&self.composite_frame_textures[0], &Default::default()),
             "Ghost Render Core Output Mirror Pass",
             mirror_timestamp_writes,
         );
         self.encode_composition_effects(&mut mirror_encoder, composite_graph_jobs, composite_output_index)?;
-        let creative_view = self.composite_frame_textures[self.creative_frame_index].create_view(&Default::default());
+        let creative_view = gpu_object_cache::view(&self.composite_frame_textures[self.creative_frame_index], &Default::default());
         self.draw_stage3d_mesh_to_view(
             &mut mirror_encoder,
             &creative_view,
@@ -28597,7 +28675,9 @@ impl RenderState {
                 gpu_timing.resolve_to_readback(&mut mirror_encoder);
             }
         }
+        pass_timing::resolve(&mut mirror_encoder);
         self.submit_frame(mirror_encoder);
+        pass_timing::after_submit();
         #[cfg(any(target_os = "macos", target_os = "windows"))]
         self.encode_native_recording_frame();
         if !frozen && output_gate > 0.0 {
@@ -28691,6 +28771,7 @@ fn deck_monitor_size(width: u32, output: (u32, u32)) -> (u32, u32) {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    churn_probe::init();
     let mut builder = EventLoop::<UserEvent>::with_user_event();
     #[cfg(target_os = "macos")]
     {

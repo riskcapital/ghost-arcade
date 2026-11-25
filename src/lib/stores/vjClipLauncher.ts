@@ -532,6 +532,52 @@ function withDeck(
   };
 }
 
+// ----- Grid structure identity.
+// The output windows (stateBroadcast.ts) and the phone (App syncVJClips)
+// re-send the whole clip grid only when its arrays are new. A value edit on
+// a playing clip (a shader slider, the XY pad, a clip effect knob) has to
+// copy the grid and blocks too, so the edit is saved, but nothing a
+// receiver lays out changed: those copies inherit the structure id of the
+// arrays they replace. Any array made any other way gets a new id the
+// first time it is asked about, so every other change still re-sends.
+//   'values'  shader / script values: in neither the phone's grid nor the
+//             output windows' layout.
+//   'effects' clip effect params: the phone's grid shows them, so only the
+//             output windows keep their id.
+type GridEditKind = 'values' | 'effects';
+const broadcastStructureIds = new WeakMap<object, number>();
+const phoneStructureIds = new WeakMap<object, number>();
+let nextStructureId = 1;
+function structureIdIn(map: WeakMap<object, number>, value: unknown): number {
+  if (!value || typeof value !== 'object') return 0;
+  let id = map.get(value);
+  if (id === undefined) {
+    id = nextStructureId++;
+    map.set(value, id);
+  }
+  return id;
+}
+function inheritStructure(next: unknown, prev: unknown, kind: GridEditKind): void {
+  if (!next || !prev || next === prev || typeof next !== 'object' || typeof prev !== 'object') return;
+  broadcastStructureIds.set(next, structureIdIn(broadcastStructureIds, prev));
+  if (kind === 'values') phoneStructureIds.set(next, structureIdIn(phoneStructureIds, prev));
+}
+/** Same id = same grid layout for the output windows (see above). */
+export function vjGridStructureId(value: unknown): number {
+  return structureIdIn(broadcastStructureIds, value);
+}
+/** Same id = same serialized grid for the phone (see above). */
+export function vjPhoneGridStructureId(value: unknown): number {
+  return structureIdIn(phoneStructureIds, value);
+}
+/** A value edit's next state: its grids and blocks keep their structure ids. */
+function keepGridStructure(prev: VJClipLauncherState, next: VJClipLauncherState, kind: GridEditKind): VJClipLauncherState {
+  inheritStructure(next.blocks, prev.blocks, kind);
+  inheritStructure(next.clipGrid, prev.clipGrid, kind);
+  inheritStructure(next.bankBClipGrid, prev.bankBClipGrid, kind);
+  return next;
+}
+
 // Write a fresh deck grid into the active block, updating the right slot
 // (clipGrid for Bank A, bankBClipGrid for Bank B). Returns a fresh blocks
 // array. Both banks live inside the block so each block is a complete A+B
@@ -2733,7 +2779,7 @@ function createVJClipLauncherStore() {
         // Also update the clip in the deck's grid and block if it is there
         const placed = placeActiveClipEdit(state, deck, layerIndex, activeClip.id, newClip);
         const next = withDeck(state, deck, newLayerStates, placed?.grid);
-        return placed ? { ...next, blocks: placed.blocks } : next;
+        return keepGridStructure(state, placed ? { ...next, blocks: placed.blocks } : next, 'values');
       });
       // Auto-record keyframe if track is armed (keyed per-clip so switching clips shows independent keyframes)
       const s = get({ subscribe });
@@ -2771,7 +2817,7 @@ function createVJClipLauncherStore() {
         newLayerStates[layerIndex] = { ...newLayerStates[layerIndex], activeClip: newClip };
         const placed = placeActiveClipEdit(state, deck, layerIndex, activeClip.id, newClip);
         const next = withDeck(state, deck, newLayerStates, placed?.grid);
-        return placed ? { ...next, blocks: placed.blocks } : next;
+        return keepGridStructure(state, placed ? { ...next, blocks: placed.blocks } : next, 'values');
       });
       const s = get({ subscribe });
       const ls = deck === 'B' ? s.bankBLayerStates : s.layerStates;
@@ -2825,7 +2871,7 @@ function createVJClipLauncherStore() {
 
         const placed = placeActiveClipEdit(state, deck, layerIndex, activeClip.id, newClip);
         const next = withDeck(state, deck, newLayerStates, placed?.grid);
-        return placed ? { ...next, blocks: placed.blocks } : next;
+        return keepGridStructure(state, placed ? { ...next, blocks: placed.blocks } : next, 'values');
       });
 
       if (runtimeClipId) {
@@ -2864,7 +2910,7 @@ function createVJClipLauncherStore() {
 
         const placed = placeActiveClipEdit(state, deck, layerIndex, activeClip.id, newClip);
         const next = withDeck(state, deck, newLayerStates, placed?.grid);
-        return placed ? { ...next, blocks: placed.blocks } : next;
+        return keepGridStructure(state, placed ? { ...next, blocks: placed.blocks } : next, 'values');
       });
     },
 
@@ -2889,7 +2935,7 @@ function createVJClipLauncherStore() {
         newLayerStates[layerIndex] = { ...rows[layerIndex], activeClip: newClip };
         const placed = placeActiveClipEdit(state, deck, layerIndex, activeClip.id, newClip);
         const next = withDeck(state, deck, newLayerStates, placed?.grid);
-        return placed ? { ...next, blocks: placed.blocks } : next;
+        return keepGridStructure(state, placed ? { ...next, blocks: placed.blocks } : next, 'values');
       });
     },
 
@@ -3518,7 +3564,7 @@ function createVJClipLauncherStore() {
           ? { ...block, clipGrid: grid(block.clipGrid) }
           : { ...block, bankBClipGrid: block.bankBClipGrid ? grid(block.bankBClipGrid) : undefined });
         if (!changed) return state;
-        return { ...withDeck(state, deck, states, nextGrid), blocks };
+        return keepGridStructure(state, { ...withDeck(state, deck, states, nextGrid), blocks }, 'effects');
       });
     },
 
@@ -3544,9 +3590,9 @@ function createVJClipLauncherStore() {
         }
         const newBlocks = blocksWithDeckGrid(state, deck, newGrid);
         if (deck === 'A') {
-          return { ...state, clipGrid: newGrid, layerStates: newLayerStates, blocks: newBlocks };
+          return keepGridStructure(state, { ...state, clipGrid: newGrid, layerStates: newLayerStates, blocks: newBlocks }, 'effects');
         }
-        return { ...state, bankBClipGrid: newGrid, bankBLayerStates: newLayerStates, blocks: newBlocks };
+        return keepGridStructure(state, { ...state, bankBClipGrid: newGrid, bankBLayerStates: newLayerStates, blocks: newBlocks }, 'effects');
       });
     },
 

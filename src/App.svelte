@@ -633,7 +633,7 @@
   import { fitMenuHeight } from './lib/utils/menuFit';
   import { startRecording as startRec, formatRecordingDuration, type RecorderHandle } from './lib/recording/recorder';
   import RecordingSourcePicker from './lib/components/RecordingSourcePicker.svelte';
-  import { vjClipLauncher, vjEditVersion } from './lib/stores/vjClipLauncher';
+  import { vjClipLauncher, vjEditVersion, vjPhoneGridStructureId } from './lib/stores/vjClipLauncher';
   import { liveDeckValue, liveLayerValue } from './lib/audio/liveParams';
   import { mediaRelinkVersion, noteMediaRelinked } from './lib/stores/missingMedia';
   import { audioStore, audioBpm, audioManualBpm, isBeat } from './lib/stores/audio';
@@ -5633,8 +5633,10 @@
 
   // The grid part of the mobile sync, kept until the launcher's blocks
   // change. A crossfader sweep, a macro or a layer opacity re-sends the
-  // light fields only in effect: the grid is serialized once per edit.
-  let serializedGridFor: unknown = null;
+  // light fields only in effect: the grid is serialized once per edit. A
+  // shader value edit copies the blocks but keeps their structure id
+  // (vjPhoneGridStructureId): the phone's grid carries no shader values.
+  let serializedGridFor = 0;
   let serializedGrid: unknown[] = [];
 
   // Sync VJ Clip Launcher state to mobile (clips in the grid)
@@ -5674,8 +5676,9 @@
       // every new feature surface so the mobile companion can render the
       // dual decks, crossfader, macros, snapshots, and quantize grid
       // alongside the original clip-grid + mixer + master controls.
-      if (serializedGridFor !== $vjClipLauncher.blocks) {
-        serializedGridFor = $vjClipLauncher.blocks;
+      const gridStructure = vjPhoneGridStructureId($vjClipLauncher.blocks);
+      if (serializedGridFor !== gridStructure) {
+        serializedGridFor = gridStructure;
         serializedGrid = $vjClipLauncher.blocks.map(block => ({
           id: block.id,
           name: block.name,
