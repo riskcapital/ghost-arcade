@@ -321,6 +321,20 @@ function refineWithEdges(h: number[], edges: StripeEdges | undefined, mine: (x: 
 
 export type Photo = { width: number; height: number; luma: Uint8Array | Uint8ClampedArray | Float32Array };
 
+/** Edge-snap pull per pixel moved, as a share of the photo's brightness range (0.08 on a 0..160 photo, as tuned). */
+const SNAP_PULL = 0.0005;
+
+/** The photo's brightness range, 1st to 99th percentile of a strided sample (robust to hot pixels and black borders). */
+export function photoRange(photo: Photo): number {
+  const n = photo.width * photo.height, stride = Math.max(1, Math.floor(n / 20000));
+  const sample: number[] = [];
+  for (let i = 0; i < n; i += stride) sample.push(photo.luma[i]);
+  if (sample.length < 2) return 160;
+  sample.sort((a, b) => a - b);
+  const at = (f: number) => sample[Math.round(f * (sample.length - 1))];
+  return at(0.99) - at(0.01);
+}
+
 /**
  * Moves each side of a detected outline onto the edge you can see in the
  * photo. The stripe scan puts a side within a few pixels (it cannot read
@@ -328,8 +342,11 @@ export type Photo = { width: number; height: number; luma: Uint8Array | Uint8Cla
  * has a sharp step in brightness there. Each side slides and tilts a little
  * to where that step is strongest, and corners are where the sides meet.
  */
-export function snapToEdges(quad: { x: number; y: number }[], photo: Photo, locked: boolean[] = []): { x: number; y: number }[] {
+export function snapToEdges(quad: { x: number; y: number }[], photo: Photo, locked: boolean[] = [], range = photoRange(photo)): { x: number; y: number }[] {
   const reach = Math.max(6, Math.round(Math.max(photo.width, photo.height) / 110));
+  // A small pull toward the measured position keeps a faint texture from winning. It is in the
+  // photo's own brightness units, so a dim photo (small steps) is held as firmly as a bright one.
+  const pull = SNAP_PULL * Math.max(1, range);
   const cx = quad.reduce((sum, p) => sum + p.x, 0) / 4, cy = quad.reduce((sum, p) => sum + p.y, 0) / 4;
   // Bilinear, so a side can settle between pixels. Pixel centres sit at +0.5.
   const at = (x: number, y: number) => {
@@ -356,15 +373,14 @@ export function snapToEdges(quad: { x: number; y: number }[], photo: Photo, lock
     };
     let best = { d0: 0, d1: 0, value: score(0, 0) };
     if (!locked[side]) for (let d0 = -reach; d0 <= reach; d0++) for (let d1 = -reach; d1 <= reach; d1++) {
-      // A small pull toward the measured position keeps a faint texture from winning.
-      const value = score(d0, d1) - 0.08 * (Math.abs(d0) + Math.abs(d1));
+      const value = score(d0, d1) - pull * (Math.abs(d0) + Math.abs(d1));
       if (value > best.value) best = { d0, d1, value };
     }
     // Then to a quarter of a pixel around the best whole-pixel fit.
     if (!locked[side]) {
       const whole = best;
       for (let d0 = whole.d0 - 1; d0 <= whole.d0 + 1; d0 += 0.25) for (let d1 = whole.d1 - 1; d1 <= whole.d1 + 1; d1 += 0.25) {
-        const value = score(d0, d1) - 0.08 * (Math.abs(d0) + Math.abs(d1));
+        const value = score(d0, d1) - pull * (Math.abs(d0) + Math.abs(d1));
         if (value > best.value) best = { d0, d1, value };
       }
     }
@@ -726,12 +742,13 @@ export function detectSurfaces(
       surface.locked[side] = true;
     }
   }
+  const range = options.photo ? photoRange(options.photo) : 0;
   for (const surface of rough) {
     // A few passes: each can only move a side a short way, and a thin face
-    // often starts with one side well off. A fold side starts on its
-    // calculated line, close enough for the visible crease to take it the rest of the way.
+    // often starts with one side well off. A fold side stays on its calculated line (both faces share it exactly, so snapping each face
+    // on its own would pull the seam apart); the other sides settle onto the edges you can see.
     let ordered = surface.quad;
-    if (options.photo) for (let pass = 0; pass < 4; pass++) ordered = snapToEdges(ordered, options.photo);
+    if (options.photo) for (let pass = 0; pass < 4; pass++) ordered = snapToEdges(ordered, options.photo, surface.locked, range);
     surfaces.push({
       outline: ordered.map(p => ({ x: p.x / decoded.width, y: p.y / decoded.height })),
       points: ordered.map(p => { const q = applyHomography(surface.h, p.x, p.y); return { x: q.x / projector.width, y: q.y / projector.height }; }),
