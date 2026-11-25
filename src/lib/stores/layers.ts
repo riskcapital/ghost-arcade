@@ -7184,6 +7184,11 @@ void main() {
             : {}),
         };
 
+        // The show is replaced on the microtask below: hold the row sync the
+        // new layers would otherwise run first against the old show.
+        const showReplaced = (!!(proj as any).showTimeline && typeof (proj as any).showTimeline === 'object')
+          || openingFile || 'stage3d' in (proj as any) || 'projectionSim' in (proj as any);
+        if (showReplaced) showTimeline.expectHydrate();
         set(migrateMapSurfaces(importedProject));
         selectedLayerIdsState.set(importedProject.selectedLayerId ? [importedProject.selectedLayerId] : []);
         const importedStage3d = (proj as any).stage3d;
@@ -7238,6 +7243,8 @@ void main() {
             // failure mode the stage3d note above documents.
           } catch (err) {
             console.warn('[Store] importProject: show timeline restore failed', err);
+          } finally {
+            showTimeline.hydrateSettled();
           }
           try {
             // Same three-way rule as the show timeline: restore a saved

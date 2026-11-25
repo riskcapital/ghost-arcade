@@ -262,6 +262,9 @@ export function installShowTrackRuntime(deps: ShowTrackRuntimeDeps): () => void 
   let rowsQueued = false;
   const syncRows = () => {
     rowsQueued = false;
+    // A project is being opened: its own show arrives on the next microtask
+    // (and republishes, which queues this again).
+    if (showTimeline.hydratePending()) return;
     const p = get(deps.project);
     const show = get(showTimeline);
     const comps = p.vjMode?.compositions ?? [];

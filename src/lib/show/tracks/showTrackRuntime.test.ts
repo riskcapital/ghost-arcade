@@ -54,4 +54,25 @@ describe('track templates while the project keeps changing', () => {
     // A save never carries a stale copy.
     expect(showTimeline.serialize().layerTracks![0].template!.opacity).toBe(opacity);
   });
+
+  it('a project being opened holds the row sync until its own show is hydrated', async () => {
+    vi.useRealTimers();
+    const project = writable({ layers: [wall(1)] } as unknown as Project);
+    showTimeline.openDoc('timeline');
+    dispose = installShowTrackRuntime({ project });
+    await Promise.resolve();
+    showTimeline.syncStageRows([wall(1)], []);
+    const saved = JSON.parse(JSON.stringify(showTimeline.serialize()));
+    let hydrated = false;
+    const early: unknown[] = [];
+    const spy = vi.spyOn(showTimeline, 'syncStageRows').mockImplementation(() => { if (!hydrated) early.push(1); });
+    // What importProject does: the new layers land, the show follows a microtask later.
+    showTimeline.expectHydrate();
+    project.set({ layers: [{ ...wall(1), id: 'L2' }] } as unknown as Project);
+    queueMicrotask(() => { showTimeline.hydrate(saved); hydrated = true; showTimeline.hydrateSettled(); });
+    await new Promise((r) => setTimeout(r, 5));
+    expect(early).toEqual([]);
+    expect(spy).toHaveBeenCalled();
+    spy.mockRestore();
+  });
 });

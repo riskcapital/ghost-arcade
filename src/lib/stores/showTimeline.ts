@@ -2400,6 +2400,9 @@ function hydrateDoc(p: Record<string, unknown>, projectDir?: string): ShowDocFie
   };
 }
 
+/** See showTimeline.expectHydrate. */
+let hydratePending = false;
+
 export const showTimeline = {
   subscribe: store.subscribe,
 
@@ -4820,7 +4823,26 @@ export const showTimeline = {
    * music, tempo and camera lane to whichever has content (both, if both
    * do). The Show is active unless only the Timeline has anything.
    */
+  /**
+   * A project import is about to replace the show (its hydrate runs a
+   * microtask after the new layers land): until then the rows must not be
+   * reconciled, or the old show's rows meet the new project's layers.
+   */
+  expectHydrate() {
+    hydratePending = true;
+    // Backstop: an import that failed before queueing its hydrate never holds the rows past this task.
+    setTimeout(() => { hydratePending = false; }, 0);
+  },
+  /** The import that called expectHydrate is done (hydrated or not). */
+  hydrateSettled() {
+    hydratePending = false;
+  },
+  hydratePending(): boolean {
+    return hydratePending;
+  },
+
   hydrate(payload: unknown, projectDir?: string): void {
+    hydratePending = false;
     cancelRaf();
     forgetSections();
     forgetPhrases();
