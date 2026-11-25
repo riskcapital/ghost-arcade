@@ -181,7 +181,8 @@ export function applyLayerExtra(next: any, key: string, value: number | boolean,
     const [, c, axis] = key.split(':');
     const name = CORNER_KEYS[c as CornerShort];
     if (!name || !next.corners || (axis !== 'x' && axis !== 'y')) return true;
-    once('corners', () => { next.corners = { ...next.corners }; });
+    // On a copy that has been through here, the pins are set on the untransformed geometry.
+    once('corners', () => { next.corners = { ...(next._transformBase?.corners ?? next.corners) }; });
     once(`corner:${name}`, () => { next.corners[name] = { ...next.corners[name] }; });
     next.corners[name][axis] = num(value);
     return true;
@@ -192,7 +193,10 @@ export function applyLayerExtra(next: any, key: string, value: number | boolean,
     const c = Number(cs);
     const points = next.meshGrid?.points;
     if (!points?.[r]?.[c] || (axis !== 'x' && axis !== 'y')) return true;
-    once('mesh', () => { next.meshGrid = { ...next.meshGrid, points: [...next.meshGrid.points] }; });
+    once('mesh', () => {
+      const grid = next._transformBase?.meshGrid?.points ? next._transformBase.meshGrid : next.meshGrid;
+      next.meshGrid = { ...grid, points: [...grid.points] };
+    });
     once(`mesh:${r}`, () => { next.meshGrid.points[r] = [...next.meshGrid.points[r]]; });
     once(`mesh:${r}:${c}`, () => { next.meshGrid.points[r][c] = { ...next.meshGrid.points[r][c] }; });
     next.meshGrid.points[r][c][axis] = num(value);
@@ -255,7 +259,13 @@ export function finishLayerExtras(next: any, state: ExtraApplyState): void {
   // A list that has been through here can come back (the native sync
   // re-flushes what it last sent): start from the untransformed geometry
   // kept on the copy, or the move would add up frame after frame.
-  const base = next._transformBase ?? { corners: next.corners, meshGrid: next.meshGrid };
+  // Corner pins or mesh points set in this pass are the new untransformed geometry.
+  const prev = next._transformBase;
+  const pinned = state.copied.has('corners') || state.copied.has('mesh');
+  const base = prev && !pinned ? prev : {
+    corners: state.copied.has('corners') || !prev ? next.corners : prev.corners,
+    meshGrid: state.copied.has('mesh') || !prev ? next.meshGrid : prev.meshGrid,
+  };
   next._transformBase = base;
   next.corners = base.corners;
   next.meshGrid = base.meshGrid;

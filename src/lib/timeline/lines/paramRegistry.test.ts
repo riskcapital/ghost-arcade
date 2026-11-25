@@ -203,3 +203,21 @@ describe('add-on and Interactive values read back', () => {
   });
 });
 
+
+describe('a corner pin and a move in one set', () => {
+  it('on a copy flushed twice, the pin is kept and the move is not added up', () => {
+    const layer = createLayer('C1', 'Wall', 'media');
+    const next = { ...layer } as Layer;
+    const set = { 'corner:tl:x': 0.1, 'transform:x': 0.05 };
+    applyParamOverrides(next, set);
+    const once = JSON.stringify(next.corners);
+    expect(next.corners.topLeft.x).toBeCloseTo(0.15, 9);
+    // The native sync re-flushes the same copy.
+    applyParamOverrides(next, set);
+    expect(JSON.stringify(next.corners)).toBe(once);
+    expect(layer.corners.topLeft.x).not.toBeCloseTo(0.15, 9);
+    // The same copy with the pin moved: the new pin, moved once.
+    applyParamOverrides(next, { ...set, 'corner:tl:x': 0.2 });
+    expect(next.corners.topLeft.x).toBeCloseTo(0.25, 9);
+  });
+});
