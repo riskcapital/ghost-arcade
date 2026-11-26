@@ -2,6 +2,8 @@ import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+// @ts-expect-error The Electron side is plain ESM JavaScript.
+import { encodeCoreRequest } from '../../../electron/core-ipc-frames.js';
 import { createDefaultSVGContent, type SVGContent } from '$lib/types';
 import {
   SVG_NATIVE_SHADER_ID,
@@ -87,7 +89,7 @@ function createNativeRpc() {
         reject(new Error(`native render-core timed out handling ${method}: ${stderr.trim()}`));
       }, timeoutMs);
       pending.set(id, { timer, resolve, reject });
-      child.stdin?.write(`${JSON.stringify({ id, method, params })}\n`);
+      child.stdin?.write(encodeCoreRequest({ id, method, params }).payload);
     });
 
   return {

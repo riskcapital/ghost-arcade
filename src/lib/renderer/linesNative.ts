@@ -403,7 +403,7 @@ export function buildLinesNativeComputeGraph(options: LinesNativeGraphOptions) {
         id: uniformId,
         kind: 'uniform',
         byte_length: LINES_UNIFORM_BYTES,
-        initial_f32: Array.from(data),
+        initial_f32: data,
       }],
       passes: [],
       render_passes: [{

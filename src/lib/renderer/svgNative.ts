@@ -667,15 +667,15 @@ export function buildSvgNativeComputeGraph(options: SvgNativeGraphOptions) {
     state: null as null,
     config: {
       buffers: [
-        { id: uniformId, kind: 'uniform', byte_length: SVG_UNIFORM_BYTES, initial_f32: Array.from(header) },
+        { id: uniformId, kind: 'uniform', byte_length: SVG_UNIFORM_BYTES, initial_f32: header },
         {
           id: rawId, kind: 'storage', byte_length: SVG_MAX_POINTS * 16, persistent: true,
-          clear: reset, ...(reset ? { initial_f32: Array.from(geometry.raw) } : {}),
+          clear: reset, ...(reset ? { initial_f32: geometry.raw } : {}),
         },
         { id: outId, kind: 'storage', byte_length: SVG_MAX_POINTS * 16, persistent: true, clear: reset },
         {
           id: metaId, kind: 'storage', byte_length: SVG_MAX_CONTOURS * META_VEC4S * 16, persistent: true,
-          clear: reset, ...(reset ? { initial_f32: Array.from(geometry.meta) } : {}),
+          clear: reset, ...(reset ? { initial_f32: geometry.meta } : {}),
         },
         { id: boundsId, kind: 'storage', byte_length: SVG_MAX_CONTOURS * 16, persistent: true, clear: reset },
       ],

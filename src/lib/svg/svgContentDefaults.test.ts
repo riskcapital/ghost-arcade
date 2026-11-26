@@ -16,7 +16,7 @@ function header(content: SVGContent): number[] {
     frameIndex: 1,
     rasterReady: true,
   } as Parameters<typeof buildSvgNativeComputeGraph>[0]);
-  return graph.config.buffers[0].initial_f32 as number[];
+  return Array.from(graph.config.buffers[0].initial_f32 as ArrayLike<number>);
 }
 
 describe('new SVG layers', () => {

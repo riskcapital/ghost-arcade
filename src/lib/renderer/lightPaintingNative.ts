@@ -498,7 +498,7 @@ export function buildLightPaintingNativeComputeGraph(options: LightPaintingNativ
         id: uniformId,
         kind: 'uniform',
         byte_length: LIGHT_PAINTING_UNIFORM_BYTES,
-        initial_f32: Array.from(data),
+        initial_f32: data,
       }],
       passes: [],
       readbacks: [],

@@ -73,7 +73,7 @@ function createStroke(type: LightPaintingBrushType): LightPaintingStroke {
 }
 
 function uniformData(graph: ReturnType<typeof buildLightPaintingNativeComputeGraph>): number[] {
-  return graph.config.buffers[0]!.initial_f32 as number[];
+  return Array.from(graph.config.buffers[0]!.initial_f32 as ArrayLike<number>);
 }
 
 function strokeField(data: number[], strokeIndex: number, f32Offset: number): number {
