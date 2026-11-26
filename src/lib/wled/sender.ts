@@ -33,6 +33,18 @@
  * 5. **Brightness + gamma applied in JS, not GLSL.** Keeps the
  *    WebGL render path untouched. The cost is one pass over up to 490 RGB
  *    pixels per frame — trivial.
+ *
+ * 6. **The render core sends when it can.** Under the native driver
+ *    (startWLEDNativeOutput) every controller the core can drive alone
+ *    goes to it as a plan (corePlan.ts): the core samples its own program
+ *    picture and sends on its own clock with the same keep-alive rule and
+ *    link tracking, and the composite mirror here stops once no controller
+ *    is left on this path. Controllers that an LED FX reaches, that the
+ *    Timeline's LED rows drive, or that a Timeline line dims stay here,
+ *    because those are computed in the editor every frame; so do host
+ *    names, GA_CORE_WLED=0, an old core and any failure. The main process
+ *    (electron/wled-route.cjs) moves each controller between the two
+ *    without a gap the strip could show.
  */
 
 import { writable } from 'svelte/store';
@@ -52,7 +64,10 @@ import { lineLedOverrides } from '../timeline/lines/lineRuntime';
 import { applyLedControllerOverrides, applyLedEffectOverrides } from '../timeline/lines/stageLedParams';
 import { currentLedTimeline } from '../timeline/leds/ledRuntime';
 import { controllerNeedsPicture, renderTimelineLeds } from '../timeline/leds/ledRender';
-import { compositeMirrorCanvas, compositeMirrorPixels } from '../sync/nativeCompositeMirror';
+import { acquireNativeCompositeMirror, compositeMirrorCanvas, compositeMirrorPixels, type CompositeMirrorHandle } from '../sync/nativeCompositeMirror';
+import { onLedTimelineChange } from '../timeline/leds/ledRuntime';
+import { controlLineFrame } from '../timeline/lines/lineRuntime';
+import { buildCoreWLEDPlan, coreWLEDBlocker, CORE_WLED_MAX_DIM, CORE_WLED_FPS } from './corePlan';
 
 /** Per-controller runtime state. */
 interface SenderState {
@@ -124,6 +139,8 @@ export function setWLEDForceBlack(on: boolean): void {
   forceBlack = on;
   // Send the change at once rather than at the next keepalive.
   for (const state of senders.values()) state.lastWireMs = -Infinity;
+  // The core's controllers get it with their plan.
+  reconcileNative();
 }
 export function wledForceBlack(): boolean {
   return forceBlack;
@@ -373,6 +390,8 @@ export function tickWLEDSenders(canvas: HTMLCanvasElement) {
   let imageData: ReturnType<typeof framePixels> | undefined;
   for (const state of senders.values()) {
     if (!state.controller.enabled) continue;
+    // The render core sends this one, or is about to.
+    if (coreIds.has(state.controller.id) || corePendingIds.has(state.controller.id)) continue;
     if (state.inFlight) continue;
     if (now - state.lastSendMs < MIN_SEND_INTERVAL_MS) continue;
 
@@ -465,4 +484,275 @@ export function stopWLEDSenders(canvas: HTMLCanvasElement) {
   wledTelemetry.set({});
   frameTapCanvas = null;
   frameTapCtx = null;
+}
+
+// ─── Render core output (native driver) ───────────────────────────────
+
+let nativeRunning = false;
+let nativeProject: Project | null = null;
+let nativeMirror: CompositeMirrorHandle | null = null;
+let nativeCanvas: HTMLCanvasElement | null = null;
+let nativeUnsubscribers: Array<() => void> = [];
+/** Controllers the core sends; offered to it and not yet answered. */
+const coreIds = new Set<string>();
+let corePendingIds = new Set<string>();
+let corePlanJson: string | null = null;
+let coreRefusedJson: string | null = null;
+let coreDisabled = false;
+let coreInFlight = false;
+let coreDirty = false;
+let corePoll: ReturnType<typeof setInterval> | null = null;
+let corePollInFlight = false;
+/** What the last plan was built from: rebuilt only when this changes. */
+let corePlanKey = '';
+let coreControllersRef: unknown = null;
+// The picture's aspect (auto-grid maps follow it): from the mirror while
+// it runs, else from the core's own picture.
+let coreAspect = 16 / 9;
+const CORE_POLL_MS = 250;
+
+function aspectKey(aspect: number): number {
+  return Math.round(aspect * 10000);
+}
+
+/** Send the next frame from here at once (a controller coming back from the core). */
+function resendFromHere(ids?: Iterable<string>) {
+  for (const id of ids ?? senders.keys()) {
+    const state = senders.get(id);
+    if (state) state.lastWireMs = -Infinity;
+  }
+}
+
+function startCorePoll() {
+  if (corePoll) return;
+  corePoll = setInterval(pollCore, CORE_POLL_MS);
+}
+
+function stopCorePoll() {
+  if (corePoll) clearInterval(corePoll);
+  corePoll = null;
+  corePollInFlight = false;
+}
+
+function fromHex(text: unknown): Uint8Array | null {
+  if (typeof text !== 'string' || text.length % 2 !== 0) return null;
+  const out = new Uint8Array(text.length / 2);
+  for (let i = 0; i < out.length; i += 1) out[i] = parseInt(text.slice(i * 2, i * 2 + 2), 16);
+  return out;
+}
+
+interface CoreStats {
+  core?: boolean;
+  controllers?: Array<{ controllerId?: string; source?: string; rgb?: string; live?: boolean }>;
+  pictureWidth?: number;
+  pictureHeight?: number;
+}
+
+function pollCore() {
+  if (corePollInFlight || coreIds.size === 0) return;
+  corePollInFlight = true;
+  invoke('wled_get_stats', {})
+    .then((result: CoreStats | undefined) => {
+      corePollInFlight = false;
+      if (coreIds.size === 0 || !nativeRunning) return;
+      if (result?.core !== true) {
+        // The core stopped (or restarted without the plan): send from here.
+        console.warn('[WLED] render core output lost; sending from the app');
+        coreRefusedJson = corePlanJson;
+        corePlanJson = null;
+        resendFromHere(coreIds);
+        coreIds.clear();
+        stopCorePoll();
+        reconcileNative();
+        return;
+      }
+      const now = Date.now();
+      const updates: Record<string, WLEDTelemetry> = {};
+      for (const entry of result.controllers ?? []) {
+        const id = entry.controllerId;
+        if (!id || !coreIds.has(id) || !entry.live) continue;
+        const source = fromHex(entry.source);
+        const rgb = fromHex(entry.rgb);
+        if (!source || !rgb) continue;
+        updates[id] = { sourceColor: averageColorHex(source), outputColor: averageColorHex(rgb), updatedAt: now, timeline: false, pixels: rgb };
+      }
+      if (Object.keys(updates).length) wledTelemetry.update(telemetry => ({ ...telemetry, ...updates }));
+      // Auto-grid maps follow the picture's aspect: rebuild when the core's differs.
+      const width = result.pictureWidth ?? 0;
+      const height = result.pictureHeight ?? 0;
+      if (!nativeMirror && width > 0 && height > 0 && aspectKey(width / height) !== aspectKey(coreAspect)) {
+        coreAspect = width / height;
+        reconcileNative();
+      }
+    })
+    .catch(() => { corePollInFlight = false; });
+}
+
+function ensureNativeMirror() {
+  if (nativeMirror) return;
+  nativeMirror = acquireNativeCompositeMirror({
+    maxDim: CORE_WLED_MAX_DIM,
+    fps: CORE_WLED_FPS,
+    onFrame: () => { if (nativeMirror) tickWLEDSenders(nativeMirror.canvas); },
+  });
+  if (nativeCanvas !== nativeMirror.canvas) {
+    nativeCanvas = nativeMirror.canvas;
+    startWLEDSenders(nativeCanvas, 'native');
+  }
+}
+
+function releaseNativeMirror() {
+  if (!nativeMirror) return;
+  const canvas = nativeMirror.canvas;
+  if (canvas.width > 0 && canvas.height > 0) coreAspect = canvas.width / canvas.height;
+  nativeMirror.release();
+  nativeMirror = null;
+}
+
+function stopCore() {
+  stopCorePoll();
+  const had = coreIds.size > 0 || corePlanJson !== null || coreInFlight;
+  coreIds.clear();
+  corePendingIds = new Set();
+  corePlanJson = null;
+  corePlanKey = '';
+  if (had) invoke('wled_core_stop', {}).catch(() => { /* main process gone */ });
+}
+
+function stopNativeAll() {
+  stopCore();
+  releaseNativeMirror();
+  if (nativeCanvas) {
+    stopWLEDSenders(nativeCanvas);
+    nativeCanvas = null;
+  }
+}
+
+/** Offer the core the controllers it can drive, or take them back. */
+function requestCore(eligible: WLEDController[]) {
+  if (coreInFlight) {
+    coreDirty = true;
+    return;
+  }
+  if (coreDisabled) eligible = [];
+  const key = `${eligible.map(c => c.id).join('|')}#${forceBlack ? 1 : 0}#${aspectKey(coreAspect)}`;
+  const controllers = nativeProject?.wledControllers;
+  if (key === corePlanKey && controllers === coreControllersRef) return;
+  corePlanKey = key;
+  coreControllersRef = controllers;
+  if (eligible.length === 0) {
+    if (coreIds.size > 0 || corePlanJson) {
+      resendFromHere(coreIds);
+      stopCore();
+    }
+    return;
+  }
+  const plan = buildCoreWLEDPlan(eligible, coreAspect, forceBlack);
+  const json = JSON.stringify(plan);
+  if (json === corePlanJson || json === coreRefusedJson) return;
+  const offered = new Set(eligible.map(c => c.id));
+  // Leaving the core: sent from here again from the next frame on (the
+  // main process takes each back from the core at its first frame).
+  for (const id of Array.from(coreIds)) {
+    if (!offered.has(id)) {
+      coreIds.delete(id);
+      resendFromHere([id]);
+    }
+  }
+  // Newly offered: held here until the core answers, so the two never
+  // send different frames to one strip.
+  corePendingIds = new Set(Array.from(offered).filter(id => !coreIds.has(id)));
+  coreInFlight = true;
+  coreDirty = false;
+  invoke('wled_core_configure', plan)
+    .then((result: { ok?: boolean; reason?: string } | undefined) => {
+      coreInFlight = false;
+      corePendingIds = new Set();
+      if (!nativeRunning) return;
+      if (result?.ok === true) {
+        coreIds.clear();
+        for (const id of offered) coreIds.add(id);
+        corePlanJson = json;
+        coreRefusedJson = null;
+        startCorePoll();
+      } else {
+        if (coreIds.size) console.warn('[WLED] render core output stopped:', result?.reason);
+        if (typeof result?.reason === 'string' && result.reason.startsWith('disabled')) coreDisabled = true;
+        resendFromHere(offered);
+        coreIds.clear();
+        corePlanJson = null;
+        coreRefusedJson = json;
+        stopCorePoll();
+      }
+      corePlanKey = '';
+      reconcileNative();
+    })
+    .catch(() => {
+      coreInFlight = false;
+      corePendingIds = new Set();
+      resendFromHere(offered);
+      coreIds.clear();
+      corePlanJson = null;
+      coreRefusedJson = json;
+      corePlanKey = '';
+      reconcileNative();
+    });
+}
+
+/** Match the core plan and the mirror to the project, the Timeline and install mode. */
+function reconcileNative() {
+  if (!nativeRunning) return;
+  const p = nativeProject;
+  const enabled = (p?.wledControllers ?? []).filter(c => c.enabled);
+  if (!p || enabled.length === 0) {
+    stopNativeAll();
+    return;
+  }
+  if (nativeMirror) {
+    const canvas = nativeMirror.canvas;
+    if (canvas.width > 0 && canvas.height > 0) coreAspect = canvas.width / canvas.height;
+  }
+  const ctx = {
+    timeline: currentLedTimeline(),
+    lines: lineLedOverrides(),
+    groups: p.wledGroups ?? [],
+    effects: p.wledEffects ?? [],
+    automation: p.wledEffectAutomation,
+  };
+  requestCore(enabled.filter(c => coreWLEDBlocker(c, ctx) === null));
+  // The mirror runs while any controller is sent from here.
+  if (enabled.some(c => !coreIds.has(c.id) && !corePendingIds.has(c.id))) ensureNativeMirror();
+  else releaseNativeMirror();
+  if (coreDirty && !coreInFlight) {
+    coreDirty = false;
+    reconcileNative();
+  }
+}
+
+/**
+ * WLED output under the native driver: the render core sends what it can,
+ * the composite mirror feeds the rest from here. Returns the teardown.
+ */
+export function startWLEDNativeOutput(): () => void {
+  if (nativeRunning) return () => {};
+  nativeRunning = true;
+  coreDisabled = false;
+  coreRefusedJson = null;
+  nativeUnsubscribers = [
+    project.subscribe(p => {
+      nativeProject = p;
+      reconcileNative();
+    }),
+    // The Timeline's lines and LED rows decide which controllers the core may take.
+    controlLineFrame.subscribe(() => reconcileNative()),
+    onLedTimelineChange(() => reconcileNative()),
+  ];
+  return () => {
+    if (!nativeRunning) return;
+    for (const unsubscribe of nativeUnsubscribers) unsubscribe();
+    nativeUnsubscribers = [];
+    stopNativeAll();
+    nativeRunning = false;
+    nativeProject = null;
+  };
 }

@@ -145,4 +145,17 @@ describe('WLED links: late errors', () => {
     expect(l.size()).toBe(0);
     expect(changes).toEqual([]);
   });
+
+  it('carries on from a seeded state (a controller back from the render core) without reporting it again', async () => {
+    const wled = await fakeWled();
+    const changes: any[] = [];
+    links = createWledLinks({ confirmMs: 200, onChange: (c: any) => changes.push(c) });
+    links.seed({ controllerId: 'strip', name: 'Strip', ip: '127.0.0.1', port: wled.port, state: 'down', downSince: Date.now() - 5000, errors: 2, sent: 40 });
+    expect(links.list()[0]).toMatchObject({ state: 'down', errors: 2, sent: 40 });
+    expect(changes).toEqual([]);
+    await pump(400, wled.port);
+    expect(changes.map((c) => [c.state, c.previous])).toEqual([['up', 'down']]);
+    expect(changes[0].downForMs).toBeGreaterThanOrEqual(5000);
+    await wled.close();
+  });
 });

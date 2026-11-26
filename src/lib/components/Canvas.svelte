@@ -108,7 +108,7 @@
   import { initStateBroadcast, destroyStateBroadcast } from '$lib/sync/stateBroadcast';
   import { stageRehearsalRender } from '$lib/show/rehearsal/stageRehearsal';
   import { startAudioBroadcast, stopAudioBroadcast, broadcastAudioFrame } from '$lib/sync/audioBroadcast';
-  import { startWLEDSenders, stopWLEDSenders, tickWLEDSenders } from '$lib/wled/sender';
+  import { startWLEDNativeOutput, startWLEDSenders, stopWLEDSenders, tickWLEDSenders } from '$lib/wled/sender';
   import { startPixelMapOutput } from '$lib/pixelmap/sender';
   import { startModulationBroadcast, stopModulationBroadcast } from '$lib/sync/modulationBroadcast';
   import { stopOutputPixelBroadcast } from '$lib/sync/outputPixelBroadcast';
@@ -2618,13 +2618,10 @@
 
       // WLED under the native driver: the senders used to register the
       // WebGL canvas, which is a cleared underlay here — content-aware
-      // sampling read solid black (pattern modes were unaffected). Feed
-      // them the composite mirror instead. The mirror snapshot pump only
-      // runs while an enabled controller exists, so projects without WLED
-      // pay nothing.
-      let wledMirror: import('$lib/sync/nativeCompositeMirror').CompositeMirrorHandle | null = null;
-      let wledDisposed = false;
-      let wledWanted = false;
+      // sampling read solid black (pattern modes were unaffected). The
+      // render core sends every controller it can drive alone; the rest are
+      // fed from the composite mirror, whose snapshot pump only runs while
+      // such a controller is enabled, so projects without WLED pay nothing.
       // Only the editor sends: the Stage Sim and output windows mount this
       // canvas too, and a second sender there sent its own frames to the
       // same controllers (without the Timeline's LED rows, which only the
@@ -2634,37 +2631,10 @@
       // module has already read it, so `isOutputMode` misses the Stage Sim.)
       const ledSender = !isOsrMode && !isOutputMode && !stage3DOutput
         && !(window as unknown as { __OUTPUT_WINDOW_MODE__?: boolean }).__OUTPUT_WINDOW_MODE__;
-      const wledUnsub = project.subscribe((p) => {
-        const wantsWled = ledSender && (p.wledControllers ?? []).some((c: { enabled?: boolean }) => c.enabled);
-        wledWanted = wantsWled;
-        if (wantsWled && !wledMirror) {
-          void import('$lib/sync/nativeCompositeMirror').then(({ acquireNativeCompositeMirror }) => {
-            if (wledDisposed || !wledWanted || wledMirror) return;
-            // 192 px: the size the senders sample at (they read these pixels
-            // directly; a larger frame only costs more IPC and decoding).
-            wledMirror = acquireNativeCompositeMirror({ maxDim: 192, fps: 20,
-              onFrame: () => { if (wledMirror) tickWLEDSenders(wledMirror.canvas); },
-            });
-            startWLEDSenders(wledMirror.canvas, 'native');
-          });
-        } else if (!wantsWled && wledMirror) {
-          stopWLEDSenders(wledMirror.canvas);
-          wledMirror.release();
-          wledMirror = null;
-        }
-      });
+      if (ledSender) nativeTeardownCallbacks.push(startWLEDNativeOutput());
       // Art-Net / sACN pixel mapping samples the same composite mirror.
       // It idles (no timer, no snapshots) until a fixture is enabled.
       if (ledSender) nativeTeardownCallbacks.push(startPixelMapOutput());
-      nativeTeardownCallbacks.push(() => {
-        wledDisposed = true;
-        wledUnsub();
-        if (wledMirror) {
-          stopWLEDSenders(wledMirror.canvas);
-          wledMirror.release();
-          wledMirror = null;
-        }
-      });
 
       // No mouse tracking here: the pointer position only feeds the legacy
       // engine's splat, fluid and particle passes, which do not run under the

@@ -373,6 +373,10 @@ const RENDERER_COMMANDS = [
   'native_renderer_ndi_slices_start',
   'native_renderer_ndi_slices_stop',
   'native_renderer_ndi_state',
+  // WLED output sampled and sent by the core (main process only).
+  'native_renderer_wled_configure',
+  'native_renderer_wled_stop',
+  'native_renderer_wled_state',
   // How a video file will play: hardware, HAP, software (and why), or not at all.
   'native_renderer_probe_video',
   'native_renderer_set_stage3d_scene',
@@ -914,6 +918,14 @@ class NativeRendererBroker {
       case 'native_renderer_ndi_state':
         // A probe opens the NDI runtime the first time, which can take a moment.
         return this.sendIfRunning('ndi_state', args, { fallback: null, timeoutMs: 5000 });
+      // WLED output from the core: a null answer puts the app's own
+      // sockets back in charge (wled-route.cjs).
+      case 'native_renderer_wled_configure':
+        return this.sendIfRunning('wled_configure', args, { fallback: null, timeoutMs: 5000 });
+      case 'native_renderer_wled_stop':
+        return this.sendIfRunning('wled_stop', args, { fallback: null, timeoutMs: 5000 });
+      case 'native_renderer_wled_state':
+        return this.sendIfRunning('wled_state', args, { fallback: null, timeoutMs: 2500 });
       case 'native_renderer_probe_video':
         // Opens a decoder (and on Windows decodes a frame); ffmpeg's check
         // alone may take up to 10 s on a slow disk.
