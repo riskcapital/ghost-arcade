@@ -155,6 +155,10 @@ pub(crate) struct SliceOutputSpec {
     /// stays when the mesh has not arrived yet, so it attaches when it does.
     pub(crate) mirror_mesh_id: Option<String>,
     pub(crate) mirror_mesh: Option<Arc<MirrorMesh>>,
+    /// The Syphon / Spout sender this Screen publishes under, when it is a
+    /// sender Screen and the app has the core publish Screen senders
+    /// (texture_share.rs).
+    pub(crate) sender: Option<String>,
 }
 
 pub(crate) fn output_dimensions_admitted(width: u32, height: u32) -> bool {

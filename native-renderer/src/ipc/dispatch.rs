@@ -493,7 +493,8 @@ impl App {
             // still works; this is the path that skips the readback entirely.
             #[cfg(any(target_os = "macos", target_os = "windows"))]
             "start_native_recording" => self.start_native_recording_rpc(&req.params),
-            "texture_share_start" | "texture_share_stop" | "texture_share_state" => {
+            "texture_share_start" | "texture_share_stop" | "texture_share_state"
+            | "texture_share_slices_start" | "texture_share_slices_stop" => {
                 self.texture_share_rpc(req.method.as_str(), &req.params)
             }
             #[cfg(any(target_os = "macos", target_os = "windows"))]

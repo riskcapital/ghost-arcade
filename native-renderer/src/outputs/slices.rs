@@ -133,6 +133,7 @@ impl RenderState {
                     self.pending_slice_presents.push(frame);
                 }
             }
+            self.capture_slice_share(&mut encoder, spec);
             self.outputs_encoder = Some(encoder);
             // The mirror pass has one uniform for every mirror Screen: send
             // this one before the next mirror Screen rewrites it.
@@ -390,6 +391,7 @@ impl RenderState {
                     &self.device, &self.wgpu_adapter, &mut self.linux_slice_windows, &spec.id, &mut encoder, &target.render_view);
             }
         }
+        self.capture_slice_share(&mut encoder, spec);
         // Its own submit: the projector view renderer has one set of
         // uniforms. Nothing in the outputs encoder reads what it draws.
         self.frame_submission = Some(churn_probe::submit(&self.queue, Some(encoder.finish())));
@@ -672,13 +674,19 @@ impl App {
                 }
                 let mirror_mesh_id = string_at(entry, &["mirrorMeshId"]).filter(|id| !id.is_empty());
                 let mirror_mesh = mirror_mesh_id.as_ref().and_then(|id| self.mirror_meshes.get(id).cloned());
-                specs.push(SliceOutputSpec { id, width, height, stage, projector_view, mirror_mesh_id, mirror_mesh });
+                let sender = string_at(entry, &["senderName"])
+                    .map(|name| name.trim().to_string())
+                    .filter(|name| !name.is_empty());
+                specs.push(SliceOutputSpec { id, width, height, stage, projector_view, mirror_mesh_id, mirror_mesh, sender });
             }
         }
         let ids: Vec<String> = specs.iter().map(|spec| spec.id.clone()).collect();
         #[cfg(any(target_os = "macos", target_os = "windows"))]
         if let Some(renderer) = self.renderer.as_mut() {
             renderer.slice_targets.retain(|id, _| ids.contains(id));
+        }
+        if let Some(renderer) = self.renderer.as_mut() {
+            renderer.retain_slice_shares(&specs);
         }
         self.slice_outputs = Arc::new(specs);
         Ok(json!({ "slices": ids }))

@@ -52,6 +52,8 @@ pub const CORE_RPC_METHODS: &[&str] = &[
     "texture_share_start",
     "texture_share_stop",
     "texture_share_state",
+    "texture_share_slices_start",
+    "texture_share_slices_stop",
     "get_output_shared_texture_snapshot",
     "set_stage3d_scene",
     "get_stage3d_scene_summary",

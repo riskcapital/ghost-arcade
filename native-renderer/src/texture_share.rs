@@ -15,7 +15,14 @@
 //! The wanted sender (its name) is kept for the life of the process, apart
 //! from the renderer: a renderer rebuilt after a device loss starts
 //! publishing again on its first frame without the app asking twice.
+//!
+//! Screens (slice outputs) can send too: once the app switches Screen
+//! senders on (`texture_share_slices_start`), every Screen whose spec
+//! carries a sender name gets its own Syphon server / Spout sender, fed from
+//! the Screen's own target after its crop, warp and grade. A Screen without
+//! a sender name costs nothing here.
 
+use std::collections::HashMap;
 use std::sync::Mutex;
 
 use serde_json::{json, Value};
@@ -29,7 +36,7 @@ use std::sync::Arc;
 #[cfg(target_os = "macos")]
 use std::time::Instant;
 
-use crate::{App, RenderState};
+use crate::{App, RenderState, SliceOutputSpec};
 
 #[cfg(target_os = "macos")]
 use crate::mac_syphon;
@@ -58,6 +65,25 @@ fn wanted() -> Option<ShareRequest> {
 
 fn set_wanted(request: Option<ShareRequest>) {
     if let Ok(mut wanted) = WANTED.lock() {
+        *wanted = request;
+    }
+}
+
+/// Screen senders switched on, and what each sender says about its app.
+#[derive(Clone, Debug, PartialEq)]
+struct SliceShareRequest {
+    app_name: Option<String>,
+    host_path: Option<String>,
+}
+
+static SLICES_WANTED: Mutex<Option<SliceShareRequest>> = Mutex::new(None);
+
+fn slices_wanted() -> Option<SliceShareRequest> {
+    SLICES_WANTED.lock().map(|w| w.clone()).unwrap_or(None)
+}
+
+fn set_slices_wanted(request: Option<SliceShareRequest>) {
+    if let Ok(mut wanted) = SLICES_WANTED.lock() {
         *wanted = request;
     }
 }
@@ -110,10 +136,10 @@ struct Publisher {
 
 #[cfg(target_os = "macos")]
 impl Publisher {
-    fn new(request: &ShareRequest) -> Result<Self, String> {
+    fn new(name: &str, app_name: Option<&str>) -> Result<Self, String> {
         Ok(Self {
-            name: request.name.clone(),
-            server: mac_syphon::SyphonServer::new(&request.name, request.app_name.as_deref())?,
+            name: name.to_string(),
+            server: mac_syphon::SyphonServer::new(name, app_name)?,
             slots: Vec::new(),
             width: 0,
             height: 0,
@@ -143,6 +169,102 @@ impl Publisher {
             self.window_started = Instant::now();
         }
     }
+
+    /// Inside `encoder`, after `source` has been written: copy it into a
+    /// free publish surface. A new size or format makes new surfaces.
+    fn capture(
+        &mut self,
+        device: &wgpu::Device,
+        encoder: &mut wgpu::CommandEncoder,
+        source: &wgpu::Texture,
+        width: u32,
+        height: u32,
+        format: wgpu::TextureFormat,
+    ) -> Result<(), String> {
+        if self.width != width || self.height != height || self.format != Some(format) {
+            // Frames still in flight belong to the old surfaces and are
+            // dropped with them.
+            self.pending.clear();
+            self.unsubmitted.clear();
+            self.slots.clear();
+            self.width = width;
+            self.height = height;
+            self.format = Some(format);
+            for index in 0..SLOTS {
+                let made = RenderState::create_iosurface_texture(
+                    device,
+                    width,
+                    height,
+                    format,
+                    "Ghost Render Core Syphon Publish Surface",
+                    wgpu::TextureUsages::COPY_DST,
+                    wgpu::TextureUses::COPY_DST,
+                )
+                .and_then(|(surface, texture)| {
+                    self.server.set_slot(index as u32, &surface, width, height).map(|()| Slot { surface, texture })
+                });
+                match made {
+                    Ok(slot) => self.slots.push(slot),
+                    Err(error) => {
+                        self.slots.clear();
+                        return Err(error);
+                    }
+                }
+            }
+        }
+        if self.slots.is_empty() {
+            return Ok(());
+        }
+        let Some(slot) = (0..self.slots.len()).find(|slot| !self.slot_busy(*slot)) else {
+            self.skipped += 1;
+            return Ok(());
+        };
+        encoder.copy_texture_to_texture(
+            source.as_image_copy(),
+            self.slots[slot].texture.as_image_copy(),
+            wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
+        );
+        let _keep_surface = &self.slots[slot].surface;
+        self.unsubmitted.push(Pending { slot, done: Arc::new(AtomicBool::new(false)) });
+        Ok(())
+    }
+
+    /// Right after the submission that carried this frame's capture.
+    fn submitted(&mut self, queue: &wgpu::Queue) {
+        for capture in self.unsubmitted.drain(..) {
+            let done = Arc::clone(&capture.done);
+            queue.on_submitted_work_done(move || done.store(true, Ordering::Release));
+            self.pending.push_back(capture);
+        }
+    }
+
+    /// Publish the newest capture whose GPU work has completed. Older
+    /// completed captures are passed over: a client wants the latest frame.
+    fn drain(&mut self) {
+        let mut newest = None;
+        while self.pending.front().is_some_and(|capture| capture.done.load(Ordering::Acquire)) {
+            newest = self.pending.pop_front().map(|capture| capture.slot);
+        }
+        if let Some(slot) = newest {
+            // Metal writes rows top down; Syphon's frames are OpenGL's,
+            // bottom up, so the surface is published as flipped.
+            if self.server.publish(slot as u32, true) {
+                self.note_published();
+            }
+        }
+    }
+
+    fn state(&self) -> Value {
+        json!({
+            "name": self.name,
+            "width": self.width,
+            "height": self.height,
+            "frames_published": self.published,
+            "frames_skipped": self.skipped,
+            "fps": (self.fps * 10.0).round() / 10.0,
+            "has_clients": self.server.has_clients(),
+        })
+    }
 }
 
 #[derive(Default)]
@@ -152,6 +274,28 @@ pub(crate) struct TextureShare {
     #[cfg(target_os = "windows")]
     publisher: Option<win_spout::SpoutSender>,
     last_error: Option<String>,
+    /// One sender per Screen that sends, by Screen id.
+    #[cfg(target_os = "macos")]
+    slices: HashMap<String, Publisher>,
+    #[cfg(target_os = "windows")]
+    slices: HashMap<String, win_spout::SpoutSender>,
+    /// Screens rendered this frame whose sender is fed after the submit
+    /// (Windows): (Screen id, sender name).
+    #[cfg(target_os = "windows")]
+    slice_frame: Vec<(String, String)>,
+    /// Screens whose sender could not open or send: (sender name, reason).
+    /// Not retried until the Screen's sender changes or the app asks again.
+    slice_errors: HashMap<String, (String, String)>,
+}
+
+#[cfg(target_os = "macos")]
+fn slice_sender_name(publisher: &Publisher) -> &str {
+    &publisher.name
+}
+
+#[cfg(target_os = "windows")]
+fn slice_sender_name(sender: &win_spout::SpoutSender) -> &str {
+    sender.name()
 }
 
 impl RenderState {
@@ -171,7 +315,7 @@ impl RenderState {
             share.publisher = None;
         }
         if share.publisher.is_none() {
-            match Publisher::new(&request) {
+            match Publisher::new(&request.name, request.app_name.as_deref()) {
                 Ok(publisher) => {
                     share.publisher = Some(publisher);
                     share.last_error = None;
@@ -189,58 +333,11 @@ impl RenderState {
             }
         }
         let publisher = share.publisher.as_mut().expect("publisher just ensured");
-        if publisher.width != export.width
-            || publisher.height != export.height
-            || publisher.format != Some(export.format)
+        if let Err(error) =
+            publisher.capture(&self.device, encoder, &export.texture, export.width, export.height, export.format)
         {
-            // A new output size: new surfaces. Frames still in flight belong
-            // to the old ones and are dropped with them.
-            publisher.pending.clear();
-            publisher.unsubmitted.clear();
-            publisher.slots.clear();
-            for index in 0..SLOTS {
-                let made = RenderState::create_iosurface_texture(
-                    &self.device,
-                    export.width,
-                    export.height,
-                    export.format,
-                    "Ghost Render Core Syphon Publish Surface",
-                    wgpu::TextureUsages::COPY_DST,
-                    wgpu::TextureUses::COPY_DST,
-                )
-                .and_then(|(surface, texture)| {
-                    publisher
-                        .server
-                        .set_slot(index as u32, &surface, export.width, export.height)
-                        .map(|()| Slot { surface, texture })
-                });
-                match made {
-                    Ok(slot) => publisher.slots.push(slot),
-                    Err(error) => {
-                        share.last_error = Some(error);
-                        publisher.slots.clear();
-                        break;
-                    }
-                }
-            }
-            publisher.width = export.width;
-            publisher.height = export.height;
-            publisher.format = Some(export.format);
+            share.last_error = Some(error);
         }
-        if publisher.slots.is_empty() {
-            return;
-        }
-        let Some(slot) = (0..publisher.slots.len()).find(|slot| !publisher.slot_busy(*slot)) else {
-            publisher.skipped += 1;
-            return;
-        };
-        encoder.copy_texture_to_texture(
-            export.texture.as_image_copy(),
-            publisher.slots[slot].texture.as_image_copy(),
-            wgpu::Extent3d { width: export.width, height: export.height, depth_or_array_layers: 1 },
-        );
-        let _keep_surface = &publisher.slots[slot].surface;
-        publisher.unsubmitted.push(Pending { slot, done: Arc::new(AtomicBool::new(false)) });
     }
 
     #[cfg(not(target_os = "macos"))]
@@ -250,13 +347,8 @@ impl RenderState {
     pub(crate) fn texture_share_submitted(&mut self) {
         #[cfg(target_os = "macos")]
         {
-            let Some(publisher) = self.texture_share.publisher.as_mut() else {
-                return;
-            };
-            for capture in publisher.unsubmitted.drain(..) {
-                let done = Arc::clone(&capture.done);
-                self.queue.on_submitted_work_done(move || done.store(true, Ordering::Release));
-                publisher.pending.push_back(capture);
+            if let Some(publisher) = self.texture_share.publisher.as_mut() {
+                publisher.submitted(&self.queue);
             }
         }
         #[cfg(target_os = "windows")]
@@ -307,43 +399,191 @@ impl RenderState {
     pub(crate) fn drain_texture_share(&mut self) {
         #[cfg(target_os = "macos")]
         {
-            let Some(publisher) = self.texture_share.publisher.as_mut() else {
+            if let Some(publisher) = self.texture_share.publisher.as_mut() {
+                publisher.drain();
+            }
+            for publisher in self.texture_share.slices.values_mut() {
+                publisher.drain();
+            }
+        }
+    }
+
+    /// Drop the senders of Screens that closed, were renamed or stopped
+    /// sending. Nothing to do (and no cost) while no Screen sends.
+    pub(crate) fn retain_slice_shares(&mut self, specs: &[SliceOutputSpec]) {
+        let share = &mut self.texture_share;
+        #[cfg(any(target_os = "macos", target_os = "windows"))]
+        let idle = share.slices.is_empty() && share.slice_errors.is_empty();
+        #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+        let idle = share.slice_errors.is_empty();
+        if idle {
+            return;
+        }
+        let on = slices_wanted().is_some();
+        let keep = |id: &str, name: &str| {
+            on && specs.iter().any(|spec| spec.id == id && spec.sender.as_deref() == Some(name))
+        };
+        #[cfg(any(target_os = "macos", target_os = "windows"))]
+        share.slices.retain(|id, sender| keep(id, slice_sender_name(sender)));
+        share.slice_errors.retain(|id, (name, _)| keep(id, name));
+    }
+
+    /// Inside the encoder that drew a Screen, after its export was written:
+    /// hand the Screen's frame to its sender. macOS copies it into a publish
+    /// surface here; Windows sends it once the frame is submitted.
+    pub(crate) fn capture_slice_share(&mut self, encoder: &mut wgpu::CommandEncoder, spec: &SliceOutputSpec) {
+        let Some(name) = spec.sender.as_deref() else {
+            return;
+        };
+        let Some(request) = slices_wanted() else {
+            return;
+        };
+        if self.texture_share.slice_errors.contains_key(&spec.id) {
+            return;
+        }
+        #[cfg(target_os = "macos")]
+        {
+            let Some(target) = self.slice_targets.get(&spec.id) else {
                 return;
             };
-            let mut newest = None;
-            while publisher
-                .pending
-                .front()
-                .is_some_and(|capture| capture.done.load(Ordering::Acquire))
-            {
-                newest = publisher.pending.pop_front().map(|capture| capture.slot);
+            let share = &mut self.texture_share;
+            if !share.slices.contains_key(&spec.id) {
+                match Publisher::new(name, request.app_name.as_deref()) {
+                    Ok(publisher) => {
+                        share.slices.insert(spec.id.clone(), publisher);
+                    }
+                    Err(error) => {
+                        eprintln!("[ghost-core] Syphon server for Screen \"{name}\" unavailable: {error}");
+                        share.slice_errors.insert(spec.id.clone(), (name.to_string(), error));
+                        return;
+                    }
+                }
             }
-            if let Some(slot) = newest {
-                // Metal writes rows top down; Syphon's frames are OpenGL's,
-                // bottom up, so the surface is published as flipped.
-                if publisher.server.publish(slot as u32, true) {
-                    publisher.note_published();
+            let publisher = share.slices.get_mut(&spec.id).expect("slice publisher just ensured");
+            let export = &target.export;
+            if let Err(error) =
+                publisher.capture(&self.device, encoder, &export.texture, export.width, export.height, export.format)
+            {
+                eprintln!("[ghost-core] Syphon server for Screen \"{name}\" failed: {error}");
+                share.slices.remove(&spec.id);
+                share.slice_errors.insert(spec.id.clone(), (name.to_string(), error));
+            }
+        }
+        #[cfg(target_os = "windows")]
+        {
+            let _ = (encoder, &request);
+            self.texture_share.slice_frame.push((spec.id.clone(), name.to_string()));
+        }
+        #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+        let _ = (encoder, request, name);
+    }
+
+    /// Right after the frame's last submission, which carried the Screens.
+    pub(crate) fn slice_shares_submitted(&mut self) {
+        #[cfg(target_os = "macos")]
+        for publisher in self.texture_share.slices.values_mut() {
+            publisher.submitted(&self.queue);
+        }
+        #[cfg(target_os = "windows")]
+        {
+            if self.texture_share.slice_frame.is_empty() {
+                return;
+            }
+            let frame = std::mem::take(&mut self.texture_share.slice_frame);
+            let Some(request) = slices_wanted() else {
+                return;
+            };
+            for (id, name) in frame {
+                let Some(target) = self.slice_targets.get(&id) else {
+                    continue;
+                };
+                let share = &mut self.texture_share;
+                if !share.slices.contains_key(&id) {
+                    match win_spout::SpoutSender::new(&self.device, &name, request.host_path.as_deref()) {
+                        Ok(sender) => {
+                            share.slices.insert(id.clone(), sender);
+                        }
+                        Err(error) => {
+                            eprintln!("[ghost-core] Spout sender for Screen \"{name}\" unavailable: {error}");
+                            share.slice_errors.insert(id, (name, error));
+                            continue;
+                        }
+                    }
+                }
+                let sender = share.slices.get_mut(&id).expect("slice sender just ensured");
+                if let Err(error) = sender.send(&self.device, &target.export.shared_name) {
+                    eprintln!("[ghost-core] Spout send for Screen \"{name}\" failed: {error}");
+                    share.slices.remove(&id);
+                    share.slice_errors.insert(id, (name, error));
                 }
             }
         }
     }
 
     pub(crate) fn texture_share_state(&self) -> Value {
+        let mut state = self.main_texture_share_state();
+        if let Some(object) = state.as_object_mut() {
+            object.insert("slices_enabled".into(), json!(slices_wanted().is_some()));
+            object.insert("slices".into(), self.slice_share_state());
+            object.insert(
+                "slice_errors".into(),
+                Value::Array(
+                    self.texture_share
+                        .slice_errors
+                        .iter()
+                        .map(|(id, (name, error))| json!({ "id": id, "name": name, "error": error }))
+                        .collect(),
+                ),
+            );
+        }
+        state
+    }
+
+    fn slice_share_state(&self) -> Value {
+        #[cfg(target_os = "macos")]
+        {
+            Value::Array(
+                self.texture_share
+                    .slices
+                    .iter()
+                    .map(|(id, publisher)| {
+                        let mut entry = publisher.state();
+                        entry["id"] = json!(id);
+                        entry
+                    })
+                    .collect(),
+            )
+        }
+        #[cfg(target_os = "windows")]
+        {
+            Value::Array(
+                self.texture_share
+                    .slices
+                    .iter()
+                    .map(|(id, sender)| {
+                        let (width, height) = sender.size();
+                        json!({ "id": id, "name": sender.name(), "width": width, "height": height, "frames_published": sender.frames })
+                    })
+                    .collect(),
+            )
+        }
+        #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+        {
+            Value::Array(Vec::new())
+        }
+    }
+
+    fn main_texture_share_state(&self) -> Value {
         #[cfg(target_os = "macos")]
         if let Some(publisher) = self.texture_share.publisher.as_ref() {
-            return json!({
-                "available": true,
-                "active": true,
-                "platform": platform(),
-                "name": publisher.name,
-                "width": publisher.width,
-                "height": publisher.height,
-                "frames_published": publisher.published,
-                "frames_skipped": publisher.skipped,
-                "fps": (publisher.fps * 10.0).round() / 10.0,
-                "has_clients": publisher.server.has_clients(),
-                "last_error": self.texture_share.last_error,
-            });
+            let mut state = publisher.state();
+            if let Some(object) = state.as_object_mut() {
+                object.insert("available".into(), json!(true));
+                object.insert("active".into(), json!(true));
+                object.insert("platform".into(), json!(platform()));
+                object.insert("last_error".into(), json!(self.texture_share.last_error));
+            }
+            return state;
         }
         #[cfg(target_os = "windows")]
         if let Some(sender) = self.texture_share.publisher.as_ref() {
@@ -370,7 +610,8 @@ impl RenderState {
 }
 
 impl App {
-    /// `texture_share_start` / `_stop` / `_state`.
+    /// `texture_share_start` / `_stop` / `_state`, and
+    /// `texture_share_slices_start` / `_stop` for the Screens' senders.
     pub(crate) fn texture_share_rpc(&mut self, method: &str, params: &Value) -> Result<Value, String> {
         match method {
             "texture_share_start" => {
@@ -413,6 +654,38 @@ impl App {
                 }
                 Ok(self.texture_share_state_value())
             }
+            "texture_share_slices_start" => {
+                if !implemented() {
+                    return Err(format!("{} from the render core is not available on this platform", platform()));
+                }
+                #[cfg(target_os = "macos")]
+                mac_syphon::load_framework()?;
+                let text = |key: &str| {
+                    params
+                        .get(key)
+                        .and_then(Value::as_str)
+                        .map(str::trim)
+                        .filter(|value| !value.is_empty())
+                        .map(str::to_string)
+                };
+                set_slices_wanted(Some(SliceShareRequest { app_name: text("app_name"), host_path: text("host_path") }));
+                // Asked again (a fallback retried, or an app restart): try
+                // the Screens that failed before once more.
+                if let Some(renderer) = self.renderer.as_mut() {
+                    renderer.texture_share.slice_errors.clear();
+                }
+                self.request_auto_present();
+                Ok(self.texture_share_state_value())
+            }
+            "texture_share_slices_stop" => {
+                set_slices_wanted(None);
+                if let Some(renderer) = self.renderer.as_mut() {
+                    #[cfg(any(target_os = "macos", target_os = "windows"))]
+                    renderer.texture_share.slices.clear();
+                    renderer.texture_share.slice_errors.clear();
+                }
+                Ok(self.texture_share_state_value())
+            }
             _ => Ok(self.texture_share_state_value()),
         }
     }
@@ -425,6 +698,9 @@ impl App {
                 "active": false,
                 "platform": platform(),
                 "wanted": wanted().map(|request| request.name),
+                "slices_enabled": slices_wanted().is_some(),
+                "slices": [],
+                "slice_errors": [],
             }),
         }
     }
