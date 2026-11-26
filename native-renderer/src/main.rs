@@ -19,6 +19,7 @@ mod gpu_object_cache;
 mod pass_timing;
 mod pipeline_cache;
 mod frames_in_flight;
+mod present_pacing;
 mod effect_specialize;
 mod media_decode;
 mod media_orphans;
@@ -1195,6 +1196,9 @@ struct CoreStatus {
     frames_in_flight: frames_in_flight::AdaptiveGateReport,
     /// Start of a frame's CPU work to the end of its GPU work.
     gpu_frame_latency: frames_in_flight::FrameLatencyReport,
+    /// Program output window: frame-start, present and acquire-wait
+    /// intervals (present_pacing.rs).
+    output_pacing: present_pacing::PacingReport,
     frames_presented: u64,
     /// GA_CORE_CHURN_PROBE=1 only (churn_probe.rs).
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -5337,6 +5341,8 @@ struct RenderState {
     gpu_completion_tx: Sender<(wgpu::SubmissionIndex, Instant, Instant)>,
     frames_in_flight: frames_in_flight::AdaptiveGate,
     gpu_frame_latency: Arc<frames_in_flight::FrameLatency>,
+    /// How evenly the program output's frames start and present.
+    pacing: present_pacing::PacingProbe,
     last_frame_error: Option<String>,
 }
 
@@ -7085,6 +7091,7 @@ impl App {
             gpu_frame_latency: self.renderer.as_ref()
                 .map(|renderer| renderer.gpu_frame_latency.report())
                 .unwrap_or_default(),
+            output_pacing: self.output_pacing_report(),
             frames_presented: gpu_frames_completed,
             gpu_object_churn: churn_probe::counts(),
             gpu_pass_timing: pass_timing::report(),
@@ -8544,6 +8551,9 @@ impl App {
 
     fn apply_output_window_attached(&mut self, attached: bool) {
         self.output_window_attached = attached;
+        if let Some(renderer) = self.renderer.as_mut() {
+            renderer.pacing.reset();
+        }
         if !attached {
             if let Some(renderer) = self.renderer.as_ref() {
                 self.output_window_placement =
@@ -14349,6 +14359,7 @@ impl App {
         }
         let present_surface = self.output_window_attached;
         if present_surface {
+            renderer.pacing.frame_started(started);
             self.stats.swapchain_present_attempts =
                 self.stats.swapchain_present_attempts.saturating_add(1);
         }
@@ -16402,6 +16413,12 @@ impl App {
             depth_only,
             bindings,
         })
+    }
+
+    fn output_pacing_report(&self) -> present_pacing::PacingReport {
+        let frame_ms = self.frame_duration().as_secs_f64() * 1000.0;
+        let refresh_ms = self.output_refresh_hz.filter(|hz| *hz > 0.0).map(|hz| 1000.0 / hz);
+        self.renderer.as_ref().map(|renderer| renderer.pacing.report(frame_ms, refresh_ms)).unwrap_or_default()
     }
 
     fn frame_duration(&self) -> Duration {
@@ -23444,6 +23461,7 @@ impl RenderState {
             gpu_completion_tx,
             frames_in_flight: frames_in_flight::AdaptiveGate::new(frames_in_flight::from_env()),
             gpu_frame_latency,
+            pacing: present_pacing::PacingProbe::default(),
             last_frame_error: None,
         })
     }
@@ -29155,7 +29173,10 @@ impl RenderState {
         let stage = OutputStage { dlayer: self.dome_layer_pass, ..stage };
         let mut present_outcome = SurfacePresentOutcome::Offscreen;
         let surface_frame = if present_surface {
-            match self.surface.get_current_texture() {
+            let acquire_started = Instant::now();
+            let acquired = self.surface.get_current_texture();
+            self.pacing.acquired(acquire_started, Instant::now());
+            match acquired {
                 wgpu::CurrentSurfaceTexture::Success(frame) => {
                     present_outcome = SurfacePresentOutcome::Presented;
                     Some(frame)
@@ -29334,6 +29355,7 @@ impl RenderState {
         }
         if let Some(frame) = surface_frame {
             self.queue.present(frame);
+            self.pacing.presented(Instant::now());
             if matches!(present_outcome, SurfacePresentOutcome::SuboptimalPresented) {
                 self.surface.configure(&self.device, &self.config);
             }
