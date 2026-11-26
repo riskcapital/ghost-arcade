@@ -12,6 +12,7 @@ mod compositor;
 mod compute_graph;
 mod graph_textures;
 mod graph_readbacks;
+mod ipc_frames;
 mod scene_frame;
 mod core_frame_counter;
 mod churn_probe;
@@ -62,7 +63,7 @@ use std::{
     collections::{BTreeMap, HashMap, HashSet, VecDeque},
     ffi::c_void,
     fs,
-    io::{self, BufRead, Read, Write},
+    io::{self, Write},
     path::{Path, PathBuf},
     ptr::NonNull,
     sync::{
@@ -29730,11 +29731,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn spawn_stdout_writer(response_rx: Receiver<String>) {
+    // Before any reply: tells a broker that asked for binary frames that
+    // this core speaks them.
+    let hello = ipc_frames::init_from_env();
     thread::spawn(move || {
         let stdout = io::stdout();
         let mut lock = stdout.lock();
+        if let Some(hello) = hello {
+            let _ = writeln!(lock, "{hello}");
+            let _ = lock.flush();
+        }
         while let Ok(line) = response_rx.recv() {
-            let _ = writeln!(lock, "{line}");
+            let _ = ipc_frames::write_line(&mut lock, &line);
             let _ = lock.flush();
         }
     });
@@ -29749,19 +29757,31 @@ fn spawn_stdin_reader(
         let mut input = io::stdin().lock();
         loop {
             const MAX_RPC_BYTES: u64 = 64 * 1024 * 1024;
-            let mut bytes = Vec::new();
-            let read = (&mut input).take(MAX_RPC_BYTES + 1).read_until(b'\n', &mut bytes);
-            if !matches!(read, Ok(n) if n > 0) { break; }
-            if bytes.len() as u64 > MAX_RPC_BYTES {
-                eprintln!("[GhostRenderCore] RPC exceeds 64 MiB limit; closing input");
-                break;
-            }
-            let Ok(line) = String::from_utf8(bytes) else { continue; };
+            // A message is one JSON line, optionally preceded by a frame of
+            // binary payloads it refers to (see ipc_frames).
+            let message = match ipc_frames::read_message(&mut input, MAX_RPC_BYTES) {
+                ipc_frames::ReadOutcome::Message(message) => message,
+                ipc_frames::ReadOutcome::Closed => break,
+                ipc_frames::ReadOutcome::Fatal(err) => {
+                    eprintln!("[GhostRenderCore] {err}; closing input");
+                    break;
+                }
+            };
+            let message_bytes = message.byte_len();
+            let blobs = message.blobs;
+            let Ok(line) = String::from_utf8(message.line) else { continue; };
             if line.trim().is_empty() {
                 continue;
             }
             match serde_json::from_str::<RpcRequest>(&line) {
                 Ok(mut req) => {
+                    if let Err(err) = ipc_frames::splice_blobs(&mut req.params, &blobs) {
+                        if req.id != 0 {
+                            let _ = response_tx.send(json!({ "id": req.id, "ok": false, "error": err }).to_string());
+                        }
+                        continue;
+                    }
+                    drop(blobs);
                     // Read-only queries are answered here, on the reader thread,
                     // from the snapshot the render loop republishes each frame —
                     // so a saturated GPU can no longer make `status` or
@@ -29792,7 +29812,7 @@ fn spawn_stdin_reader(
                             }
                         }
                     }
-                    let bytes = line.len() as u64;
+                    let bytes = message_bytes;
                     while fast_path.queued.load(Ordering::Acquire).saturating_sub(fast_path.applied.load(Ordering::Acquire)) >= 256
                         || fast_path.queued_bytes.load(Ordering::Acquire).saturating_add(bytes) > MAX_RPC_BYTES {
                         thread::sleep(Duration::from_millis(2));
