@@ -79,8 +79,10 @@ pub fn init(device: &wgpu::Device, queue: &wgpu::Queue) {
     TIMER.with(|cell| *cell.borrow_mut() = Some(timer));
 }
 
-/// Start a frame: collect a finished readback, and time this frame when none is pending.
-pub fn begin_frame() {
+/// Start a frame: collect a finished readback, and time this frame when none
+/// is pending and the GPU is idle (`gpu_idle`: no earlier frame still on it,
+/// whose work would otherwise be counted in this frame's passes).
+pub fn begin_frame(gpu_idle: bool) {
     TIMER.with(|cell| {
         let mut guard = cell.borrow_mut();
         let Some(timer) = guard.as_mut() else { return };
@@ -117,7 +119,7 @@ pub fn begin_frame() {
                 Err(mpsc::TryRecvError::Disconnected) => {}
             }
         }
-        timer.active = timer.pending.is_none();
+        timer.active = gpu_idle && timer.pending.is_none();
         timer.next = 0;
         timer.labels.clear();
     });

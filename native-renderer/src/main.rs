@@ -14152,7 +14152,7 @@ impl App {
             renderer.allow_async_compile = self.render_clock_mode != "manual";
             renderer.frame_epoch = renderer.frame_epoch.wrapping_add(1);
             gpu_object_cache::begin_frame();
-            pass_timing::begin_frame();
+            pass_timing::begin_frame(renderer.gpu_idle_for_frame());
             renderer.pipeline_cap = self.pipeline_metadata_cache_cap.max(1) as usize;
             renderer.graph_budget_bytes = graph_budget;
         }
@@ -24987,6 +24987,12 @@ impl RenderState {
         frames_in_flight::slots_full(self.gpu_frames_submitted, self.gpu_frames_completed(), self.frames_in_flight.allowed())
     }
 
+    /// The GPU has finished every frame we sent: a frame encoded now starts
+    /// on an idle GPU, so its timestamps measure its own work only.
+    fn gpu_idle_for_frame(&self) -> bool {
+        self.gpu_frames_submitted == self.gpu_frames_completed()
+    }
+
     /// Feed completed frames to the frames-in-flight gate.
     fn update_frames_in_flight(&mut self, budget: Duration) {
         // The Windows recorder reads the export right behind a frame's
@@ -28860,7 +28866,13 @@ impl RenderState {
                 .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                     label: Some("Ghost Render Core Output Mirror Encoder"),
                 });
-        let should_record_timing = self
+        // Time only frames that start on an idle GPU. A frame queued behind
+        // another one has its first timestamp taken while that one is still
+        // drawing, which read about twice the real GPU time and would make
+        // the quality policy see a different number for the same work. At
+        // one frame in flight every frame starts on an idle GPU, as before.
+        let should_record_timing = self.gpu_idle_for_frame()
+            && self
             .gpu_timing
             .as_ref()
             .is_some_and(GpuTimingState::can_record);
