@@ -21,7 +21,7 @@ use windows::{
         Foundation::HMODULE,
         Media::MediaFoundation::{
             IMFAttributes, IMFByteStream, IMFDXGIDeviceManager, IMFMediaBuffer, IMFMediaType,
-            IMFSample, IMFSinkWriter, IMFSourceReader,
+            IMFSample, IMFSinkWriter, IMFSourceReader, IMFTrackedSample,
         },
         System::LibraryLoader::{GetProcAddress, LOAD_LIBRARY_SEARCH_SYSTEM32, LoadLibraryExW},
     },
@@ -46,7 +46,10 @@ struct Platform {
     create_attributes: CreateAttributesFn,
     create_dxgi_device_manager: CreateDxgiDeviceManagerFn,
     create_media_type: CreateObjectFn,
+    /// Only the decoder's tests make plain samples now.
+    #[cfg_attr(not(test), allow(dead_code))]
     create_sample: CreateObjectFn,
+    create_tracked_sample: CreateObjectFn,
     create_dxgi_surface_buffer: CreateDxgiSurfaceBufferFn,
 }
 
@@ -100,6 +103,7 @@ fn platform() -> std::result::Result<&'static Platform, Error> {
                     create_dxgi_device_manager: symbol(module, s!("MFCreateDXGIDeviceManager"))?,
                     create_media_type: symbol(module, s!("MFCreateMediaType"))?,
                     create_sample: symbol(module, s!("MFCreateSample"))?,
+                    create_tracked_sample: symbol(module, s!("MFCreateTrackedSample"))?,
                     create_dxgi_surface_buffer: symbol(module, s!("MFCreateDXGISurfaceBuffer"))?,
                 })
             }
@@ -166,8 +170,17 @@ pub unsafe fn MFCreateMediaType() -> Result<IMFMediaType> {
     unsafe { created(create(&mut raw), raw) }
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
 pub unsafe fn MFCreateSample() -> Result<IMFSample> {
     let create = platform()?.create_sample;
+    let mut raw = std::ptr::null_mut();
+    unsafe { created(create(&mut raw), raw) }
+}
+
+/// A sample that calls back when the last reference to it is released, which
+/// is how the recorder knows Media Foundation is done with a texture.
+pub unsafe fn MFCreateTrackedSample() -> Result<IMFTrackedSample> {
+    let create = platform()?.create_tracked_sample;
     let mut raw = std::ptr::null_mut();
     unsafe { created(create(&mut raw), raw) }
 }

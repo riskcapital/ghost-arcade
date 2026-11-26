@@ -24212,10 +24212,10 @@ impl RenderState {
             .native_recorder
             .take()
             .ok_or_else(|| "no native recording is running".to_string())?;
-        let frames = recorder.frames_encoded();
-        let duration = recorder.duration_seconds();
+        // The encoder thread writes what is still queued before finalizing,
+        // so the count is only final afterwards.
         recorder.finish()?;
-        Ok((frames, duration))
+        Ok((recorder.frames_encoded(), recorder.duration_seconds()))
     }
 
     #[cfg(target_os = "macos")]
@@ -24335,6 +24335,13 @@ impl RenderState {
             "frames": self.native_recorder.as_ref().map(|r| r.frames_encoded()).unwrap_or(0),
             "transport": "d3d11-shared-texture",
             "encoder": "media-foundation-h264",
+            // Frames skipped because the encoder still held every texture,
+            // and what recording costs the render thread per frame.
+            "dropped": self.native_recorder.as_ref().map(|r| r.frames_dropped()).unwrap_or(0),
+            "render_thread_us": self.native_recorder.as_ref().map(|r| {
+                let (mean, max) = r.render_thread_us();
+                json!({ "mean": mean, "max": max })
+            }),
             "last_error": self.native_recorder_error.clone(),
         })
     }
