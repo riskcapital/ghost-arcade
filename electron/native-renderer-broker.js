@@ -3,6 +3,13 @@ import fs from 'fs';
 import { createRequire } from 'module';
 import os from 'os';
 import path from 'path';
+import {
+  coreIpcFramesWanted,
+  createCoreOutputReader,
+  decodeCoreLine,
+  encodeCoreRequest,
+  isCoreIpcFramesHello,
+} from './core-ipc-frames.js';
 
 const require = createRequire(import.meta.url);
 const COMMAND_PREFIX = 'native_renderer_';
@@ -606,7 +613,11 @@ class NativeRendererBroker {
     this.writeBlocked = false;
     this.maxPendingBytes = 64 * 1024 * 1024;
     this.maxPendingRequests = 256;
-    this.stdoutBuffer = '';
+    this.stdoutReader = createCoreOutputReader((line, blobs) => this.handleLine(line, blobs));
+    // Binary payload frames (core-ipc-frames.js): asked of each core this
+    // broker starts unless GA_CORE_IPC=json, used once that core says hello.
+    this.coreIpcFramesWanted = coreIpcFramesWanted(env);
+    this.coreIpcFrames = false;
     this.tempFrameDir = null;
     this.tempFrameSerial = 1;
     this.tempFrameDirPromise = null;
@@ -2275,8 +2286,7 @@ class NativeRendererBroker {
     }
     timeoutMs *= this.rpcTimeoutScale();
     const id = this.nextId++;
-    const payload = `${JSON.stringify({ id, method, params })}\n`;
-    const bytes = Buffer.byteLength(payload);
+    const { payload, bytes } = this.encodeRequest(id, method, params);
     if (this.pending.size >= this.maxPendingRequests || bytes + this.pendingBytes > this.maxPendingBytes) {
       return Promise.reject(new Error('Native render core command queue is full; retry after current work completes'));
     }
@@ -2296,8 +2306,8 @@ class NativeRendererBroker {
   notify(method, params = {}) {
     if (!this.child?.stdin?.writable || this.writeBlocked || this.pending.size >= this.maxPendingRequests) return false;
     const child = this.child;
-    const payload = `${JSON.stringify({ id: 0, method, params })}\n`;
-    if (Buffer.byteLength(payload) + this.pendingBytes > this.maxPendingBytes) return false;
+    const { payload, bytes } = this.encodeRequest(0, method, params);
+    if (bytes + this.pendingBytes > this.maxPendingBytes) return false;
     if (child.stdin.write(payload) === false) {
       this.writeBlocked = true;
       child.stdin.once('drain', () => {
@@ -2307,6 +2317,12 @@ class NativeRendererBroker {
       });
     }
     return true;
+  }
+
+  /** One request as written to the core: a JSON line, framed with binary
+   *  payloads when it carries typed arrays and the core reads frames. */
+  encodeRequest(id, method, params) {
+    return encodeCoreRequest({ id, method, params }, { frames: this.coreIpcFrames });
   }
 
   async preparePayloadItems(items, prepare) {
@@ -2489,6 +2505,8 @@ class NativeRendererBroker {
     if (this.child && !this.child.killed) return;
     console.log(`[NativeRenderer] launching ${executable}`);
     const childEnv = { ...this.env, RUST_BACKTRACE: this.env.RUST_BACKTRACE || '1' };
+    if (this.coreIpcFramesWanted) childEnv.GA_CORE_IPC_FRAMES = '1';
+    else delete childEnv.GA_CORE_IPC_FRAMES;
     if (!childEnv.GA_FFMPEG_PATH) {
       childEnv.GA_FFMPEG_PATH = resolveFfmpegPath(this.env, this.platform);
     }
@@ -2531,9 +2549,10 @@ class NativeRendererBroker {
       core_failure_hint: null,
     };
     this.lastStatus = this.withCoreLifecycle(this.lastStatus);
-    this.stdoutBuffer = '';
+    this.stdoutReader.reset();
+    this.coreIpcFrames = false;
     this.writeBlocked = false;
-    this.child.stdout.setEncoding('utf8');
+    // Read as bytes: a reply may carry a binary payload frame.
     this.child.stdout.on('data', (chunk) => { if (this.child === child) this.handleStdout(chunk); });
     this.child.stderr.setEncoding('utf8');
     this.child.stderr.on('data', (chunk) => {
@@ -2587,23 +2606,20 @@ class NativeRendererBroker {
   }
 
   handleStdout(chunk) {
-    this.stdoutBuffer += chunk;
-    let index = this.stdoutBuffer.indexOf('\n');
-    while (index >= 0) {
-      const line = this.stdoutBuffer.slice(0, index).trim();
-      this.stdoutBuffer = this.stdoutBuffer.slice(index + 1);
-      this.handleLine(line);
-      index = this.stdoutBuffer.indexOf('\n');
-    }
+    this.stdoutReader.push(chunk);
   }
 
-  handleLine(line) {
+  handleLine(line, blobs = null) {
     if (!line) return;
     let message;
     try {
-      message = JSON.parse(line);
+      message = decodeCoreLine(line, blobs);
     } catch {
       console.log(`[NativeRenderer] ${line}`);
+      return;
+    }
+    if (isCoreIpcFramesHello(message)) {
+      this.coreIpcFrames = this.coreIpcFramesWanted;
       return;
     }
     const pending = this.finishPending(message.id);
