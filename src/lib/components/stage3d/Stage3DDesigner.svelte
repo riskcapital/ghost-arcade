@@ -37,7 +37,7 @@
   import { startNativeLiveFrameRecording } from '../../recording/nativeLiveFrameRecorder';
   import { setNativeRendererStage3DScene } from '../../api/native-renderer';
   import { settings } from '../../stores/settings';
-  import { invoke, isDesktopApp } from '../../bridge';
+  import { invoke, isDesktopApp, getRawElectronApi } from '../../bridge';
   import StageNodeProperties from './StageNodeProperties.svelte';
   import StageElementProperties from './StageElementProperties.svelte';
   import StageLightingPanel from './StageLightingPanel.svelte';
@@ -670,7 +670,7 @@
           if (result?.ok) syncStageFullscreen(!!result.fullScreen);
         })
         .catch(() => {});
-      const off = (window as any).electronAPI?.on?.('stage3d-fullscreen-changed', (payload: { fullScreen?: boolean }) => {
+      const off = getRawElectronApi()?.on?.('stage3d-fullscreen-changed', (payload: { fullScreen?: boolean }) => {
         syncStageFullscreen(!!payload?.fullScreen);
       });
       if (typeof off === 'function') removeStageFullscreenListener = off;

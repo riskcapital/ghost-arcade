@@ -32,7 +32,7 @@
  */
 
 import type { FFmpeg as FFmpegType } from '@ffmpeg/ffmpeg';
-import { invoke, isDesktopApp } from '$lib/bridge';
+import { invoke, isDesktopApp, hasElectronEventApi, onElectronEvent } from '$lib/bridge';
 import { pathToFileUrl } from '../storage/assetRegistry';
 // Vendor FFmpeg core locally — Vite ?url imports emit the files
 // into the bundle and give us same-origin URLs. Loading from a
@@ -289,9 +289,7 @@ export function runtimeVideoUrlToPath(src: string | undefined | null): string | 
 
 function canUseNativeLoop(): boolean {
   return isDesktopApp
-    && typeof window !== 'undefined'
-    && !!window.electronAPI?.invoke
-    && !!window.electronAPI?.on;
+    && hasElectronEventApi();
 }
 
 function makeLoopJobId(prefix: string): string {
@@ -301,7 +299,7 @@ function makeLoopJobId(prefix: string): string {
 
 function subscribeNativeLoopProgress(jobId: string, onProgress?: ProgressCallback): (() => void) | undefined {
   if (!onProgress || typeof window === 'undefined') return undefined;
-  return window.electronAPI?.on?.('video-loop-progress', (payload: any) => {
+  return onElectronEvent('video-loop-progress', (payload: any) => {
     if (!payload || payload.jobId !== jobId) return;
     onProgress({
       stage: payload.stage === 'complete' ? 'complete'

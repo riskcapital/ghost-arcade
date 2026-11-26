@@ -11,6 +11,7 @@
  * - keeps each track's copy of its layer current while the layer is on stage;
  * - keeps the show's rows in step with the mapping layers (showStageRows.ts).
  */
+import { getRawElectronApi } from '$lib/bridge';
 import { get, type Readable } from 'svelte/store';
 import type { MediaSource, Project } from '../../types';
 import {
@@ -54,7 +55,7 @@ export interface ShowTrackRuntimeDeps {
 
 export function installShowTrackRuntime(deps: ShowTrackRuntimeDeps): () => void {
   const disposers: Array<() => void> = [];
-  const desktop = typeof window !== 'undefined' && !!(window as any).electronAPI?.invoke;
+  const desktop = typeof window !== 'undefined' && !!getRawElectronApi()?.invoke;
 
   // ── Frames → scene ───────────────────────────────────────────────────
   setShowTrackFrameSink((frame) => showTrackFrame.set(frame));

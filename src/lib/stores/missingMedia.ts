@@ -2,6 +2,7 @@
  * Clip files that are no longer where the show expects them. The VJ deck
  * marks those clips and offers to find the files again.
  */
+import { getRawElectronApi } from '$lib/bridge';
 import { writable, get } from 'svelte/store';
 
 /** Absolute paths that were checked and are not on disk. */
@@ -19,7 +20,7 @@ export function noteMediaRelinked(): void {
 
 type Invoke = (command: string, args?: unknown) => Promise<any>;
 const invoker = (): Invoke | null => {
-  const api = typeof window !== 'undefined' ? (window as any).electronAPI : null;
+  const api = typeof window !== 'undefined' ? getRawElectronApi() : null;
   return typeof api?.invoke === 'function' ? api.invoke.bind(api) : null;
 };
 

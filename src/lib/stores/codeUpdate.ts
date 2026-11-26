@@ -4,7 +4,7 @@
  * browser every call is a no-op and the store stays null.
  */
 import { writable, get } from 'svelte/store';
-import { isElectron } from '../bridge';
+import { getElectronApi } from '../bridge';
 
 export interface CodeUpdateStatus {
   enabled: boolean;
@@ -35,9 +35,7 @@ export interface CodeUpdateStatus {
 
 export const codeUpdate = writable<CodeUpdateStatus | null>(null);
 
-function api() {
-  return isElectron && typeof window !== 'undefined' ? window.electronAPI ?? null : null;
-}
+const api = getElectronApi;
 
 async function call(command: string): Promise<CodeUpdateStatus | null> {
   const a = api();

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { getRawElectronApi } from '$lib/bridge';
   import { onMount } from 'svelte';
   export let projectPath: string | null = null;
   export let exportProject: () => Promise<string>;
@@ -10,7 +11,7 @@
   let message = '';
   let error = '';
   let resultPath = '';
-  const invoke = (command: string, args: any) => (window as any).electronAPI.invoke(command, args);
+  const invoke = (command: string, args: any) => getRawElectronApi().invoke(command, args);
   async function scan() {
     busy = true; error = '';
     try { media = await invoke('project_media_scan', { json: await exportProject(), projectPath }); }

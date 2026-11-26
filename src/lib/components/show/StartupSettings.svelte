@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { getRawElectronApi } from '$lib/bridge';
   /**
    * Settings > Show Control > Start at boot. Machine-level, not saved with
    * the project: stored by the main process (electron/show-startup.cjs).
@@ -10,7 +11,7 @@
   let busy = false;
   $: info = $showStartupInfo;
   $: config = info?.config ?? null;
-  const desktop = typeof window !== 'undefined' && !!(window as unknown as { electronAPI?: unknown }).electronAPI;
+  const desktop = typeof window !== 'undefined' && !!getRawElectronApi();
 
   onMount(() => {
     if (desktop) refreshShowStartup().catch((e) => (error = String(e?.message ?? e)));
@@ -30,7 +31,7 @@
 
   async function browse() {
     try {
-      const api = (window as unknown as { electronAPI: { invoke: (c: string, a?: unknown) => Promise<{ canceled: boolean; filePath: string | null }> } }).electronAPI;
+      const api = getRawElectronApi();
       const result = await api.invoke('open_project_dialog', { title: 'Project to open at start' });
       if (!result.canceled && result.filePath) await patch({ projectPath: result.filePath });
     } catch (e) {

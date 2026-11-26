@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { get } from 'svelte/store';
 
-vi.mock('$lib/bridge', () => ({ invoke: vi.fn(), isElectron: false }));
+vi.mock('$lib/bridge', async (importOriginal) => ({ ...(await importOriginal<typeof import('$lib/bridge')>()), invoke: vi.fn(), isElectron: false }));
 
 import {
   createStageRehearsalRender,

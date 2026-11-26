@@ -5,6 +5,19 @@
  * Frontend code uses: import { invoke, isDesktopApp } from '$lib/bridge';
  */
 
+/** The NDI addon surface the preload exposes as `window.ghostNDI` (absent outside Electron / without the addon). */
+export interface GhostNdiBridge {
+  available: () => Promise<any>;
+  findSources: () => Promise<any>;
+  createReceiver: (name: string) => Promise<any>;
+  destroyReceiver: (name: string) => Promise<any>;
+  receiveFrame: (name: string) => Promise<any>;
+  receiveTextureInfo: (name: string) => Promise<any>;
+  outputStatus?: () => Promise<any>;
+  outputStart?: (options: { name: string }) => Promise<unknown>;
+  outputStop?: () => Promise<unknown>;
+}
+
 declare global {
   interface Window {
     __ELECTRON__?: boolean;
@@ -16,6 +29,7 @@ declare global {
       getPathForFile?: (file: File) => string;
       platform: string;
     };
+    ghostNDI?: GhostNdiBridge;
     electronOSR?: {
       onOsrStatus: (callback: (data: { active: boolean; reason?: string; cpuFallbackAllowed?: boolean }) => void) => (() => void) | void;
     };
@@ -69,4 +83,45 @@ export async function openExternalUrl(url: string): Promise<void> {
   }
 
   window.open(url, '_blank', 'noopener');
+}
+
+/** The NDI addon bridge, or null when it is not present (non-Electron build, or no addon). */
+export function getNdiBridge(): GhostNdiBridge | null {
+  return typeof window !== 'undefined' ? window.ghostNDI ?? null : null;
+}
+
+/** Loosely typed preload API (`any`, as the call sites that probe optional or newer channels always had it). */
+export type ElectronApiLoose = any;
+
+/**
+ * The preload API exactly as `window.electronAPI` exposes it (no `__ELECTRON__` check), or null when absent.
+ * Looks at `window` when there is one, else `globalThis`, so non-DOM test environments still work.
+ */
+export function getRawElectronApi(): ElectronApiLoose | null {
+  const host = (typeof window !== 'undefined' ? window : globalThis) as { electronAPI?: ElectronApiLoose };
+  return host.electronAPI ?? null;
+}
+
+/** The raw Electron preload API, or null when not running in Electron. */
+export function getElectronApi(): NonNullable<Window['electronAPI']> | null {
+  return isElectron && typeof window !== 'undefined' ? window.electronAPI ?? null : null;
+}
+
+/**
+ * Subscribe to a main-process event channel. Returns the unsubscribe function,
+ * or undefined when the preload does not expose `on` (non-Electron).
+ */
+export function onElectronEvent(channel: string, callback: (...args: any[]) => void): (() => void) | undefined {
+  if (typeof window === 'undefined') return undefined;
+  return window.electronAPI?.on?.(channel, callback);
+}
+
+/** True when the preload exposes both `invoke` and `on` (needed for progress-reporting native jobs). */
+export function hasElectronEventApi(): boolean {
+  return typeof window !== 'undefined' && !!window.electronAPI?.invoke && !!window.electronAPI?.on;
+}
+
+/** Absolute disk path for a dropped File (Electron only); '' when unavailable. */
+export function getPathForFile(file: File): string {
+  return (typeof window !== 'undefined' ? window.electronAPI?.getPathForFile?.(file) : '') || '';
 }

@@ -18,6 +18,7 @@
  * moves each password into the store and strips it (see `hydrate`).
  */
 
+import { getRawElectronApi } from '$lib/bridge';
 import { writable, get } from 'svelte/store';
 import { generateUUID } from '../utils/uuid';
 import type { ProjectorCommand } from './cueList';
@@ -96,7 +97,7 @@ export type PjlinkTransport = (request: PjlinkRequest) => Promise<PjlinkResult>;
 
 function defaultTransport(): PjlinkTransport | null {
   if (typeof window === 'undefined') return null;
-  const api = (window as unknown as { electronAPI?: { invoke?: (c: string, a: unknown) => Promise<unknown> } }).electronAPI;
+  const api = getRawElectronApi();
   if (!api?.invoke) return null;
   return (request) => api.invoke!('pjlink_command', request) as Promise<PjlinkResult>;
 }
@@ -120,7 +121,7 @@ export interface ProjectorCredentialStore {
 
 function defaultCredentialStore(): ProjectorCredentialStore | null {
   if (typeof window === 'undefined') return null;
-  const api = (window as unknown as { electronAPI?: { invoke?: (c: string, a: unknown) => Promise<unknown> } }).electronAPI;
+  const api = getRawElectronApi();
   if (!api?.invoke) return null;
   return {
     set: (projectorId, password) => api.invoke!('pjlink_set_password', { projectorId, password }) as Promise<{ ok: boolean; persisted: boolean; error?: string }>,

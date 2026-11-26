@@ -4,7 +4,7 @@
   import { get } from 'svelte/store';
   import { settings, type OutputSlice } from '../stores/settings';
   import { workspace } from '../stores/workspace';
-  import { invoke, isDesktopApp } from '../bridge';
+  import { invoke, isDesktopApp, getRawElectronApi } from '../bridge';
   import { createAssetRefFromFile, resolveAssetRefForRuntime } from '../storage/assetRegistry';
   import { startRecording as startCanvasRecording, formatRecordingDuration, type RecorderHandle } from '../recording/recorder';
   import {
@@ -1158,7 +1158,7 @@
       invoke<{ ok?: boolean; fullScreen?: boolean }>('projection_sim_get_fullscreen')
         .then((result) => { nativeFullScreen = !!result.fullScreen; })
         .catch(() => { /* non-native fallback */ });
-      removeNativeFullscreenListener = (window as any).electronAPI?.on?.(
+      removeNativeFullscreenListener = getRawElectronApi()?.on?.(
         'projection-sim-fullscreen-changed',
         (payload: { fullScreen?: boolean }) => { nativeFullScreen = !!payload?.fullScreen; },
       ) ?? null;

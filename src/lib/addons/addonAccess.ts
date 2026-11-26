@@ -14,6 +14,7 @@
  * registry cards, the VJ dock button, the deck strip, the studio view key,
  * the layer panels, param discovery, MIDI and the render routing.
  */
+import { getRawElectronApi } from '$lib/bridge';
 import { derived, get, writable, type Readable } from 'svelte/store';
 import { showToast } from '../stores/errorToast';
 
@@ -178,7 +179,7 @@ export function applyAddonsStatus(raw: unknown): AddonsStatus {
 type Invoke = (command: string, args?: unknown) => Promise<unknown>;
 function bridgeInvoke(): Invoke | null {
   if (typeof window === 'undefined') return null;
-  const api = (window as unknown as { electronAPI?: { invoke?: Invoke } }).electronAPI;
+  const api = getRawElectronApi();
   return api?.invoke ? api.invoke.bind(api) : null;
 }
 

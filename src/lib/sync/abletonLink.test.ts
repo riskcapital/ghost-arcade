@@ -4,7 +4,7 @@ import { invoke } from '$lib/bridge';
 import { audioStore } from '../stores/audio';
 import { abletonLink } from './abletonLink';
 
-vi.mock('$lib/bridge', () => ({ isElectron: true, invoke: vi.fn() }));
+vi.mock('$lib/bridge', async (importOriginal) => ({ ...(await importOriginal<typeof import('$lib/bridge')>()), isElectron: true, invoke: vi.fn() }));
 vi.mock('../stores/audio', async () => {
   const { writable } = await import('svelte/store');
   const state = writable({ manualBPM: 120, bpm: 120 });

@@ -25,6 +25,7 @@
  * suspend) to apply the lines' values at that show time, the same way the
  * live engine applies them each frame.
  */
+import { getRawElectronApi } from '$lib/bridge';
 import type { ShowTimelineState } from '../../stores/showTimeline';
 import { loadStudioFx } from '../../music/macroFxAudio';
 import { division } from '../../music/macroFx';
@@ -543,7 +544,7 @@ type Invoke = (ch: string, args: unknown) => Promise<{ success?: boolean; path?:
  * render is cancelled: discardSoundtrackWav). Null off the desktop.
  */
 export async function openSoundtrackWav(sampleRate: number): Promise<(SoundSink & { path: string; close(): Promise<void> }) | null> {
-  const invoke = (globalThis as { electronAPI?: { invoke?: Invoke } }).electronAPI?.invoke;
+  const invoke = getRawElectronApi()?.invoke;
   if (!invoke) return null;
   const opened = await invoke('show_audio_soundtrack_open', { sampleRate });
   if (!opened?.success || !opened.path) throw new Error(opened?.error || 'the sound could not be saved for the video');
@@ -562,6 +563,6 @@ export async function openSoundtrackWav(sampleRate: number): Promise<(SoundSink 
 }
 
 export async function discardSoundtrackWav(path: string | null): Promise<void> {
-  const w = globalThis as { electronAPI?: { invoke?: (ch: string, args: unknown) => Promise<unknown> } };
-  if (path && w.electronAPI?.invoke) await w.electronAPI.invoke('show_audio_discard', { path }).catch(() => {});
+  const api = getRawElectronApi();
+  if (path && api?.invoke) await api.invoke('show_audio_discard', { path }).catch(() => {});
 }

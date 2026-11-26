@@ -3,6 +3,7 @@
  * ones Chromium cannot play and need converting first, and the fallbacks
  * when a file will not decode.
  */
+import { getRawElectronApi } from '$lib/bridge';
 import { createAssetRefFromFile, pathToFileUrl, type AssetRef } from '../storage/assetRegistry';
 
 /** File types the show accepts as audio. */
@@ -48,7 +49,7 @@ export type PrepareShowAudioResult = PreparedShowAudio | { error: string };
 
 function desktopApi(): { invoke?: (command: string, args?: unknown) => Promise<any>; getPathForFile?: (file: File) => string } | null {
   if (typeof window === 'undefined') return null;
-  return (window as any).electronAPI ?? null;
+  return getRawElectronApi() ?? null;
 }
 
 /**

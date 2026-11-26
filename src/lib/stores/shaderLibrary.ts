@@ -4,6 +4,7 @@
  * Persists to localStorage and syncs with server for file storage
  */
 
+import { getRawElectronApi } from '$lib/bridge';
 import { writable, derived, get } from 'svelte/store';
 import type { GenerationType } from '../api/ai-client';
 import { localServerFetch } from '../remote/remotePairing';
@@ -75,7 +76,7 @@ const CATALOG_URL_KEY = 'ghost-arcade-shader-catalog-url';
 // store still works (just without disk persistence).
 function electronInvoke<T = unknown>(command: string, args?: unknown): Promise<T> | null {
   if (typeof window === 'undefined') return null;
-  const api = (window as any).electronAPI;
+  const api = getRawElectronApi();
   if (!api?.invoke) return null;
   return api.invoke(command, args) as Promise<T>;
 }

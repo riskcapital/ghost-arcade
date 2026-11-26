@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { getNdiBridge } from '../bridge';
   type OutputStatus = { available?: boolean; active?: boolean; name?: string; fps?: number; reason?: string; lastError?: string };
   let status: OutputStatus = {};
   let checking = true;
@@ -7,7 +8,7 @@
   async function refresh() {
     checking = true;
     try {
-      const bridge = (window as any).ghostNDI;
+      const bridge = getNdiBridge();
       const result = bridge?.outputStatus
         ? await bridge.outputStatus()
         : { available: false, reason: 'NDI output requires the desktop app with the optional NDI runtime.' };

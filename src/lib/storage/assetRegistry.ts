@@ -23,6 +23,7 @@
 // runtime `src`/`modelData`/etc. The runtime URL is recomputed on each load
 // from the AssetRef using `resolveAssetRefForRuntime`.
 
+import { getRawElectronApi } from '$lib/bridge';
 import { writable, type Writable } from 'svelte/store';
 
 export type AssetKind = 'local-file' | 'project-file' | 'embedded' | 'url';
@@ -85,8 +86,7 @@ export function hasDurableAssetLocation(ref: AssetRef | null | undefined): ref i
 }
 
 export function createAssetRefFromFile(file: File): CapturedAsset {
-  const w = window as any;
-  const electronPath: string | null = w.electronAPI?.getPathForFile?.(file) || null;
+  const electronPath: string | null = getRawElectronApi()?.getPathForFile?.(file) || null;
   const blob = URL.createObjectURL(file);
   const ref: AssetRef = {
     kind: electronPath ? 'local-file' : 'embedded',
@@ -129,10 +129,11 @@ export async function createAssetRefFromGeneratedBlob(
   };
 
   const w = window as any;
-  if (w.__ELECTRON__ && w.electronAPI?.invoke) {
+  const electronApi = getRawElectronApi();
+  if (w.__ELECTRON__ && electronApi?.invoke) {
     try {
       const bytes = await blob.arrayBuffer();
-      const result = await w.electronAPI.invoke('save_generated_asset', {
+      const result = await electronApi.invoke('save_generated_asset', {
         filename: name,
         mime: baseRef.mime,
         bytes,
