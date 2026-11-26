@@ -5139,6 +5139,13 @@ struct RenderState {
     /// Deck monitors, the record target and full-detail Screens, each with
     /// its own compositor inputs (see `CompositeView`), keyed by view.
     composite_views: HashMap<String, CompositeView>,
+    /// Outputs drawn after the program this frame (see take_outputs_encoder).
+    outputs_encoder: Option<wgpu::CommandEncoder>,
+    /// The frame's latest submit so far; finish_frame fences on it.
+    frame_submission: Option<wgpu::SubmissionIndex>,
+    /// Linux Screens drawn into the outputs encoder, presented after its submit.
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    pending_slice_presents: Vec<wgpu::SurfaceTexture>,
     /// Picture slots (source_frames.rs): one shared array, or a texture per slot.
     slots: SourceFrameStore,
     /// Compositor binding-array length (PerSource), the per-source slot ceiling.
@@ -23276,6 +23283,10 @@ impl RenderState {
             mesh_cell_bounds_scratch: Vec::with_capacity(MAX_SCENE_LAYERS),
             mesh_cell_bounds_last: Vec::new(),
             composite_views: HashMap::new(),
+            outputs_encoder: None,
+            frame_submission: None,
+            #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+            pending_slice_presents: Vec::new(),
             source_frame_bind_generation: source_frame_store.generation(),
             slots: source_frame_store,
             source_frame_bindings,
@@ -24109,16 +24120,8 @@ impl RenderState {
                 &[],
                 OutputStage::default(),
             );
-            let mut encoder = self
-                .device
-                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                    label: Some("Ghost Deck Monitor Encoder"),
-                });
-            {
-                let Some(targets) = self.deck_monitor_targets.as_ref() else {
-                    return false;
-                };
-                let target = &targets[index];
+            let mut encoder = self.take_outputs_encoder();
+            if let Some(target) = self.deck_monitor_targets.as_ref().map(|targets| &targets[index]) {
                 self.draw_composite_view(
                     &mut encoder,
                     key,
@@ -24133,7 +24136,7 @@ impl RenderState {
                     &target.export.view,
                 );
             }
-            churn_probe::submit(&self.queue, Some(encoder.finish()));
+            self.outputs_encoder = Some(encoder);
         }
         #[cfg(any(target_os = "macos", target_os = "windows"))]
         if let Some(targets) = self.deck_monitor_targets.as_mut() {
@@ -24239,19 +24242,12 @@ impl RenderState {
             post_effects,
             record_target_output_stage(alpha),
         );
-        let mut encoder = self
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("Ghost Record Target Encoder"),
-            });
-        {
-            let Some(target) = self.record_target.as_ref() else {
-                return false;
-            };
+        let mut encoder = self.take_outputs_encoder();
+        if let Some(target) = self.record_target.as_ref() {
             self.draw_composite_view(&mut encoder, RECORD_TARGET_VIEW, &target.render_view, "Ghost Record Target Pass");
             target.export.blitter.copy(&self.device, &mut encoder, &target.render_view, &target.export.view);
         }
-        churn_probe::submit(&self.queue, Some(encoder.finish()));
+        self.outputs_encoder = Some(encoder);
         if let Some(target) = self.record_target.as_mut() {
             target.export.frame = target.export.frame.saturating_add(1);
         }
@@ -24360,17 +24356,8 @@ impl RenderState {
                 self.write_view_inputs(&view_key, false, command_phase, layers.len() as u32, time_seconds, frame_count,
                     layers, audio0, audio1, audio2, output_gate, post_effects, spec.stage);
             }
-            #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-            let mut presented: Option<wgpu::SurfaceTexture> = None;
-            let mut encoder = self
-                .device
-                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                    label: Some("Ghost Slice Output Encoder"),
-                });
-            {
-                let Some(target) = self.slice_targets.get(&spec.id) else {
-                    continue;
-                };
+            let mut encoder = self.take_outputs_encoder();
+            if let Some(target) = self.slice_targets.get(&spec.id) {
                 if let Some(mesh) = spec.mirror_mesh.as_ref() {
                     self.draw_mirror_dome(&mut encoder, &target.render_view, spec.width, spec.height,
                         output_gate, OutputStage { dlayer: self.dome_layer_pass, ..spec.stage },
@@ -24390,15 +24377,17 @@ impl RenderState {
                     &target.export.view,
                 );
                 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+                if let Some(frame) = Self::blit_to_linux_slice_window(
+                    &self.device, &self.wgpu_adapter, &mut self.linux_slice_windows, &spec.id, &mut encoder, &target.render_view)
                 {
-                    presented = Self::blit_to_linux_slice_window(
-                        &self.device, &self.wgpu_adapter, &mut self.linux_slice_windows, &spec.id, &mut encoder, &target.render_view);
+                    self.pending_slice_presents.push(frame);
                 }
             }
-            churn_probe::submit(&self.queue, Some(encoder.finish()));
-            #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-            if let Some(frame) = presented.take() {
-                self.queue.present(frame);
+            self.outputs_encoder = Some(encoder);
+            // The mirror pass has one uniform for every mirror Screen: send
+            // this one before the next mirror Screen rewrites it.
+            if spec.mirror_mesh.is_some() {
+                self.submit_outputs();
             }
             if let Some(target) = self.slice_targets.get_mut(&spec.id) {
                 target.bump_frame();
@@ -24651,7 +24640,9 @@ impl RenderState {
                     &self.device, &self.wgpu_adapter, &mut self.linux_slice_windows, &spec.id, &mut encoder, &target.render_view);
             }
         }
-        churn_probe::submit(&self.queue, Some(encoder.finish()));
+        // Its own submit: the projector view renderer has one set of
+        // uniforms. Nothing in the outputs encoder reads what it draws.
+        self.frame_submission = Some(churn_probe::submit(&self.queue, Some(encoder.finish())));
         #[cfg(not(any(target_os = "macos", target_os = "windows")))]
         if let Some(frame) = presented.take() {
             self.queue.present(frame);
@@ -24966,19 +24957,14 @@ impl RenderState {
             });
         }
         let stage = OutputStage { dlayer: self.dome_layer_pass, ..stage };
-        let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("Ghost Dome View Encoder"),
-        });
-        {
-            let Some(target) = self.dome_view_target.as_ref() else {
-                return;
-            };
+        let mut encoder = self.take_outputs_encoder();
+        if let Some(target) = self.dome_view_target.as_ref() {
             self.output_presenter.draw(&self.queue, &mut encoder, &target.render_view,
                 self.creative_frame_index, width, height, output_gate, stage, time_seconds.unwrap_or(0.0));
             #[cfg(any(target_os = "macos", target_os = "windows"))]
             target.export.blitter.copy(&self.device, &mut encoder, &target.render_view, &target.export.view);
         }
-        churn_probe::submit(&self.queue, Some(encoder.finish()));
+        self.outputs_encoder = Some(encoder);
         #[cfg(any(target_os = "macos", target_os = "windows"))]
         if let Some(target) = self.dome_view_target.as_mut() {
             target.export.frame = target.export.frame.saturating_add(1);
@@ -25102,14 +25088,43 @@ impl RenderState {
     }
 
     fn submit_frame(&mut self, encoder: wgpu::CommandEncoder) {
-        churn_probe::submit(&self.queue, Some(encoder.finish()));
+        self.frame_submission = Some(churn_probe::submit(&self.queue, Some(encoder.finish())));
+    }
+
+    /// The encoder deck monitors, Screens, the dome view and the record
+    /// target record into after the program, sent once in `finish_frame`.
+    /// Put it back in `outputs_encoder` when done.
+    fn take_outputs_encoder(&mut self) -> wgpu::CommandEncoder {
+        self.outputs_encoder.take().unwrap_or_else(|| {
+            self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("Ghost Render Core Outputs Encoder"),
+            })
+        })
+    }
+
+    /// Send what the outputs encoder holds, then present the Screens it drew
+    /// (Linux). None when it held nothing.
+    fn submit_outputs(&mut self) -> Option<wgpu::SubmissionIndex> {
+        let encoder = self.outputs_encoder.take()?;
+        let submission = churn_probe::submit(&self.queue, Some(encoder.finish()));
+        #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+        for frame in self.pending_slice_presents.drain(..) {
+            self.queue.present(frame);
+        }
+        self.frame_submission = Some(submission.clone());
+        Some(submission)
     }
 
     fn finish_frame(&mut self, frame_started: Instant) {
         self.frame_uniform_pool.truncate(self.frame_uniform_cursor);
         self.prune_composite_views();
-        // Fence after program, confidence monitors and slices, not just program.
-        let submission = churn_probe::submit(&self.queue, std::iter::empty());
+        // Fence after program, confidence monitors and slices, not just
+        // program: the outputs' submit is the frame's last, or else the
+        // program's, when nothing was sent after it.
+        let submission = self.submit_outputs()
+            .or_else(|| self.frame_submission.take())
+            .unwrap_or_else(|| churn_probe::submit(&self.queue, std::iter::empty()));
+        self.frame_submission = None;
         self.gpu_frames_submitted = self.gpu_frames_submitted.saturating_add(1);
         let _ = self.gpu_completion_tx.send((submission, frame_started, Instant::now()));
     }
@@ -29082,6 +29097,11 @@ impl RenderState {
         post_effects: &[[f32; 4]],
         stage: OutputStage,
     ) -> Result<SurfacePresentOutcome, String> {
+        // Outputs recorded after the last frame's program (none, normally:
+        // finish_frame sends them) go first; then the presenter's uniform
+        // slots are free to reuse.
+        self.submit_outputs();
+        self.output_presenter.begin_frame();
         self.refresh_source_frame_bind_groups();
         self.sync_dome_layers(&stage, scene_layers);
         let stage = OutputStage { dlayer: self.dome_layer_pass, ..stage };
