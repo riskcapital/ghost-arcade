@@ -29,6 +29,7 @@ import {
   normalizeNativePreviewRect,
 } from './native-preview-geometry.js';
 import { createJsSourceHost, JS_SOURCE_SCHEME } from './js-source-host.js';
+import { createSharedFrames } from './js-source-frames.js';
 import { physicalOutputWindowArgs } from './output-window-placement.js';
 import {
   coreAdapterFromStatus,
@@ -318,6 +319,14 @@ const jsSourceHost = createJsSourceHost({
   threeDir: path.join(__dirname, '..', 'node_modules', 'three'),
   preloadPath: path.join(__dirname, 'js-source-preload.cjs'),
   isPackaged: app.isPackaged,
+  // GA_JS_HOST_SHARED_TEXTURE=1 (macOS): frames reach the core as textures.
+  sharedFrames: createSharedFrames({
+    loadAddon: () => {
+      const addonPath = getTextureShareAddonCandidates('js_frame_ring_addon.node').find((candidate) => fs.existsSync(candidate));
+      return addonPath ? require(addonPath) : null;
+    },
+    getCapabilities: () => nativeRendererBroker.capabilities,
+  }),
 });
 
 // Force Chromium to use the discrete GPU (NVIDIA/AMD) on Optimus laptops.

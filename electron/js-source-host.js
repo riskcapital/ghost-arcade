@@ -20,6 +20,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
+import { FAILURE_LIMIT, paintFrame, sharedFrameCommand, submitRejectedFrame } from './js-source-frames.js';
 import { buildHostHtml, buildHostPage, hostLineToPageLine, uncaughtErrorMessage, wantsLiveClock, wantsTransparentBackground } from './js-source-page.js';
 
 export const JS_SOURCE_SCHEME = 'ghost-js';
@@ -90,7 +91,12 @@ function sanitizeValues(values) {
   return out;
 }
 
-export function createJsSourceHost({ broker, libDir, threeDir, preloadPath, isPackaged = false, log = console }) {
+/**
+ * `sharedFrames` (js-source-frames.js) lets hosts paint into shared textures
+ * the core imports on the GPU; without it, or when it says no, they paint
+ * bitmaps.
+ */
+export function createJsSourceHost({ broker, libDir, threeDir, preloadPath, isPackaged = false, sharedFrames = null, log = console }) {
   const hosts = new Map();
   const threeAddonsRoot = path.join(threeDir, 'examples', 'jsm');
 
@@ -169,6 +175,8 @@ export function createJsSourceHost({ broker, libDir, threeDir, preloadPath, isPa
       last_error: entry.lastError,
       last_upload_at: entry.lastUploadAt,
       painting: !entry.paused,
+      transport: entry.shared ? 'shared-texture' : 'bitmap',
+      ...(entry.ring ? { ring: entry.ring.status() } : {}),
     };
   }
 
@@ -178,6 +186,12 @@ export function createJsSourceHost({ broker, libDir, threeDir, preloadPath, isPa
     failStep(entry, 'the page closed');
     if (hosts.get(entry.id) === entry) hosts.delete(entry.id);
     byToken.delete(entry.token);
+    try {
+      entry.ring?.destroy();
+    } catch {
+      /* already gone */
+    }
+    entry.ring = null;
     try {
       if (!entry.window.isDestroyed()) entry.window.destroy();
     } catch {
@@ -225,26 +239,57 @@ export function createJsSourceHost({ broker, libDir, threeDir, preloadPath, isPa
     return true;
   }
 
-  function handlePaint(entry, image) {
-    if (entry.closed) return;
+  // A shared texture goes back to Chromium's small pool once it is copied
+  // or skipped; one held on to stops the page painting.
+  function releaseTexture(texture) {
+    try {
+      texture?.release();
+    } catch {
+      /* already released */
+    }
+  }
+
+  function handlePaint(entry, image, texture) {
+    if (entry.closed) {
+      releaseTexture(texture);
+      return;
+    }
     entry.paints += 1;
     // In a render the host takes each frame itself: the first one painted
     // after the page has drawn its step.
     if (entry.manual) {
       const waiter = entry.paintWaiter;
-      if (waiter) { entry.paintWaiter = null; waiter(image); }
+      if (waiter) { entry.paintWaiter = null; waiter({ image, texture }); }
+      else releaseTexture(texture);
       return;
     }
     // Until the page has loaded and drawn, its frames are blank. The core
     // keeps showing the layer's previous picture until this source's first
     // upload, so sending a blank one would flash the layers underneath.
-    if (!entry.drawn && !entry.loaded) return;
+    if (!entry.drawn && !entry.loaded) {
+      releaseTexture(texture);
+      return;
+    }
     // A frame's round trip ends when the core has applied it, which is at
     // least one render tick. With a single frame in flight that caps uploads
     // near 40 a second on a 60 Hz core; two keeps pace without letting a
     // backlog build, and anything beyond that is dropped rather than queued.
     if (entry.uploading >= MAX_FRAMES_IN_FLIGHT) {
       entry.dropped += 1;
+      releaseTexture(texture);
+      return;
+    }
+    if (texture) {
+      // Until the page draws, the copy says whether the frame is still blank.
+      const probe = !entry.drawn && Date.now() - entry.loadedAt < FIRST_FRAME_WAIT_MS
+        ? (entry.transparent === true ? 'alpha' : 'rgb')
+        : null;
+      entry.uploading += 1;
+      uploadTexture(entry, texture, probe)
+        .catch(() => {})
+        .finally(() => {
+          entry.uploading -= 1;
+        });
       return;
     }
     const { width, height } = image.getSize();
@@ -264,6 +309,79 @@ export function createJsSourceHost({ broker, libDir, threeDir, preloadPath, isPa
       .finally(() => {
         entry.uploading -= 1;
       });
+  }
+
+  /**
+   * A shared-texture paint to the core: copied into the host's ring on the
+   * GPU, then imported by the core from there. Resolves true once the core
+   * has it, false for a frame skipped (blank, or the ring busy). Throws when
+   * the frame failed; enough failures in a row and the host goes back to
+   * bitmaps.
+   */
+  async function uploadTexture(entry, texture, probeBlank = null) {
+    let published;
+    try {
+      const frame = paintFrame(texture.textureInfo);
+      if (!frame) throw new Error('the paint has no IOSurface');
+      if (!entry.ring) entry.ring = sharedFrames?.createRing() ?? null;
+      if (!entry.ring) throw new Error('no frame ring');
+      const { handle, ...rect } = frame;
+      published = await entry.ring.publish(handle, { ...rect, unpremultiply: entry.transparent === true, probeBlank });
+    } catch (err) {
+      const message = String(err?.message || err);
+      if (message === 'busy') {
+        entry.dropped += 1;
+        return false;
+      }
+      noteSharedFailure(entry, message);
+      throw err;
+    } finally {
+      // The copy is done (or never started): Chromium may paint into it again.
+      releaseTexture(texture);
+    }
+    if (entry.closed) return false;
+    if (probeBlank && published.blank) return false;
+    entry.drawn = true;
+    entry.frameWidth = published.width;
+    entry.frameHeight = published.height;
+    seq += 1;
+    const result = await broker.invoke('native_renderer_submit_commands', {
+      commands: [sharedFrameCommand({ sourceId: entry.id, seq, surfaceId: published.surfaceId, width: published.width, height: published.height })],
+    }).catch((err) => {
+      entry.errors += 1;
+      entry.lastError = String(err?.message || err);
+      throw err;
+    });
+    // No core running: nothing to count against the texture path.
+    if (result === null || result === undefined) return false;
+    if (submitRejectedFrame(result)) {
+      const reason = result.errors.find((error) => error?.type === 'upload_source_frame')?.message;
+      noteSharedFailure(entry, `the render core could not open the frame: ${reason || 'unknown'}`);
+      throw new Error(entry.lastError);
+    }
+    entry.sharedFailures = 0;
+    entry.uploads += 1;
+    entry.lastUploadAt = Date.now();
+    return true;
+  }
+
+  function noteSharedFailure(entry, reason) {
+    entry.errors += 1;
+    entry.lastError = reason;
+    entry.sharedFailures += 1;
+    if (entry.sharedFailures < FAILURE_LIMIT || entry.closed) return;
+    // Every host from now on paints bitmaps, this one included: it is opened
+    // again (a texture window cannot switch), outside the paint handler.
+    sharedFrames?.disable(reason);
+    log.warn?.(`[JsSource] ${entry.id}: back to bitmaps after ${entry.sharedFailures} failed frames (${reason})`);
+    const args = entry.openArgs;
+    const paused = entry.paused;
+    setImmediate(() => {
+      if (entry.closed || hosts.get(entry.id) !== entry) return;
+      closeEntry(entry);
+      const reopened = open(args);
+      if (reopened?.ok && paused) setPainting(entry.id, false);
+    });
   }
 
   /** A frame of a page to the core, as the source frame of its id. */
@@ -352,6 +470,7 @@ export function createJsSourceHost({ broker, libDir, threeDir, preloadPath, isPa
     const transparent = wantsTransparentBackground(html);
     const liveClock = wantsLiveClock(html);
     const manual = !!renderClock && !liveClock;
+    const shared = !!sharedFrames && sharedFrames.unavailableReason() === null;
     const win = new BrowserWindow({
       width,
       height,
@@ -362,7 +481,7 @@ export function createJsSourceHost({ broker, libDir, threeDir, preloadPath, isPa
       backgroundColor: transparent ? '#00000000' : '#000000',
       paintWhenInitiallyHidden: true,
       webPreferences: {
-        offscreen: true,
+        offscreen: shared ? { useSharedTexture: true } : true,
         partition: PARTITION,
         preload: preloadPath,
         sandbox: true,
@@ -387,6 +506,10 @@ export function createJsSourceHost({ broker, libDir, threeDir, preloadPath, isPa
       stepWaiter: null,
       paintWaiter: null,
       window: win,
+      openArgs: args,
+      shared,
+      ring: null,
+      sharedFailures: 0,
       transparent,
       width,
       height,
@@ -424,7 +547,7 @@ export function createJsSourceHost({ broker, libDir, threeDir, preloadPath, isPa
       // values go on top of its defaults.
       if (Object.keys(current.params).length > 0) wc.send('ghost-js:params', current.params);
     });
-    wc.on('paint', (_event, _dirty, image) => handlePaint(current, image));
+    wc.on('paint', (event, _dirty, image) => handlePaint(current, image, event.texture));
     wc.on('console-message', (...consoleArgs) => handleConsoleMessage(current, consoleArgs));
     wc.on('render-process-gone', (_event, details) => {
       noteCrash(current, details?.reason);
@@ -663,7 +786,7 @@ export function createJsSourceHost({ broker, libDir, threeDir, preloadPath, isPa
   }
 
   function status() {
-    return { hosts: Array.from(hosts.values(), describe), max_hosts: MAX_HOSTS };
+    return { hosts: Array.from(hosts.values(), describe), max_hosts: MAX_HOSTS, shared_textures: sharedFrames?.status() ?? null };
   }
 
   function closeAll() {
@@ -750,7 +873,12 @@ export function createJsSourceHost({ broker, libDir, threeDir, preloadPath, isPa
       entry.paintWaiter = (img) => { clearTimeout(timer); resolve(img); };
     });
     entry.window.webContents.invalidate();
-    const image = await painted;
+    const { image, texture } = await painted;
+    if (texture) {
+      entry.drawn = true;
+      if (!(await uploadTexture(entry, texture))) throw new Error('the render core did not take the frame');
+      return;
+    }
     const { width, height } = image.getSize();
     const bitmap = image.toBitmap();
     if (!width || !height || bitmap.length < width * height * 4) throw new Error('the page gave an empty frame');
