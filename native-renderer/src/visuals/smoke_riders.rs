@@ -55,6 +55,15 @@ impl Default for NativeSmokeRidersGraphState {
     }
 }
 
+/* ============================================================== */
+/* SMOKE RIDERS — coupled fluid + rider instrument                 */
+/* ============================================================== */
+// Mirrors src/lib/renderer/shaders/webgpuSmokeRidersShader.ts. The WGSL
+// itself ships from TS through `precompile_shader`; only the graph shape
+// and the uniform packing live here, and both sides must agree byte for
+// byte or the same shader would read different numbers depending on
+// which builder installed the graph.
+
 pub(crate) const SMOKE_RIDERS_TILE_SIZE: u32 = 16;
 
 pub(crate) const SMOKE_RIDERS_TILE_CAP: u32 = 64;
@@ -735,6 +744,12 @@ pub(crate) fn build_smoke_riders_bin_uniform_bytes(
     write_f32_le(&mut bytes, 22, params.rider_size);
     bytes
 }
+
+/* ── shadow volume geometry (shared by BOTH rider kinds) ────────── */
+// Mirrors `ridersShadowDim` / `ridersSpotCos` / `ridersSpotBlend` /
+// `ridersShadowFrame` / `ridersShadowExtinction` in
+// src/lib/renderer/shaders/webgpuSmokeRidersShader.ts. The two packers
+// must stay byte-identical, so these must stay value-identical.
 
 pub(crate) const RIDERS_SHADOW_DIM_MAX: u32 = 80;
 
