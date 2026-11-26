@@ -193,7 +193,7 @@ const ALLOWED_IPC_COMMANDS = new Set([
   // WLED — UDP DRGB packets to LED controllers on the LAN
   'wled_send_frame', 'wled_close_socket',
   // Art-Net / sACN pixel mapping — DMX universes over UDP
-  'pixelmap_send_frame', 'pixelmap_stop', 'pixelmap_get_stats',
+  'pixelmap_send_frame', 'pixelmap_stop', 'pixelmap_get_stats', 'pixelmap_core_configure',
   // PJLink projector control — power, shutter, input and status over TCP 4352
   'pjlink_command', 'pjlink_set_password', 'pjlink_has_password',
   // Start at boot / show mode (launch at login, startup project, prompts)

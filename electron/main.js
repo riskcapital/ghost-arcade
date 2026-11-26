@@ -702,6 +702,17 @@ const wledLinks = require('./wled-link.cjs').createWledLinks({
 const { createPixelMapOutput } = require('./pixelmap-output.cjs');
 // Art-Net / sACN pixel mapping. One socket for every fixture and node.
 const pixelMapOutput = createPixelMapOutput({ dgram });
+// The render core samples and sends pixel-map output itself when it can;
+// pixelMapOutput stays the fallback (electron/pixelmap-route.cjs).
+const pixelMapRoute = require('./pixelmap-route.cjs').createPixelMapRoute({
+  output: pixelMapOutput,
+  invokeCore: (command, args) => nativeRendererBroker.invoke(`native_renderer_${command}`, args),
+  coreSupported: () => {
+    if (!nativeRendererBroker?.coreCapabilitiesConfirmed) return false;
+    const methods = nativeRendererBroker.capabilities?.implemented_methods;
+    return Array.isArray(methods) && methods.includes('pixelmap_configure');
+  },
+});
 const { createDmxInput } = require('./dmx-input.cjs');
 const os = require('os');
 // Art-Net / sACN DMX input. Off until the renderer starts it (opt-in).
@@ -719,7 +730,7 @@ const dmxInput = createDmxInput({
     .filter(item => item.family === 'IPv4' || item.family === 4)
     .map(item => ({ name, address: item.address }))),
   isOwnPacket: (rinfo) => {
-    const port = pixelMapOutput.localPort();
+    const port = pixelMapRoute.localPort();
     if (!port || rinfo?.port !== port) return false;
     if (rinfo.address === '127.0.0.1') return true;
     return Object.values(os.networkInterfaces()).some(list => (list || []).some(item => item.address === rinfo.address));
@@ -7018,9 +7029,13 @@ function registerIpcHandlers() {
   // The renderer packs whole DMX universes; pixelmap-output.cjs validates
   // them, caps the rate (60fps max), drops frames under backpressure and
   // keeps sequence numbers. Stop blacks out and terminates every stream.
-  ipcMain.handle('pixelmap_send_frame', async (_, frame) => pixelMapOutput.sendFrame(frame));
-  ipcMain.handle('pixelmap_stop', async () => pixelMapOutput.stop());
-  ipcMain.handle('pixelmap_get_stats', async () => pixelMapOutput.stats());
+  // When the render core can, it samples the program output and sends the
+  // UDP itself from the plan the renderer sends here on every change
+  // (pixelmap-route.cjs decides, and hands output back on any failure).
+  ipcMain.handle('pixelmap_core_configure', async (_, plan) => pixelMapRoute.configure(plan));
+  ipcMain.handle('pixelmap_send_frame', async (_, frame) => pixelMapRoute.sendFrame(frame));
+  ipcMain.handle('pixelmap_stop', async () => pixelMapRoute.stop());
+  ipcMain.handle('pixelmap_get_stats', async (_, args) => pixelMapRoute.stats(args));
 
   // --- Art-Net / sACN DMX input ---
   // dmx-input.cjs owns the sockets, strict parsing, per-universe merge and
@@ -11761,7 +11776,7 @@ function cleanupAndQuit() {
   runCleanupStep('stopPowerSaveBlocker', stopPowerSaveBlocker);
   runCleanupStep('stopServer', stopServer);
   runCleanupStep('closeAllWledSockets', closeAllWledSockets);
-  runCleanupStep('stopPixelMapOutput', () => pixelMapOutput.stop());
+  runCleanupStep('stopPixelMapOutput', () => pixelMapRoute.stop());
   runCleanupStep('stopDmxInput', () => dmxInput.stop());
   runCleanupStep('killPluginProcesses', killPluginProcesses);
 

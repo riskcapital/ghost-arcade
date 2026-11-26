@@ -27,7 +27,9 @@ beforeEach(() => {
   vi.useFakeTimers();
   vi.mocked(resolveFixtureMapping).mockClear();
   vi.mocked(invoke).mockReset();
-  vi.mocked(invoke).mockImplementation(async () => ({ ok: true, stats: { sending: true } }));
+  vi.mocked(invoke).mockImplementation(async command => (command === 'pixelmap_core_configure'
+    ? { ok: false }
+    : { ok: true, stats: { sending: true } }));
 });
 
 afterEach(() => {

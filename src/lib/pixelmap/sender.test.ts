@@ -67,6 +67,8 @@ beforeEach(() => {
   vi.mocked(invoke).mockImplementation(async command => {
     if (command === 'native_renderer_get_frame_snapshot') return SNAPSHOT;
     if (command === 'pixelmap_send_frame') return { ok: true, stats: { framesSent: 1, fps: 40, sending: true } };
+    // These tests cover the editor path: no render core output here.
+    if (command === 'pixelmap_core_configure') return { ok: false, reason: 'no core in this test' };
     return { ok: true, stats: { sending: false } };
   });
   pixelMapBlackout.set(false);
@@ -119,7 +121,7 @@ it('never queues a second frame while one is in flight', async () => {
   let finish!: (value: unknown) => void;
   vi.mocked(invoke).mockImplementation(command => command === 'pixelmap_send_frame'
     ? new Promise(resolve => { finish = resolve; })
-    : Promise.resolve({ ok: true }));
+    : Promise.resolve({ ok: command !== 'pixelmap_core_configure' }));
   stop = startPixelMapOutput();
   await vi.advanceTimersByTimeAsync(500);
   expect(frames()).toHaveLength(1);
