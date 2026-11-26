@@ -7,6 +7,11 @@ on:
   pull_request:
     paths:
       - 'native-renderer/**'
+      - 'phone-server/**'
+      - 'server/**'
+      - 'src/lib/remote/**'
+      - 'scripts/build-phone-server.mjs'
+      - 'scripts/test-remote-rust.mjs'
       - 'electron/native/**'
       - 'electron/conversion-ffmpeg.cjs'
       - 'electron/video-converter-*'
@@ -118,3 +123,32 @@ jobs:
       # Server images can lack it) and with no display attached.
       - name: Test Media Foundation loading, the frame counter and display rates
         run: cargo test --manifest-path native-renderer/Cargo.toml --locked -- windows_media_foundation core_frame_counter windows_display_rate
+  phone-server:
+    # The phone remote server (phone-server/, Rust): its own tests, then the
+    # remote server suites against both servers on Windows, so a Windows-only
+    # difference (paths, sockets) in either fails here. Linked like the core
+    # (.cargo/config.toml), so it starts without the Visual C++ runtime.
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            phone-server/target
+          key: windows-phone-server-${{ hashFiles('phone-server/Cargo.lock', '.cargo/config.toml') }}
+      - name: Test the phone server
+        run: cargo test --manifest-path phone-server/Cargo.toml --locked
+      - name: Remote server tests on the JS server
+        run: npx vitest run src/lib/remote
+      - name: Remote server tests on the Rust server
+        run: npm run test:remote:rust
+      - name: Check what the phone server needs to start
+        run: node scripts/windows-core-imports.mjs phone-server/target/release/ghost-phone-server.exe

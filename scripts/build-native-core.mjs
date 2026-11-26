@@ -72,10 +72,16 @@ function ensureDxc() {
   }
 }
 
+// The phone remote server ships beside the core and builds the same way.
+function buildPhoneServer() {
+  execFileSync(process.execPath, [path.join(root, 'scripts', 'build-phone-server.mjs'), `--arch=${wantUniversal ? 'universal' : 'host'}`], { stdio: 'inherit', cwd: root });
+}
+
 if (!wantUniversal) {
   cargoBuild(null);
   ensureDxc();
   console.log(`[core-build] host build -> native-renderer/target/release/${BIN}`);
+  buildPhoneServer();
   process.exit(0);
 }
 
@@ -119,3 +125,4 @@ try {
 run('lipo', ['-info', output]);
 copyFileSync(output, path.join(releaseDir, `${BIN}.universal`));
 console.log('[core-build] universal core built (Intel Mac support is experimental/untested)');
+buildPhoneServer();
