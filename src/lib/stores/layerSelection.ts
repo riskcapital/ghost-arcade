@@ -16,3 +16,23 @@ export function selectionForPrimary(
   if (!primary) return null;
   return selectedIds.includes(primary) ? null : [primary];
 }
+
+/**
+ * The primary layer (the one the inspector and warp handles edit) for a new
+ * multi-selection. It must be one of the selected layers: Cmd/Ctrl-click
+ * deselecting a layer passes that layer as `requested`, and keeping it made
+ * the handles and inspector go on editing a layer no longer selected. A
+ * requested layer outside the selection falls back to the current primary
+ * when that is still selected, else to the layer added last.
+ */
+export function primaryForSelection(
+  requested: string | null,
+  current: string | null | undefined,
+  selectedIds: readonly string[],
+  validIds: readonly string[],
+): string | null {
+  if (selectedIds.length === 0) return requested && validIds.includes(requested) ? requested : null;
+  if (requested && selectedIds.includes(requested)) return requested;
+  if (current && selectedIds.includes(current)) return current;
+  return selectedIds[selectedIds.length - 1];
+}

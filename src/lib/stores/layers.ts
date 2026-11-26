@@ -93,7 +93,7 @@ import { fittedMeshGrid, refitRestingMesh } from '../utils/meshShapeFit';
 import { createLineElement, createDefaultLinesContent, createDefaultDrawAnimation } from '../lines/types';
 import { syncTrimmedVideoPlayback } from '../utils/videoTrimPlayback';
 import { recoverVJClipAssetRef } from '../storage/vjAssetPersistence';
-import { selectionForPrimary } from './layerSelection';
+import { primaryForSelection, selectionForPrimary } from './layerSelection';
 import { restoreVideoSourceElement } from '../media/videoSourceRestore';
 import { clipAudioBus, type ClipAudioTransport } from '../audio/clipAudioBus';
 
@@ -3007,9 +3007,7 @@ void main() {
       update((currentProject) => {
         const validIds = currentProject.layers.map(l => l.id);
         const normalized = normalizeSelectedLayerIds(layerIds, validIds);
-        const nextPrimary = primaryLayerId && validIds.includes(primaryLayerId)
-          ? primaryLayerId
-          : normalized[0] ?? null;
+        const nextPrimary = primaryForSelection(primaryLayerId, currentProject.selectedLayerId, normalized, validIds);
         selectedLayerIdsState.set(
           normalized.length > 0
             ? normalized
