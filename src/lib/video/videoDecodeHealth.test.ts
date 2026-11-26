@@ -42,15 +42,15 @@ describe('video decode health', () => {
 
   it('names an unsupported HAP variant and what to do about it', () => {
     const playsInSoftware = decodeBadge(decodeHealthFromProbe({ backend: 'ffmpeg', hardware: false, reverse_supported: false,
-      reason: 'HAP Q Alpha is not supported by GPU HAP playback yet', codec: 'hap (HapM / 0x4D706148), rgba, 1920x1080' }))!;
+      reason: 'HAP Alpha-Only is not supported by GPU HAP playback yet', codec: 'hap (HapA / 0x41706148), rgba, 1920x1080' }))!;
     expect(playsInSoftware).toMatchObject({ tone: 'warn', canConvert: true });
-    expect(playsInSoftware.title).toBe("Software decode — may lag: HAP Q Alpha isn't supported yet; convert it with Ghost Arcade's converter. Reverse and bounce will not play.");
+    expect(playsInSoftware.title).toBe("Software decode — may lag: HAP Alpha-Only isn't supported yet; convert it with Ghost Arcade's converter. Reverse and bounce will not play.");
     const cannotPlay = decodeBadge(decodeHealthFromProbe({ backend: 'failed', hardware: false, reverse_supported: false,
-      reason: 'HAP R is not supported by GPU HAP playback yet', codec: 'none (Hap7 / 0x37706148)' }))!;
+      reason: 'HAP HDR is not supported by GPU HAP playback yet', codec: 'none (HapH / 0x48706148)' }))!;
     expect(cannotPlay).toMatchObject({ tone: 'error', canConvert: false });
-    expect(cannotPlay.title).toBe("Can't play: HAP R isn't supported yet; export it again as HAP, HAP Alpha or HAP Q.");
+    expect(cannotPlay.title).toBe("Can't play: HAP HDR isn't supported yet; export it again as HAP, HAP Alpha, HAP Q, HAP Q Alpha or HAP R.");
     expect(plainDecodeReason('failed', 'This HAP variant is not supported by GPU HAP playback yet')).toBe(
-      "This HAP variant isn't supported yet; export it again as HAP, HAP Alpha or HAP Q");
+      "This HAP variant isn't supported yet; export it again as HAP, HAP Alpha, HAP Q, HAP Q Alpha or HAP R");
   });
 
   it('explains HAP container refusals in words', () => {

@@ -43,7 +43,7 @@ function hapReason(backend: string, reason: string): string | null {
   const variant = reason.match(/^(HAP [\w -]+?|This HAP variant) is not supported by GPU HAP playback/i)?.[1];
   if (variant) {
     return backend === 'failed'
-      ? `${variant} isn't supported yet; export it again as HAP, HAP Alpha or HAP Q`
+      ? `${variant} isn't supported yet; export it again as HAP, HAP Alpha, HAP Q, HAP Q Alpha or HAP R`
       : `${variant} isn't supported yet; convert it with Ghost Arcade's converter`;
   }
   if (!/\bHAP\b/.test(reason)) return null;
