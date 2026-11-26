@@ -1,0 +1,23 @@
+[package]
+name = "ghost-phone-server"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+description = "Ghost Arcade phone remote server (LAN WebSocket relay and HTTP)"
+publish = false
+
+[dependencies]
+bytes = { version = "1.12.2", default-features = false }
+futures-util = { version = "0.3.34", default-features = false, features = ["sink", "std"] }
+http-body-util = { version = "0.1.5", default-features = false }
+hyper = { version = "1.13.0", features = ["server", "http1"] }
+hyper-util = { version = "0.1.21", features = ["tokio"] }
+if-addrs = "0.15.0"
+indexmap = "2.14.2"
+serde_json = { version = "1.0.154", features = ["preserve_order", "float_roundtrip"] }
+tokio = { version = "1.54.1", default-features = false, features = ["rt", "rt-multi-thread", "net", "sync", "time", "macros", "io-util", "io-std"] }
+tokio-tungstenite = { version = "0.30.0", default-features = false, features = ["handshake"] }
+
+[profile.release]
+codegen-units = 1
+lto = "thin"
