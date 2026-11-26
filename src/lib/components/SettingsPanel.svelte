@@ -2403,6 +2403,16 @@
                 </div>
                 <AbletonLinkMonitor />
               </div>
+
+              <div class="setting-row sub-row">
+                <div class="setting-label">
+                  <span class="label-text">Audio Lab output trim</span>
+                  <span class="label-hint">Audio Lab already plays early by your audio device's latency to land on the session's beats. If its loops still sound late against your other Link app, raise this; early, lower it (ms).</span>
+                </div>
+                <input type="number" class="text-input small-input" min="-100" max="100" step="1" value={$abletonLink.offsetMs}
+                  aria-label="Audio Lab output trim in milliseconds"
+                  onchange={(e) => { const el = e.target as HTMLInputElement; el.value = String(abletonLink.setOffsetMs(Number(el.value))); }} />
+              </div>
             {/if}
             {#if $abletonLink.error}
               <div class="setting-row sub-row">

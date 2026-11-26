@@ -9,7 +9,7 @@
   import { launchLoopSection, loopSectionState, loopStationView, nextLoopSection } from '../../music/loopStation';
   import { beatNow } from '../../music/loopUi';
   import { LOOP_TRACK_COUNT } from '../../music/loopTrack';
-  import { launchClockTempo, resyncLaunchClock } from '../../stores/launchClock';
+  import { launchClockFollowsLink, launchClockTempo, resyncLaunchClock } from '../../stores/launchClock';
   import { audioStore } from '../../stores/audio';
   import { showToast } from '../../stores/errorToast';
   import { generateUUID } from '../../utils/uuid';
@@ -30,6 +30,8 @@
   const beat = $derived(Math.max(0, $beatNow));
   // The tempo is read with the beat, so it follows taps and nudges.
   const bpm = $derived((void $beatNow, launchClockTempo()));
+  // Ableton Link owns the downbeat while it has peers: Resync would do nothing.
+  const linked = $derived((void $beatNow, launchClockFollowsLink()));
   const bar = $derived(Math.floor(beat / 4) + 1);
   const inBar = $derived(Math.floor(beat) % 4);
   const playing = $derived($loopStationView.tracks.map((t, i) => (t.phase === 'play' || t.phase === 'overdub' ? i : -1)).filter((i) => i >= 0));
@@ -68,7 +70,7 @@
       <button onclick={() => audioStore.tapTempo()} title="Tap the tempo">Tap</button>
       <button onclick={() => nudge(-1)} title="One BPM slower" aria-label="Slower">−</button>
       <button onclick={() => nudge(1)} title="One BPM faster" aria-label="Faster">+</button>
-      <button onclick={() => resyncLaunchClock()} title="Make now the downbeat">Resync</button>
+      <button onclick={() => resyncLaunchClock()} disabled={linked} title={linked ? 'Ableton Link sets the downbeat' : 'Make now the downbeat'}>Resync</button>
     </div>
   </div>
   <div class="rh">
