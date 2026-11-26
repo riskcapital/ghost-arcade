@@ -264,10 +264,11 @@ function assertNativeStage3DLightingStdlibUsage(stdlib) {
     throw new Error(`src/lib/renderer/wgsl/lighting.wgsl is missing required native helper(s): ${missingShared.join(', ')}`);
   }
 
-  const nativeMain = readFileSync(join(nativeRendererRoot, 'main.rs'), 'utf8');
-  const sharedIncludePath = 'include_str!("../../src/lib/renderer/wgsl/lighting.wgsl")';
+  const nativeSources = nativeRustSources();
+  const nativeMain = nativeSources.map(({ source }) => source).join('\n');
+  const sharedInclude = /include_str!\("(?:\.\.\/)+src\/lib\/renderer\/wgsl\/lighting\.wgsl"\)/;
   const localCopies = required.filter((name) => new RegExp(`\\bfn\\s+${name}\\s*\\(`).test(nativeMain));
-  if (!nativeMain.includes(sharedIncludePath) || localCopies.length) {
+  if (!sharedInclude.test(nativeMain) || localCopies.length) {
     throw new Error(
       `native Stage3D mesh shader must consume shared lighting.wgsl directly: ${
         localCopies.length ? `local copies=${localCopies.join(', ')}` : 'include_str missing'
@@ -276,33 +277,43 @@ function assertNativeStage3DLightingStdlibUsage(stdlib) {
   }
 }
 
+/** Every Rust source file of the core, as { path (relative to src), source }. */
+function nativeRustSources() {
+  return readdirSync(nativeRendererRoot, { recursive: true })
+    .filter((path) => path.endsWith('.rs'))
+    .sort()
+    .map((path) => ({ path: path.split(sep).join('/'), source: readFileSync(join(nativeRendererRoot, path), 'utf8') }));
+}
+
 function extractNativeRustWgslRecords() {
-  const mainPath = join(nativeRendererRoot, 'main.rs');
-  const source = readFileSync(mainPath, 'utf8');
   const records = [];
-  const concatConstNames = new Set();
+  for (const { path, source } of nativeRustSources()) {
+    const concatConstNames = new Set();
+    // include_str! paths are relative to the file that holds them.
+    const fileDir = resolve(nativeRendererRoot, path, '..');
 
-  for (const match of source.matchAll(RUST_WGSL_CONCAT_CONST_RE)) {
-    const [, name, includePath, body] = match;
-    concatConstNames.add(name);
-    const includeSource = readFileSync(resolve(nativeRendererRoot, includePath), 'utf8');
-    records.push({
-      id: `native-renderer/src/main.rs:${name}`,
-      stage: 'module',
-      entry: 'main',
-      source: `${includeSource}\n${body ?? ''}`,
-    });
-  }
+    for (const match of source.matchAll(RUST_WGSL_CONCAT_CONST_RE)) {
+      const [, name, includePath, body] = match;
+      concatConstNames.add(name);
+      const includeSource = readFileSync(resolve(fileDir, includePath), 'utf8');
+      records.push({
+        id: `native-renderer/src/${path}:${name}`,
+        stage: 'module',
+        entry: 'main',
+        source: `${includeSource}\n${body ?? ''}`,
+      });
+    }
 
-  for (const match of source.matchAll(RUST_WGSL_RAW_CONST_RE)) {
-    const [, name, body] = match;
-    if (concatConstNames.has(name)) continue;
-    records.push({
-      id: `native-renderer/src/main.rs:${name}`,
-      stage: 'module',
-      entry: 'main',
-      source: body ?? '',
-    });
+    for (const match of source.matchAll(RUST_WGSL_RAW_CONST_RE)) {
+      const [, name, body] = match;
+      if (concatConstNames.has(name)) continue;
+      records.push({
+        id: `native-renderer/src/${path}:${name}`,
+        stage: 'module',
+        entry: 'main',
+        source: body ?? '',
+      });
+    }
   }
 
   return records.filter((record) => looksLikeWgsl(record.source));
