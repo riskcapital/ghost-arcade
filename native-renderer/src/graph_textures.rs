@@ -253,6 +253,47 @@ impl MipBuilder {
     }
 }
 
+/// Box-filtered mip levels for the picture slots: each level the 2x2
+/// average of the one above, as graph textures build theirs. (A linear
+/// blit samples a 2:1 step with the minification filter, which a default
+/// sampler leaves at nearest: every other texel, not their average.)
+pub(crate) struct BoxMips {
+    builder: MipBuilder,
+}
+
+impl BoxMips {
+    pub(crate) fn new(device: &wgpu::Device, format: wgpu::TextureFormat) -> Self {
+        Self { builder: MipBuilder::new(device, format) }
+    }
+
+    /// Draw level `target` from the level above it, `source` (single-level views).
+    pub(crate) fn encode(&self, device: &wgpu::Device, encoder: &mut wgpu::CommandEncoder,
+        source: &wgpu::TextureView, target: &wgpu::TextureView) {
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Ghost Source Frame Mip Source"),
+            layout: &self.builder.layout,
+            entries: &[wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(source) }],
+        });
+        crate::churn_probe::bind_group();
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("Ghost Source Frame Mip"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: target,
+                resolve_target: None,
+                ops: wgpu::Operations { load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT), store: wgpu::StoreOp::Store },
+                depth_slice: None,
+            })],
+            depth_stencil_attachment: None,
+            timestamp_writes: None,
+            occlusion_query_set: None,
+            multiview_mask: None,
+        });
+        pass.set_pipeline(&self.builder.pipeline);
+        pass.set_bind_group(0, &bind_group, &[]);
+        pass.draw(0..3, 0..1);
+    }
+}
+
 pub(crate) struct GraphTexture {
     pub(crate) spec: NativeComputeGraphTextureSpec,
     /// Every mip level, for sampling.

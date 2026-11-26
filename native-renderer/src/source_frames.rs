@@ -99,6 +99,8 @@ struct Inner {
     capacity: usize,
     shared: Option<wgpu::Texture>,
     slots: Vec<Option<SlotRef>>,
+    /// Per slot: its mip levels were built from its current level zero.
+    mips_current: Vec<bool>,
     generation: u64,
 }
 
@@ -177,6 +179,7 @@ impl SourceFrameStore {
                 capacity: initial_capacity,
                 shared,
                 slots: vec![None; initial_capacity],
+                mips_current: vec![false; initial_capacity],
                 generation: 1,
             }),
             empty: SlotRef { texture: empty_texture, layer: 0, width: 1, height: 1, mips: 1 },
@@ -226,7 +229,10 @@ impl SourceFrameStore {
     /// answers the slot's layer (the picture goes in a sub-rectangle);
     /// PerSource (re)allocates a texture of exactly that size, keeping the
     /// existing one when it already matches.
+    /// Every writer asks for its storage here, so the slot's mip chain is
+    /// stale from now until `set_mips_current` says it was rebuilt.
     pub(crate) fn ensure(&self, slot: usize, width: u32, height: u32, with_mips: bool) -> SlotRef {
+        self.set_mips_current(slot, false);
         if self.mode == SourceFrameMode::Shared {
             return self.slot(slot);
         }
@@ -252,6 +258,26 @@ impl SourceFrameStore {
         self.ensure(slot, width, height, true)
     }
 
+    /// Record whether `slot`'s mip levels were built from its level zero.
+    pub(crate) fn set_mips_current(&self, slot: usize, current: bool) {
+        let mut inner = self.inner.borrow_mut();
+        let index = slot.min(inner.capacity.saturating_sub(1));
+        if let Some(entry) = inner.mips_current.get_mut(index) {
+            *entry = current;
+        }
+    }
+
+    /// The slot has more than one level and they match its picture.
+    pub(crate) fn mips_current(&self, slot: usize) -> bool {
+        let inner = self.inner.borrow();
+        let index = slot.min(inner.capacity.saturating_sub(1));
+        let levels = match self.mode {
+            SourceFrameMode::Shared => self.shared_mips,
+            SourceFrameMode::PerSource => inner.slots[index].as_ref().map_or(1, |slot| slot.mips),
+        };
+        levels > 1 && inner.mips_current.get(index).copied().unwrap_or(false)
+    }
+
     /// Forget a per-source slot's texture (its picture is gone).
     pub(crate) fn release(&self, slot: usize) {
         if self.mode != SourceFrameMode::PerSource {
@@ -262,6 +288,9 @@ impl SourceFrameStore {
             && entry.take().is_some()
         {
             inner.generation += 1;
+        }
+        if let Some(entry) = inner.mips_current.get_mut(slot) {
+            *entry = false;
         }
     }
 
@@ -297,6 +326,7 @@ impl SourceFrameStore {
             inner.shared = Some(new);
         }
         inner.slots.resize(next, None);
+        inner.mips_current.resize(next, false);
         inner.capacity = next;
         inner.generation += 1;
         Some(next)
@@ -351,6 +381,7 @@ fn source_frame_count() -> i32 {{ return i32(textureNumLayers(source_frames)); }
 fn source_frame_dims(slot: i32) -> vec2<i32> {{ return vec2<i32>(textureDimensions(source_frames, 0)); }}
 fn source_frame_load(slot: i32, xy: vec2<i32>) -> vec4<f32> {{ return textureLoad(source_frames, xy, slot, 0); }}
 fn source_frame_sample(slot: i32, smp: sampler, uv: vec2<f32>) -> vec4<f32> {{ return textureSampleLevel(source_frames, smp, uv, slot, 0.0); }}
+fn source_frame_sample_lod(slot: i32, smp: sampler, uv: vec2<f32>, lod: f32) -> vec4<f32> {{ return textureSampleLevel(source_frames, smp, uv, slot, lod); }}
 "#),
         SourceFrameMode::PerSource => format!(r#"
 @group({group}) @binding({binding})
@@ -359,6 +390,7 @@ fn source_frame_count() -> i32 {{ return {count}; }}
 fn source_frame_dims(slot: i32) -> vec2<i32> {{ return vec2<i32>(textureDimensions(source_frames[slot], 0)); }}
 fn source_frame_load(slot: i32, xy: vec2<i32>) -> vec4<f32> {{ return textureLoad(source_frames[slot], xy, 0); }}
 fn source_frame_sample(slot: i32, smp: sampler, uv: vec2<f32>) -> vec4<f32> {{ return textureSampleLevel(source_frames[slot], smp, uv, 0.0); }}
+fn source_frame_sample_lod(slot: i32, smp: sampler, uv: vec2<f32>, lod: f32) -> vec4<f32> {{ return textureSampleLevel(source_frames[slot], smp, uv, lod); }}
 "#),
     }
 }

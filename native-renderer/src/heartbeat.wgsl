@@ -621,12 +621,26 @@ fn quad_local_uv(p: vec2<f32>, tl: vec2<f32>, tr: vec2<f32>, br: vec2<f32>, bl: 
 // quad (tl, tr, br, bl), inverted at p. A flat face seen at a slant lands
 // exactly, straight lines stay straight, and nothing is meshed.
 fn quad_local_uv_perspective(p: vec2<f32>, tl: vec2<f32>, tr: vec2<f32>, br: vec2<f32>, bl: vec2<f32>) -> vec3<f32> {
+  let raw = quad_perspective_raw(p, tl, tr, br, bl);
+  if (raw.z < 0.0) { return quad_local_uv(p, tl, tr, br, bl); }
+  if (raw.z < 0.5) { return vec3<f32>(0.0); }
+  let uv = raw.xy;
+  if (all(uv >= vec2<f32>(-0.0005)) && all(uv <= vec2<f32>(1.0005))) {
+    return vec3<f32>(1.0, clamp(uv, vec2<f32>(0.0), vec2<f32>(1.0)));
+  }
+  return vec3<f32>(0.0);
+}
+
+// The perspective corner pin's inverse at p, unclamped: (u, v, ok) where ok
+// is 1 when solved, 0 at the horizon and -1 for a degenerate quad (whose
+// caller falls back to the bilinear map).
+fn quad_perspective_raw(p: vec2<f32>, tl: vec2<f32>, tr: vec2<f32>, br: vec2<f32>, bl: vec2<f32>) -> vec3<f32> {
   // Square -> quad (Heckbert): x = (a u + b v + c) / (g u + h v + 1), likewise y.
   let s = tl - tr + br - bl;
   let d1 = tr - br;
   let d2 = bl - br;
   let den = cross2(d1, d2);
-  if (abs(den) < 1e-12) { return quad_local_uv(p, tl, tr, br, bl); }
+  if (abs(den) < 1e-12) { return vec3<f32>(0.0, 0.0, -1.0); }
   let g = cross2(s, d2) / den;
   let h = cross2(d1, s) / den;
   let m = mat3x3<f32>(
@@ -638,11 +652,7 @@ fn quad_local_uv_perspective(p: vec2<f32>, tl: vec2<f32>, tr: vec2<f32>, br: vec
   let r0 = cross(c1, c2); let r1 = cross(c2, c0); let r2 = cross(c0, c1);
   let q = vec3<f32>(dot(r0, vec3<f32>(p, 1.0)), dot(r1, vec3<f32>(p, 1.0)), dot(r2, vec3<f32>(p, 1.0)));
   if (abs(q.z) < 1e-12) { return vec3<f32>(0.0); }
-  let uv = q.xy / q.z;
-  if (all(uv >= vec2<f32>(-0.0005)) && all(uv <= vec2<f32>(1.0005))) {
-    return vec3<f32>(1.0, clamp(uv, vec2<f32>(0.0), vec2<f32>(1.0)));
-  }
-  return vec3<f32>(0.0);
+  return vec3<f32>(q.xy / q.z, 1.0);
 }
 
 // A Bezier layer mesh can bulge past its corner quad, so its pixels are
@@ -883,6 +893,23 @@ fn mesh_patch_eval(p: MeshPatch, uv: vec2<f32>) -> vec2<f32> {
   return mix(top, bottom, uv.y) + mix(left, right, uv.x) - sheet;
 }
 
+/// The patch's derivatives (d/du, d/dv) at uv, as mesh_patch_newton steps by.
+fn mesh_patch_jacobian(p: MeshPatch, uv: vec2<f32>) -> mat2x2<f32> {
+  let top = bezier3(p.a, p.ab1, p.ab2, p.b, uv.x);
+  let bottom = bezier3(p.d, p.dc1, p.dc2, p.c, uv.x);
+  let left = bezier3(p.a, p.ad1, p.ad2, p.d, uv.y);
+  let right = bezier3(p.b, p.bc1, p.bc2, p.c, uv.y);
+  let d_top = bezier3_tangent(p.a, p.ab1, p.ab2, p.b, uv.x);
+  let d_bottom = bezier3_tangent(p.d, p.dc1, p.dc2, p.c, uv.x);
+  let d_left = bezier3_tangent(p.a, p.ad1, p.ad2, p.d, uv.y);
+  let d_right = bezier3_tangent(p.b, p.bc1, p.bc2, p.c, uv.y);
+  let d_sheet_u = mix(p.b - p.a, p.c - p.d, uv.y);
+  let d_sheet_v = mix(p.d, p.c, uv.x) - mix(p.a, p.b, uv.x);
+  return mat2x2<f32>(
+    mix(d_top, d_bottom, uv.y) + (right - left) - d_sheet_u,
+    (bottom - top) + mix(d_left, d_right, uv.x) - d_sheet_v);
+}
+
 /// Inner control point (i, j) in 1..2 of the patch's bicubic Bezier form.
 fn mesh_patch_inner(p: MeshPatch, i: u32, j: u32) -> vec2<f32> {
   let fu = f32(i) / 3.0;
@@ -1002,6 +1029,7 @@ fn layer_mesh_bezier_cell(local_uv: vec2<f32>, layer_index: u32, row: u32, col: 
   if (!mesh_patch_contains_bounds(mesh_cell, local_uv)) { return vec3<f32>(0.0); }
   let cell = mesh_patch_uv(local_uv, mesh_cell);
   if (cell.x > 0.5) {
+    mesh_hit = vec4<f32>(f32(row), f32(col), cell.yz);
     return vec3<f32>(1.0, layer_mesh_rest_uv(layer_index, row, col, cols, cell.yz));
   }
   return vec3<f32>(0.0);
@@ -1020,12 +1048,50 @@ fn layer_mesh_straight_cell(local_uv: vec2<f32>, layer_index: u32, row: u32, col
   // than turning an unsolved bilinear inverse into transparent pixels.
   let cell = mesh_cell_uv(local_uv, a, b, c, d);
   if (cell.x > 0.5) {
+    mesh_hit = vec4<f32>(f32(row), f32(col), cell.yz);
     return vec3<f32>(1.0, layer_mesh_rest_uv(layer_index, row, col, cols, cell.yz));
   }
   return vec3<f32>(0.0);
 }
 
+/// The cell the last layer_mesh_uv hit: (row, col, cell u, cell v). Read
+/// only right after a hit, by layer_mesh_rest_step.
+var<private> mesh_hit: vec4<f32>;
+
+/// How far the rest position moves for a step `d_local` in quad-local UV
+/// from `local_uv`, which the last layer_mesh_uv call mapped to `rest_uv`:
+/// the step through the hit cell's inverse Jacobian, then its rest map.
+fn layer_mesh_rest_step(layer_index: u32, rest_uv: vec2<f32>, d_local: vec2<f32>) -> vec2<f32> {
+  let rows = u32(clamp(floor(layers[layer_index].style.z + 0.5), 0.0, 16.0));
+  let cols = u32(clamp(floor(layers[layer_index].style.w + 0.5), 0.0, 16.0));
+  if (rows < 2u || cols < 2u) {
+    return d_local;
+  }
+  let row = u32(mesh_hit.x);
+  let col = u32(mesh_hit.y);
+  let cell_uv = mesh_hit.zw;
+  var du: vec2<f32>;
+  var dv: vec2<f32>;
+  if (layers[layer_index].fast_flags.y == 1u) {
+    let j = mesh_patch_jacobian(layer_mesh_patch(layer_index, row, col, cols), cell_uv);
+    du = j[0];
+    dv = j[1];
+  } else {
+    let a = layer_mesh_point(layer_index, row * cols + col);
+    let b = layer_mesh_point(layer_index, row * cols + col + 1u);
+    let c = layer_mesh_point(layer_index, (row + 1u) * cols + col + 1u);
+    let d = layer_mesh_point(layer_index, (row + 1u) * cols + col);
+    du = mix(b - a, c - d, cell_uv.y);
+    dv = mix(d - a, c - b, cell_uv.x);
+  }
+  let det = cross2(du, dv);
+  if (abs(det) < 1e-12) { return vec2<f32>(0.0); }
+  let d_cell = vec2<f32>(cross2(d_local, dv), cross2(du, d_local)) / det;
+  return layer_mesh_rest_uv(layer_index, row, col, cols, cell_uv + d_cell) - rest_uv;
+}
+
 fn layer_mesh_uv(local_uv: vec2<f32>, layer_index: u32) -> vec3<f32> {
+  mesh_hit = vec4<f32>(0.0);
   let rows = u32(clamp(floor(layers[layer_index].style.z + 0.5), 0.0, 16.0));
   let cols = u32(clamp(floor(layers[layer_index].style.w + 0.5), 0.0, 16.0));
   if (rows < 2u || cols < 2u) {
@@ -1179,6 +1245,69 @@ fn sample_source_content(slot_code: f32, uv: vec2<f32>, layer_index: u32) -> vec
     return sample_source_frame(slot_code, sample_uv);
   }
   return sample_source_preview(slot_code, uv);
+}
+
+/// sample_source_content at mip level `lod` (0 or less: exactly the level
+/// zero read sample_source_content makes).
+fn sample_source_content_lod(slot_code: f32, uv: vec2<f32>, layer_index: u32, lod: f32) -> vec4<f32> {
+  if (lod <= 0.0 || slot_code < SOURCE_FRAME_SLOT_OFFSET) {
+    return sample_source_content(slot_code, uv, layer_index);
+  }
+  let rect = layers[layer_index].source_rect;
+  let slot = safe_source_slot(i32(floor(slot_code - SOURCE_FRAME_SLOT_OFFSET - 1.0)));
+  let sample_uv = clamp(rect.xy + uv * rect.zw, vec2<f32>(0.0), vec2<f32>(1.0));
+  return source_frame_sample_lod(slot, source_frame_sampler, sample_uv, lod);
+}
+
+/// The mip level a screen pixel's footprint asks for: `duv_dx`, `duv_dy`
+/// are how far the layer's content UV moves across one output pixel. The
+/// isotropic level the hardware would pick from the same derivatives.
+fn source_content_lod(slot_code: f32, layer_index: u32, duv_dx: vec2<f32>, duv_dy: vec2<f32>) -> f32 {
+  let slot = safe_source_slot(i32(floor(slot_code - SOURCE_FRAME_SLOT_OFFSET - 1.0)));
+  let texels = vec2<f32>(source_frame_dims(slot)) * layers[layer_index].source_rect.zw;
+  let rho = max(length(duv_dx * texels), length(duv_dy * texels));
+  if (!(rho > 1.0)) { return 0.0; }
+  return min(log2(rho), 16.0);
+}
+
+/// Quad-local UV at p, unclamped, by the map the layer draws with: (ok, u, v).
+fn layer_local_raw(p: vec2<f32>, layer_index: u32, tl: vec2<f32>, tr: vec2<f32>, br: vec2<f32>, bl: vec2<f32>) -> vec3<f32> {
+  if (layers[layer_index].fast_flags.y == 1u) {
+    return quad_local_uv_reach(p, tl, tr, br, bl, layers[layer_index].mesh_bounds);
+  }
+  if ((layers[layer_index].fast_flags.w & 2u) != 0u) {
+    let raw = quad_perspective_raw(p, tl, tr, br, bl);
+    if (raw.z >= 0.0) { return vec3<f32>(raw.z, raw.xy); }
+  }
+  let uv = inverse_bilinear(p, tl, tr, br, bl);
+  return vec3<f32>(1.0, uv);
+}
+
+/// How far quad-local UV moves for a step `step` in layer (canvas) UV from
+/// `p`, whose local UV is `local_uv`: forward, or backward when the forward
+/// point has no solution.
+fn layer_local_step(p: vec2<f32>, step: vec2<f32>, local_uv: vec2<f32>, layer_index: u32,
+    tl: vec2<f32>, tr: vec2<f32>, br: vec2<f32>, bl: vec2<f32>) -> vec2<f32> {
+  let forward = layer_local_raw(p + step, layer_index, tl, tr, br, bl);
+  if (forward.x > 0.5) { return forward.yz - local_uv; }
+  let backward = layer_local_raw(p - step, layer_index, tl, tr, br, bl);
+  if (backward.x > 0.5) { return local_uv - backward.yz; }
+  return vec2<f32>(0.0);
+}
+
+/// Mip level for a source-frame layer at this pixel: the chain from canvas
+/// UV through the corner pin, the mesh cell and the content mapping
+/// (layer_sample_uv), stepped one output pixel along x and along y.
+fn layer_source_lod(layer_index: u32, p: vec2<f32>, step_x: vec2<f32>, step_y: vec2<f32>,
+    local_uv: vec2<f32>, rest_uv: vec2<f32>, sample_uv: vec2<f32>,
+    tl: vec2<f32>, tr: vec2<f32>, br: vec2<f32>, bl: vec2<f32>) -> f32 {
+  let local_x = layer_local_step(p, step_x, local_uv, layer_index, tl, tr, br, bl);
+  let local_y = layer_local_step(p, step_y, local_uv, layer_index, tl, tr, br, bl);
+  let rest_x = rest_uv + layer_mesh_rest_step(layer_index, rest_uv, local_x);
+  let rest_y = rest_uv + layer_mesh_rest_step(layer_index, rest_uv, local_y);
+  let duv_x = layer_sample_uv(rest_x, layer_index).xy - sample_uv;
+  let duv_y = layer_sample_uv(rest_y, layer_index).xy - sample_uv;
+  return source_content_lod(layers[layer_index].info.w, layer_index, duv_x, duv_y);
 }
 
 fn source_content_for_layer(sampled: vec4<f32>, source_kind: f32) -> vec4<f32> {
@@ -4025,6 +4154,10 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
   // of analytic edges (1 unless the output stage scales the composition).
   let canvas_px = canvas_uv * u.resolution;
   let edge_aa = clamp(max(length(dpdx(canvas_px)), length(dpdy(canvas_px))), 0.25, 8.0);
+  // One output pixel's step in canvas UV, for the mip level of minified
+  // pictures (layer_source_lod). Taken here, where control flow is uniform.
+  let canvas_step_x = dpdx(canvas_uv);
+  let canvas_step_y = dpdy(canvas_uv);
   // The dome pass (draw instance 1) paints only the layers placed on the
   // dome, into a square dome picture the output stage lays over the dome
   // reprojection of everything else. Each pixel is a direction on the dome;
@@ -4033,6 +4166,8 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
   let dome_pass = in.pass_kind == 1u;
   let dome_m = in.uv * 2.0 - vec2<f32>(1.0);
   let dome_dir = dome_direction(dome_m, u.dlayer.y, u.dlayer.z);
+  let dome_dir_step_x = dpdx(dome_dir);
+  let dome_dir_step_y = dpdy(dome_dir);
   let dome_in = select(1.0, step(length(dome_m), 1.0), dome_pass);
   let t = u.time;
   let audio = ghost_audio_scene();
@@ -4244,7 +4379,20 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
           layer_rgb = empty_layer_card(sample_uv, max(size_px, vec2<f32>(1.0)));
           content_alpha = content_mask * shape_mask;
         } else if (layers[layer_index].info.w > 0.5) {
-          let preview = source_content_for_layer(sample_source_content(layers[layer_index].info.w, sample_uv, layer_index), layers[layer_index].info.z);
+          // Source mips (fast_flags.w bit 2, set while the slot's mip chain
+          // is current): a minified picture reads the level its footprint
+          // asks for instead of aliasing level zero.
+          var lod = 0.0;
+          if ((layers[layer_index].fast_flags.w & 4u) != 0u) {
+            var step_x = canvas_step_x;
+            var step_y = canvas_step_y;
+            if (dome_pass) {
+              step_x = dome_place_uv(normalize(dome_dir + dome_dir_step_x), layers[layer_index].dome, aspect).xy - layer_uv;
+              step_y = dome_place_uv(normalize(dome_dir + dome_dir_step_y), layers[layer_index].dome, aspect).xy - layer_uv;
+            }
+            lod = layer_source_lod(layer_index, layer_uv, step_x, step_y, local.yz, mesh_sample.yz, sample_uv, tl, tr, br, bl);
+          }
+          let preview = source_content_for_layer(sample_source_content_lod(layers[layer_index].info.w, sample_uv, layer_index, lod), layers[layer_index].info.z);
           layer_rgb = preview.rgb;
           content_alpha = preview.a * content_mask * shape_mask;
         } else if (layers[layer_index].info.z >= 9.0) {

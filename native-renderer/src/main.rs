@@ -1670,6 +1670,22 @@ fn layer_composite_extent(layer: &SceneLayer) -> (f32, f32) {
     (width, height)
 }
 
+/// Whether `layer` can show its picture (`texels` wide and high, before
+/// its crop) smaller than its size somewhere on a `composite` pixel canvas:
+/// the picture's longest side against the layer's shortest edge on screen,
+/// with room for a mesh to squeeze its cells and for the dome to shrink
+/// what it places. Conservative: a no only skips mip reads the picture
+/// could not use.
+fn layer_may_minify(layer: &SceneLayer, texels: [f32; 2], composite: [f32; 2]) -> bool {
+    let (span_x, span_y) = layer_source_span(layer);
+    let shown = (texels[0] * span_x).max(texels[1] * span_y);
+    let c = layer.corners;
+    let edge = |a: [f32; 2], b: [f32; 2]| ((a[0] - b[0]) * composite[0]).hypot((a[1] - b[1]) * composite[1]);
+    let shortest = edge(c[0], c[1]).min(edge(c[1], c[2])).min(edge(c[2], c[3])).min(edge(c[3], c[0]));
+    let squeeze = if !layer.mesh_points.is_empty() || layer.dome.is_some() { 0.5 } else { 0.9 };
+    !(shortest.is_finite() && shown.is_finite()) || shown > shortest * squeeze
+}
+
 /// See `App::layer_render_footprint`. A layer showing part of its picture (a
 /// crop: a piece's share of a picture spread across the stage) needs the
 /// whole picture at the detail it shows its part: its extent divided by
@@ -5228,12 +5244,17 @@ struct RenderState {
     /// texture (any slot in the shared array; its own slot when per-source).
     graph_sample_scratch: std::cell::RefCell<Vec<SlotRef>>,
     source_frame_sampler: wgpu::Sampler,
+    /// The compositor's picture sampler: as `source_frame_sampler`, but its
+    /// mip levels reachable, for minified pictures (GA_CORE_SOURCE_MIPS).
+    compositor_sampler: wgpu::Sampler,
     /// Shader inputs packed per draw: layer k holds the k-th input.
     native_shader_input_texture: wgpu::Texture,
     source_frame_size: usize,
     source_frame_format: wgpu::TextureFormat,
     source_frame_mip_levels: u32,
     source_frame_blitter: TextureBlitter,
+    /// Builds the picture slots' mip chains (box filter).
+    source_frame_mips: graph_textures::BoxMips,
     hap_converter: hap_texture::HapTextureConverter,
     /// Shared textures opened per source slot, so a camera's texture is
     /// opened once per session instead of every frame.
@@ -22237,8 +22258,34 @@ impl App {
         layers
             .into_iter()
             .take(MAX_SCENE_LAYERS)
-            .map(|layer| self.with_paint_mask(layer, layer.gpu()))
+            .map(|layer| self.with_source_mips(layer, self.with_paint_mask(layer, layer.gpu())))
             .collect()
+    }
+
+    /// fast_flags.w bit 2: the layer's picture slot has a current mip chain,
+    /// so the compositor reads minified pixels from the level they need
+    /// (heartbeat.wgsl layer_source_lod). Never for live video, whose slot
+    /// holds level zero only. GA_CORE_SOURCE_MIPS=0 keeps every read at
+    /// level zero. Only for a layer that can show its picture minified
+    /// (`layer_may_minify`): the per-pixel level costs time, and a picture
+    /// drawn at or above its size reads level zero anyway.
+    fn with_source_mips(&self, layer: &SceneLayer, mut gpu: LayerGpu) -> LayerGpu {
+        let code = gpu.meta[3];
+        let live_video = gpu.meta[2] > 2.5 && gpu.meta[2] < 3.5;
+        if !source_mips_enabled() || live_video || code < SOURCE_FRAME_SLOT_OFFSET + 1.0 {
+            return gpu;
+        }
+        let Some(renderer) = self.renderer.as_ref() else { return gpu };
+        let slot = (code - SOURCE_FRAME_SLOT_OFFSET - 1.0).floor().max(0.0) as usize;
+        if !renderer.slots.mips_current(slot) {
+            return gpu;
+        }
+        let stored = renderer.slots.slot(slot);
+        let texels = [stored.width as f32 * gpu.source_rect[2], stored.height as f32 * gpu.source_rect[3]];
+        if layer_may_minify(layer, texels, [renderer.config.width as f32, renderer.config.height as f32]) {
+            gpu.fast_flags[3] |= 4;
+        }
+        gpu
     }
 
     /// Point a layer at its painted mask: fast_flags.z = texture array
@@ -22289,7 +22336,7 @@ impl App {
             .map(|layer| {
                 let mut monitor_layer = layer.clone();
                 monitor_layer.opacity = layer.deck_monitor_opacity;
-                self.with_paint_mask(layer, monitor_layer.gpu())
+                self.with_source_mips(layer, self.with_paint_mask(layer, monitor_layer.gpu()))
             })
             .collect()
     }
@@ -22981,6 +23028,21 @@ impl RenderState {
             lod_max_clamp: 0.0,
             ..Default::default()
         });
+        // Every compositor read names its level (textureSampleLevel), so
+        // opening the levels changes only the reads that ask for one.
+        let compositor_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("Ghost Render Core Compositor Sampler"),
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            address_mode_w: wgpu::AddressMode::ClampToEdge,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::MipmapFilterMode::Linear,
+            lod_min_clamp: 0.0,
+            lod_max_clamp: 32.0,
+            ..Default::default()
+        });
+        let source_frame_mips = graph_textures::BoxMips::new(&device, source_frame_format);
         let source_frame_blitter = TextureBlitterBuilder::new(&device, source_frame_format)
             .sample_type(wgpu::FilterMode::Linear)
             .build();
@@ -23122,7 +23184,7 @@ impl RenderState {
             &uniform_buffer,
             &layer_buffer,
             &source_preview_buffer,
-            &source_frame_sampler,
+            &compositor_sampler,
             &paint_mask_view,
             &layer_tile_buffer,
         );
@@ -23619,11 +23681,13 @@ impl RenderState {
                 .map(|_| Arc::new(SourceFrameGpuReadiness::default())).collect()),
             graph_sample_scratch: std::cell::RefCell::new(Vec::new()),
             source_frame_sampler,
+            compositor_sampler,
             native_shader_input_texture,
             source_frame_size,
             source_frame_format,
             source_frame_mip_levels,
             source_frame_blitter,
+            source_frame_mips,
             hap_converter,
             #[cfg(target_os = "windows")]
             dxgi_import_cache: Mutex::new(shared_texture::SharedTextureImportCache::new()),
@@ -27972,6 +28036,8 @@ impl RenderState {
             );
         }
         churn_probe::submit(&self.queue, Some(encoder.finish()));
+        // Every level came across: the copy's chain is as current as the original's.
+        self.slots.set_mips_current(output_slot, source.mips <= target.mips && self.slots.mips_current(input_slot));
         self.mark_source_frame_slots_submitted([output_slot]);
     }
 
@@ -28448,6 +28514,8 @@ impl RenderState {
             let width = (frame.width as f32 * scale).round().max(1.0);
             let height = (frame.height as f32 * scale).round().max(1.0);
             let viewport = [((size - width) * 0.5).floor(), ((size - height) * 0.5).floor(), width, height];
+            // Level zero only: the slot's mip chain no longer matches it.
+            self.slots.set_mips_current(safe_slot, false);
             (self.slots.slot(safe_slot), viewport,
                 [viewport[0] / size, viewport[1] / size, width / size, height / size])
         };
@@ -28509,9 +28577,9 @@ impl RenderState {
         for mip_level in 1..target.mips {
             let source_view = target.target_view("Ghost Render Core Source Frame Mip Source", mip_level - 1);
             let target_view = target.target_view("Ghost Render Core Source Frame Mip Target", mip_level);
-            self.source_frame_blitter
-                .copy(&self.device, encoder, &source_view, &target_view);
+            self.source_frame_mips.encode(&self.device, encoder, &source_view, &target_view);
         }
+        self.slots.set_mips_current(slot, true);
     }
 
     /// Snapshot readback downscaled so the longest edge is `max_dim`.
@@ -28991,7 +29059,7 @@ impl RenderState {
             &uniform_buffer,
             layer_buffer,
             &self.source_preview_buffer,
-            &self.source_frame_sampler,
+            &self.compositor_sampler,
             &self.paint_mask_view,
             tile_buffer,
         );
@@ -29047,7 +29115,7 @@ impl RenderState {
             &self.uniform_buffer,
             &self.layer_buffer,
             &self.source_preview_buffer,
-            &self.source_frame_sampler,
+            &self.compositor_sampler,
             &paint_mask_view,
             &self.layer_tile_buffer,
         );
@@ -35729,6 +35797,12 @@ fn native_tier_rank(tier: &str) -> u8 {
         "insane" => 3,
         _ => 1,
     }
+}
+
+/// GA_CORE_SOURCE_MIPS=0 turns off mip reads of minified pictures.
+fn source_mips_enabled() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("GA_CORE_SOURCE_MIPS").map_or(true, |value| value.trim() != "0"))
 }
 
 fn source_frame_mip_levels(size: usize) -> u32 {
