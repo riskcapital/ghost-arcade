@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -116,12 +116,12 @@ function assertExactNativeManifest(name, actualEntries, expectedEntries) {
 
 export function assertNativeCompositorSourceContract() {
   const heartbeat = readFileSync(join(root, 'native-renderer', 'src', 'heartbeat.wgsl'), 'utf8');
-  const main = readFileSync(join(root, 'native-renderer', 'src', 'main.rs'), 'utf8');
-  const compositorPath = join(root, 'native-renderer', 'src', 'compositor.rs');
-  const rustCompositorSource = [
-    main,
-    existsSync(compositorPath) ? readFileSync(compositorPath, 'utf8') : '',
-  ].join('\n');
+  // Every Rust source of the core: the parsers live in its modules.
+  const rustCompositorSource = readdirSync(join(root, 'native-renderer', 'src'), { recursive: true })
+    .filter((path) => path.endsWith('.rs'))
+    .sort()
+    .map((path) => readFileSync(join(root, 'native-renderer', 'src', path), 'utf8'))
+    .join('\n');
   const nativeBlend = extractWgslFunction(heartbeat, 'native_blend');
   const wgslBlendCodes = [...nativeBlend.matchAll(/\bm\s*==\s*(\d+)\b/g)]
     .map((match) => Number(match[1]));

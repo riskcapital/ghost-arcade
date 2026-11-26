@@ -803,7 +803,7 @@ mod tests {
     /// core did not advertise).
     #[test]
     fn every_required_feature_is_advertised_by_the_core() {
-        let main = include_str!("main.rs");
+        let main = include_str!("status.rs");
         let start = main.find("let features = json!({").expect("capabilities feature map");
         let block = &main[start..start + main[start..].find("\n        });").expect("end of feature map")];
         for spec in NATIVE_GRAPH_INSTRUMENT_SPECS {
