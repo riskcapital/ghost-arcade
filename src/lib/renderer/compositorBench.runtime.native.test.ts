@@ -279,7 +279,7 @@ async function renderScene(env: Env, scene: Scene, width: number, height: number
     } }, 30000);
     expect(started?.backend_ready).toBe(true);
     // The compositor build with source mips is made on a worker after start.
-    if (env.GA_CORE_SOURCE_MIPS !== '0' && !env.CORE_BINARY) {
+    if (env.GA_CORE_SOURCE_MIPS === '1' && !env.CORE_BINARY) {
       const ready = Date.now() + 30000;
       while (!(await rpc.send('capabilities'))?.features?.compositor_source_mips_ready && Date.now() < ready) await sleep(50);
     }
@@ -379,7 +379,7 @@ function difference(a: Run, b: Run) {
 function compareEnvs(): Record<string, Env> {
   const raw = process.env.GA_CORE_COMPOSITOR_BENCH_ENV;
   if (raw) return JSON.parse(raw);
-  return { 'mips-off': { GA_CORE_SOURCE_MIPS: '0' }, default: {} };
+  return { default: {}, 'mips-on': { GA_CORE_SOURCE_MIPS: '1' } };
 }
 
 const suite = platform.runnable ? describe : describe.skip;
@@ -390,7 +390,7 @@ suite('Compositor scene set', () => {
     for (const scene of SCENES) {
       if (process.env.GA_CORE_COMPOSITOR_BENCH_TRACE) console.log(`scene ${scene.name}`);
       const off = await renderScene({ GA_CORE_SOURCE_MIPS: '0' }, scene, width, height, false);
-      const on = await renderScene({}, scene, width, height, false);
+      const on = await renderScene({ GA_CORE_SOURCE_MIPS: '1' }, scene, width, height, false);
       dump(`${scene.name}-mips-off`, off, off.bgra);
       dump(`${scene.name}-mips-on`, on, on.bgra);
       const diff = difference(off, on);

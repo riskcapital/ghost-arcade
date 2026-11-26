@@ -22494,7 +22494,7 @@ impl App {
     /// fast_flags.w bit 2: the layer's picture slot has a current mip chain,
     /// so the compositor reads minified pixels from the level they need
     /// (heartbeat.wgsl layer_source_lod). Never for live video, whose slot
-    /// holds level zero only. GA_CORE_SOURCE_MIPS=0 keeps every read at
+    /// holds level zero only. Without GA_CORE_SOURCE_MIPS=1 every read stays at
     /// level zero. Only for a layer that can show its picture minified
     /// (`layer_may_minify`): the per-pixel level costs time, and a picture
     /// drawn at or above its size reads level zero anyway.
@@ -36120,10 +36120,15 @@ fn native_tier_rank(tier: &str) -> u8 {
     }
 }
 
-/// GA_CORE_SOURCE_MIPS=0 turns off mip reads of minified pictures.
+/// GA_CORE_SOURCE_MIPS=1 turns on mip reads of minified pictures. Off by
+/// default: they soften shimmer but cost frame time while a minified picture
+/// is on screen, so they stay opt-in until judged on real shows.
 fn source_mips_enabled() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| std::env::var("GA_CORE_SOURCE_MIPS").map_or(true, |value| value.trim() != "0"))
+    *ON.get_or_init(|| {
+        std::env::var("GA_CORE_SOURCE_MIPS")
+            .map_or(false, |value| matches!(value.trim(), "1" | "on" | "true" | "yes"))
+    })
 }
 
 fn source_frame_mip_levels(size: usize) -> u32 {
