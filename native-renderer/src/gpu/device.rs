@@ -418,6 +418,10 @@ impl RenderState {
         if pipeline_cache::wanted() {
             requested_features |= adapter_features & wgpu::Features::PIPELINE_CACHE;
         }
+        // The raster compositor's accumulation target blends in f32.
+        if raster_compositor_requested() {
+            requested_features |= adapter_features & wgpu::Features::FLOAT32_BLENDABLE;
+        }
         eprintln!(
             "[GhostRenderCore] picture slots: {} (slot edge {}, binding array {})",
             source_frame_mode.label(), source_frame_size,
@@ -863,6 +867,13 @@ impl RenderState {
             });
         }
 
+        let raster = if raster_compositor_requested() {
+            RasterCompositor::new(&device, &bind_group_layout, &source_frames_bind_group_layout,
+                source_frame_mode, source_frame_bindings, format)
+        } else {
+            None
+        };
+
         let output_presenter = output_present::OutputPresenter::new(&device, &shader, format, &composite_frame_textures);
 
         let stage3d_overlay_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -1304,6 +1315,7 @@ impl RenderState {
             pipeline,
             mips_pipeline,
             program_wants_mips: false,
+            raster,
             uniform_buffer,
             native_shader_uniform_buffer,
             layer_buffer,

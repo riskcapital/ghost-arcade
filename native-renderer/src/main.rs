@@ -352,6 +352,9 @@ struct RenderState {
     mips_pipeline: Arc<std::sync::OnceLock<wgpu::RenderPipeline>>,
     /// Some program layer reads a minified picture's mips (fast_flags.w bit 2).
     program_wants_mips: bool,
+    /// The raster compositor (GA_CORE_COMPOSITOR=raster), None when off or
+    /// the device cannot blend float targets.
+    raster: Option<RasterCompositor>,
     uniform_buffer: wgpu::Buffer,
     native_shader_uniform_buffer: wgpu::Buffer,
     layer_buffer: wgpu::Buffer,

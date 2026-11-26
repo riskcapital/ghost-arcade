@@ -4168,6 +4168,152 @@ fn native_polygon_mask(local_uv: vec2<f32>, layer_index: u32) -> f32 {
   return clamp(alpha, 0.0, 1.0);
 }
 
+// The stack's finish: composition effects, then the alpha recording output
+// or the output stage for a Screen drawn straight from the compositor.
+// `color_in` is the blended layers over black, `out_alpha` their coverage.
+fn composite_finish(color_in: vec3<f32>, out_alpha: f32, in_uv: vec2<f32>, source_xy: vec2<f32>, canvas_uv: vec2<f32>,
+    dome_mask: f32, aspect: f32, t: f32) -> vec4<f32> {
+  var color = apply_composite_effects(color_in, canvas_uv, t);
+  if (u.smask.z > 0.5) {
+    // Recording with transparency: un-premultiply so empty regions carry
+    // alpha 0 and content its own coverage (ProRes 4444 / HAP Alpha expect
+    // straight alpha). No output stage: this is the composition itself.
+    let a = clamp(out_alpha, 0.0, 1.0);
+    let straight = select(vec3<f32>(0.0), color / max(a, 0.0001), a > 0.0001);
+    return vec4<f32>(clamp(straight, vec3<f32>(0.0), vec3<f32>(1.0)), a);
+  }
+  // The compositor draws a Screen directly when nothing needs the shared
+  // master; u.resolution is the composition there.
+  let aid = screen_alignment_aid(in_uv, canvas_uv, u.resolution, dome_mask);
+  if (aid.a > 0.5) { return vec4<f32>(aid.rgb * u.output_gate, 1.0); }
+  color = apply_test_pattern(color, in_uv, aspect);
+  if (u.dome0.x > 0.5 && u.dome4.y > 0.001) {
+    let grid = dome_grid(source_xy, aspect);
+    color = mix(color, grid.rgb, grid.a * clamp(u.dome4.y, 0.0, 1.0));
+  }
+  if (u.dome2.z > 0.5) {
+    color = slice_output_grade(color, in_uv) * dome_mask * screen_mask_alpha(screen_content_uv(in_uv));
+  } else {
+    color = output_color_grade(color);
+    color = color * dome_mask * edge_blend_alpha(in_uv);
+  }
+  return vec4<f32>(clamp(color * u.output_gate, vec3<f32>(0.0), vec3<f32>(1.0)), 1.0);
+}
+
+// Inside the layer's quad bounds (a Bezier mesh: its surface's reach), with
+// a little padding: outside, the layer draws nothing but Edge Effects.
+fn layer_in_quad_bounds(layer_index: u32, layer_uv: vec2<f32>, tl: vec2<f32>, tr: vec2<f32>, br: vec2<f32>, bl: vec2<f32>,
+    bezier_mesh: bool) -> bool {
+  var quad_min = min(min(tl, tr), min(br, bl));
+  var quad_max = max(max(tl, tr), max(br, bl));
+  if (bezier_mesh) {
+    let reach = quad_reach_bounds(tl, tr, br, bl, pool_mesh(layer_index, 0u));
+    quad_min = min(quad_min, reach.xy);
+    quad_max = max(quad_max, reach.zw);
+  }
+  let bounds_pad = vec2<f32>(max(1.0, max(quad_max.x - quad_min.x, quad_max.y - quad_min.y)) * 0.001);
+  let bounds_min = quad_min - bounds_pad;
+  let bounds_max = quad_max + bounds_pad;
+  return !(any(layer_uv < bounds_min) || any(layer_uv > bounds_max));
+}
+
+// A CPU-classified plain rectangle (fast_flags.x): its shape coverage at
+// `layer_uv`, 0 outside it. Same shape AA as any other layer.
+fn plain_rect_coverage(layer_index: u32, layer_uv: vec2<f32>, tl: vec2<f32>, br: vec2<f32>) -> f32 {
+  let uv = (layer_uv - tl) / (br - tl);
+  if (all(uv >= vec2<f32>(-0.0005)) && all(uv <= vec2<f32>(1.0005))) {
+    return native_layer_shape(clamp(uv, vec2<f32>(0.0), vec2<f32>(1.0)), layer_index).x;
+  }
+  return 0.0;
+}
+
+// One layer's own colour and content coverage at `layer_uv`, inside its quad
+// bounds: corner pin or mesh, shape, masks, picture and layer effects. The
+// composite loop (fs_main) and the rasterised layers (raster.wgsl) share it,
+// so both draw the same pixels. Returns (rgb, content alpha).
+fn layer_content(layer_index: u32, layer_uv: vec2<f32>, tl: vec2<f32>, tr: vec2<f32>, br: vec2<f32>, bl: vec2<f32>,
+    bezier_mesh: bool, canvas_step_x: vec2<f32>, canvas_step_y: vec2<f32>, dome_pass: bool, dome_dir: vec3<f32>,
+    dome_dir_step_x: vec3<f32>, dome_dir_step_y: vec3<f32>, aspect: f32, t: f32) -> vec4<f32> {
+  var layer_rgb = layers[layer_index].color.rgb;
+  var content_alpha = 0.0;
+  var local: vec3<f32>;
+  if (bezier_mesh) {
+    local = quad_local_uv_reach(layer_uv, tl, tr, br, bl, pool_mesh(layer_index, 0u));
+  } else if ((layers[layer_index].fast_flags.w & 2u) != 0u) {
+    local = quad_local_uv_perspective(layer_uv, tl, tr, br, bl);
+  } else {
+    local = quad_local_uv(layer_uv, tl, tr, br, bl);
+  }
+  let inside = local.x > 0.5;
+  // The mesh is only read inside the quad (or a Bezier mesh's reach):
+  // outside it local is (0, 0) and the search found nothing it uses.
+  var mesh_sample = vec3<f32>(0.0);
+  if (inside) {
+    mesh_sample = layer_mesh_uv(local.yz, layer_index);
+  }
+  let inside_mesh = inside && mesh_sample.x > 0.5;
+  if (inside_mesh) {
+    let uv_sample = layer_sample_uv(mesh_sample.yz, layer_index);
+    let sample_uv = uv_sample.xy;
+    let content_mask = uv_sample.z;
+    // A Bezier layer's shape and mask are cut in the layer's own UV
+    // before the mesh bends it, as the editor texture and the Edge
+    // Effect outline are, so they follow the surface into a bulge.
+    // A round, star or polygon shape does the same on a straight mesh:
+    // it is the surface. A Custom Shape is the opposite: it is the
+    // outline you drew, and the mesh warps the content inside it, so it
+    // is cut in quad UV whatever the mesh does (the editor's handles and
+    // Edge Effect outline skip the mesh for it too, layerOutlineMeshGrid).
+    // A plain rectangle keeps quad UV, so its anti-aliased edge stays one
+    // output pixel wide in cells the mesh squeezes or stretches.
+    let mask_uv = select(local.yz, mesh_sample.yz, bezier_mesh);
+    let shaped = pool_shape(layer_index, 0u).x > 0.5;
+    let custom_shape = i32(floor(pool_shape(layer_index, 0u).x + 0.5)) == 6;
+    let shape_uv = select(select(mask_uv, mesh_sample.yz, shaped), local.yz, custom_shape);
+    let shape_sample = native_layer_shape(shape_uv, layer_index);
+    let polygon_mask = native_polygon_mask(mask_uv, layer_index)
+      * native_paint_mask(mesh_sample.yz, layer_index);
+    let shape_mask = shape_sample.x * polygon_mask;
+    content_alpha = layers[layer_index].edge_extra.y * shape_mask;
+    if (layers[layer_index].edge_extra.z > 0.5 && layers[layer_index].info.w <= 0.5) {
+      // Empty layer: an alignment card on true black, sized from the
+      // layer's own edges so its squares and circles stay true.
+      let size_px = vec2<f32>(
+        0.5 * (length((tr - tl) * u.resolution) + length((br - bl) * u.resolution)),
+        0.5 * (length((bl - tl) * u.resolution) + length((br - tr) * u.resolution)));
+      layer_rgb = empty_layer_card(sample_uv, max(size_px, vec2<f32>(1.0)));
+      content_alpha = content_mask * shape_mask;
+    } else if (layers[layer_index].info.w > 0.5) {
+      // Source mips (fast_flags.w bit 2, set while the slot's mip chain
+      // is current): a minified picture reads the level its footprint
+      // asks for instead of aliasing level zero.
+      var lod = 0.0;
+      if (SOURCE_MIPS && (layers[layer_index].fast_flags.w & 4u) != 0u) {
+        var step_x = canvas_step_x;
+        var step_y = canvas_step_y;
+        if (dome_pass) {
+          step_x = dome_place_uv(normalize(dome_dir + dome_dir_step_x), layers[layer_index].dome, aspect).xy - layer_uv;
+          step_y = dome_place_uv(normalize(dome_dir + dome_dir_step_y), layers[layer_index].dome, aspect).xy - layer_uv;
+        }
+        lod = layer_source_lod(layer_index, layer_uv, step_x, step_y, local.yz, mesh_sample.yz, sample_uv, tl, tr, br, bl);
+      }
+      let preview = source_content_for_layer(sample_source_content_lod(layers[layer_index].info.w, sample_uv, layer_index, lod), layers[layer_index].info.z);
+      layer_rgb = preview.rgb;
+      content_alpha = preview.a * content_mask * shape_mask;
+    } else if (!RASTER_LEAN && layers[layer_index].info.z >= 9.0) {
+      let proxy = gpu_proxy(layers[layer_index].info.z, sample_uv, t, layers[layer_index].info.y, pool_fx(layer_index, 0u), pool_fx(layer_index, 1u));
+      let proxy_alpha = proxy.a * content_mask * shape_mask;
+      layer_rgb = proxy.rgb;
+      content_alpha = (0.62 + 0.28 * proxy_alpha) * content_mask * shape_mask;
+    }
+    layer_rgb = apply_native_effects(layer_rgb, layer_index, sample_uv, t);
+    if (shape_mask <= 0.001) {
+      content_alpha = 0.0;
+    }
+  }
+  return vec4<f32>(layer_rgb, content_alpha);
+}
+
 @fragment
 fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
   let aspect = max(0.01, u.resolution.x / max(1.0, u.resolution.y));
@@ -4341,31 +4487,18 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     // A Bezier mesh can bulge past the corner quad: bound it by the reach
     // of its surface instead, so the bulge keeps its content.
     let bezier_mesh = layers[layer_index].fast_flags.y == 1u;
-    var quad_min = min(min(tl, tr), min(br, bl));
-    var quad_max = max(max(tl, tr), max(br, bl));
-    if (bezier_mesh) {
-      let reach = quad_reach_bounds(tl, tr, br, bl, pool_mesh(layer_index, 0u));
-      quad_min = min(quad_min, reach.xy);
-      quad_max = max(quad_max, reach.zw);
-    }
-    let bounds_pad = vec2<f32>(max(1.0, max(quad_max.x - quad_min.x, quad_max.y - quad_min.y)) * 0.001);
-    let bounds_min = quad_min - bounds_pad;
-    let bounds_max = quad_max + bounds_pad;
-    let in_quad_bounds = !(any(layer_uv < bounds_min) || any(layer_uv > bounds_max));
+    let in_quad_bounds = layer_in_quad_bounds(layer_index, layer_uv, tl, tr, br, bl, bezier_mesh);
     if (!in_quad_bounds && !in_edges) {
       continue;
     }
     if (layers[layer_index].fast_flags.x != 0u) {
       // CPU-classified plain rectangles keep the same shape AA and blend order.
-      let uv = (layer_uv - tl) / (br - tl);
-      if (all(uv >= vec2<f32>(-0.0005)) && all(uv <= vec2<f32>(1.0005))) {
-        let coverage = native_layer_shape(clamp(uv, vec2<f32>(0.0), vec2<f32>(1.0)), layer_index).x;
-        if (coverage > 0.001) {
-          let fill_alpha = clamp(layers[layer_index].color.a * layers[layer_index].edge_extra.y * coverage, 0.0, 1.0);
-          color = native_blend(color, layers[layer_index].color.rgb * layers[layer_index].tint.rgb,
-            fill_alpha, layers[layer_index].style.x);
-          out_alpha = fill_alpha + out_alpha * (1.0 - fill_alpha);
-        }
+      let coverage = plain_rect_coverage(layer_index, layer_uv, tl, br);
+      if (coverage > 0.001) {
+        let fill_alpha = clamp(layers[layer_index].color.a * layers[layer_index].edge_extra.y * coverage, 0.0, 1.0);
+        color = native_blend(color, layers[layer_index].color.rgb * layers[layer_index].tint.rgb,
+          fill_alpha, layers[layer_index].style.x);
+        out_alpha = fill_alpha + out_alpha * (1.0 - fill_alpha);
       }
       continue;
     }
@@ -4373,81 +4506,10 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     // Content coverage before the layer's opacity (the editor's layer texture alpha).
     var content_alpha = 0.0;
     if (in_quad_bounds) {
-      var local: vec3<f32>;
-      if (bezier_mesh) {
-        local = quad_local_uv_reach(layer_uv, tl, tr, br, bl, pool_mesh(layer_index, 0u));
-      } else if ((layers[layer_index].fast_flags.w & 2u) != 0u) {
-        local = quad_local_uv_perspective(layer_uv, tl, tr, br, bl);
-      } else {
-        local = quad_local_uv(layer_uv, tl, tr, br, bl);
-      }
-      let inside = local.x > 0.5;
-      // The mesh is only read inside the quad (or a Bezier mesh's reach):
-      // outside it local is (0, 0) and the search found nothing it uses.
-      var mesh_sample = vec3<f32>(0.0);
-      if (inside) {
-        mesh_sample = layer_mesh_uv(local.yz, layer_index);
-      }
-      let inside_mesh = inside && mesh_sample.x > 0.5;
-      if (inside_mesh) {
-        let uv_sample = layer_sample_uv(mesh_sample.yz, layer_index);
-        let sample_uv = uv_sample.xy;
-        let content_mask = uv_sample.z;
-        // A Bezier layer's shape and mask are cut in the layer's own UV
-        // before the mesh bends it, as the editor texture and the Edge
-        // Effect outline are, so they follow the surface into a bulge.
-        // A round, star or polygon shape does the same on a straight mesh:
-        // it is the surface. A Custom Shape is the opposite: it is the
-        // outline you drew, and the mesh warps the content inside it, so it
-        // is cut in quad UV whatever the mesh does (the editor's handles and
-        // Edge Effect outline skip the mesh for it too, layerOutlineMeshGrid).
-        // A plain rectangle keeps quad UV, so its anti-aliased edge stays one
-        // output pixel wide in cells the mesh squeezes or stretches.
-        let mask_uv = select(local.yz, mesh_sample.yz, bezier_mesh);
-        let shaped = pool_shape(layer_index, 0u).x > 0.5;
-        let custom_shape = i32(floor(pool_shape(layer_index, 0u).x + 0.5)) == 6;
-        let shape_uv = select(select(mask_uv, mesh_sample.yz, shaped), local.yz, custom_shape);
-        let shape_sample = native_layer_shape(shape_uv, layer_index);
-        let polygon_mask = native_polygon_mask(mask_uv, layer_index)
-          * native_paint_mask(mesh_sample.yz, layer_index);
-        let shape_mask = shape_sample.x * polygon_mask;
-        content_alpha = layers[layer_index].edge_extra.y * shape_mask;
-        if (layers[layer_index].edge_extra.z > 0.5 && layers[layer_index].info.w <= 0.5) {
-          // Empty layer: an alignment card on true black, sized from the
-          // layer's own edges so its squares and circles stay true.
-          let size_px = vec2<f32>(
-            0.5 * (length((tr - tl) * u.resolution) + length((br - bl) * u.resolution)),
-            0.5 * (length((bl - tl) * u.resolution) + length((br - tr) * u.resolution)));
-          layer_rgb = empty_layer_card(sample_uv, max(size_px, vec2<f32>(1.0)));
-          content_alpha = content_mask * shape_mask;
-        } else if (layers[layer_index].info.w > 0.5) {
-          // Source mips (fast_flags.w bit 2, set while the slot's mip chain
-          // is current): a minified picture reads the level its footprint
-          // asks for instead of aliasing level zero.
-          var lod = 0.0;
-          if (SOURCE_MIPS && (layers[layer_index].fast_flags.w & 4u) != 0u) {
-            var step_x = canvas_step_x;
-            var step_y = canvas_step_y;
-            if (dome_pass) {
-              step_x = dome_place_uv(normalize(dome_dir + dome_dir_step_x), layers[layer_index].dome, aspect).xy - layer_uv;
-              step_y = dome_place_uv(normalize(dome_dir + dome_dir_step_y), layers[layer_index].dome, aspect).xy - layer_uv;
-            }
-            lod = layer_source_lod(layer_index, layer_uv, step_x, step_y, local.yz, mesh_sample.yz, sample_uv, tl, tr, br, bl);
-          }
-          let preview = source_content_for_layer(sample_source_content_lod(layers[layer_index].info.w, sample_uv, layer_index, lod), layers[layer_index].info.z);
-          layer_rgb = preview.rgb;
-          content_alpha = preview.a * content_mask * shape_mask;
-        } else if (layers[layer_index].info.z >= 9.0) {
-          let proxy = gpu_proxy(layers[layer_index].info.z, sample_uv, t, layers[layer_index].info.y, pool_fx(layer_index, 0u), pool_fx(layer_index, 1u));
-          let proxy_alpha = proxy.a * content_mask * shape_mask;
-          layer_rgb = proxy.rgb;
-          content_alpha = (0.62 + 0.28 * proxy_alpha) * content_mask * shape_mask;
-        }
-        layer_rgb = apply_native_effects(layer_rgb, layer_index, sample_uv, t);
-        if (shape_mask <= 0.001) {
-          content_alpha = 0.0;
-        }
-      }
+      let content = layer_content(layer_index, layer_uv, tl, tr, br, bl, bezier_mesh, canvas_step_x, canvas_step_y,
+        dome_pass, dome_dir, dome_dir_step_x, dome_dir_step_y, aspect, t);
+      layer_rgb = content.rgb;
+      content_alpha = content.a;
     }
     // color.a is the layer opacity times its content alpha (tint.w). The
     // content alpha dims an empty layer's placeholder (edge_extra.y, 0.56)
@@ -4473,31 +4535,7 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     // Premultiplied: `color` is the stack over black, `out_alpha` its coverage.
     return vec4<f32>(color * dome_in, clamp(out_alpha, 0.0, 1.0) * dome_in);
   }
-  color = apply_composite_effects(color, canvas_uv, t);
-  if (u.smask.z > 0.5) {
-    // Recording with transparency: un-premultiply so empty regions carry
-    // alpha 0 and content its own coverage (ProRes 4444 / HAP Alpha expect
-    // straight alpha). No output stage: this is the composition itself.
-    let a = clamp(out_alpha, 0.0, 1.0);
-    let straight = select(vec3<f32>(0.0), color / max(a, 0.0001), a > 0.0001);
-    return vec4<f32>(clamp(straight, vec3<f32>(0.0), vec3<f32>(1.0)), a);
-  }
-  // The compositor draws a Screen directly when nothing needs the shared
-  // master; u.resolution is the composition there.
-  let aid = screen_alignment_aid(in.uv, canvas_uv, u.resolution, dome_mask);
-  if (aid.a > 0.5) { return vec4<f32>(aid.rgb * u.output_gate, 1.0); }
-  color = apply_test_pattern(color, in.uv, aspect);
-  if (u.dome0.x > 0.5 && u.dome4.y > 0.001) {
-    let grid = dome_grid(source.xy, aspect);
-    color = mix(color, grid.rgb, grid.a * clamp(u.dome4.y, 0.0, 1.0));
-  }
-  if (u.dome2.z > 0.5) {
-    color = slice_output_grade(color, in.uv) * dome_mask * screen_mask_alpha(screen_content_uv(in.uv));
-  } else {
-    color = output_color_grade(color);
-    color = color * dome_mask * edge_blend_alpha(in.uv);
-  }
-  return vec4<f32>(clamp(color * u.output_gate, vec3<f32>(0.0), vec3<f32>(1.0)), 1.0);
+  return composite_finish(color, out_alpha, in.uv, source.xy, canvas_uv, dome_mask, aspect, t);
 }
 
 @group(1) @binding(0) var creative_master: texture_2d<f32>;
