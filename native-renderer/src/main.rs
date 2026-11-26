@@ -20,6 +20,7 @@ mod pass_timing;
 mod pipeline_cache;
 mod frames_in_flight;
 mod present_pacing;
+mod display_pacing;
 mod effect_specialize;
 mod media_decode;
 mod media_orphans;
@@ -705,6 +706,8 @@ enum UserEvent {
     VideoPrefetched(VideoPrefetchResult),
     GpuFrameCompleted,
     GpuFrameFailed(String),
+    /// The output window's display refreshed (display_pacing.rs).
+    DisplayRefresh,
     /// Fire-and-forget nudge from the stdin reader: someone just read the
     /// published snapshot, so refresh it for the next reader. Carries no reply
     /// and takes no part in the `queued`/`applied` ordering contract, because
@@ -1199,6 +1202,9 @@ struct CoreStatus {
     /// Program output window: frame-start, present and acquire-wait
     /// intervals (present_pacing.rs).
     output_pacing: present_pacing::PacingReport,
+    /// What paces the frames: the output display's refresh clock, or the
+    /// frame timer (display_pacing.rs).
+    output_display_pacing: Value,
     frames_presented: u64,
     /// GA_CORE_CHURN_PROBE=1 only (churn_probe.rs).
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -5520,6 +5526,23 @@ struct App {
     /// re-reads the rate only when this changes: on Windows the read is a
     /// display-configuration query, and a drag sends a move event per step.
     output_refresh_monitor: Option<MonitorHandle>,
+    /// Frames follow the output display's refreshes while it is shown
+    /// (display_pacing.rs); false with GA_CORE_DISPLAY_PACING=0 and on Linux.
+    display_pacing_enabled: bool,
+    /// The refresh clock of the display the output window is on.
+    display_clock: Option<display_pacing::DisplayClock>,
+    display_clock_error: Option<String>,
+    /// The refresh the last paced frame was drawn on.
+    last_paced_refresh: Option<u64>,
+    /// Paced frames drawn one or more refreshes later than due: the frame
+    /// loop was busy when the refresh came.
+    late_paced_frames: u64,
+    /// Where in the refresh paced frames start (display_pacing.rs).
+    phase_lock: display_pacing::PhaseLock,
+    /// The refresh the latest paced frame was drawn for, and when that frame
+    /// is to start (a little after the refresh, see `PhaseLock`).
+    paced_refresh_at: Option<Instant>,
+    paced_frame_at: Option<Instant>,
     running: bool,
     pending_width: u32,
     pending_height: u32,
@@ -6068,6 +6091,14 @@ impl App {
             present_pending: false,
             output_refresh_hz: None,
             output_refresh_monitor: None,
+            display_pacing_enabled: display_pacing::enabled(),
+            display_clock: None,
+            display_clock_error: None,
+            last_paced_refresh: None,
+            late_paced_frames: 0,
+            phase_lock: display_pacing::PhaseLock::default(),
+            paced_refresh_at: None,
+            paced_frame_at: None,
             running: false,
             pending_width: 1280,
             pending_height: 720,
@@ -7092,6 +7123,7 @@ impl App {
                 .map(|renderer| renderer.gpu_frame_latency.report())
                 .unwrap_or_default(),
             output_pacing: self.output_pacing_report(),
+            output_display_pacing: self.display_pacing_report(),
             frames_presented: gpu_frames_completed,
             gpu_object_churn: churn_probe::counts(),
             gpu_pass_timing: pass_timing::report(),
@@ -8650,6 +8682,10 @@ impl App {
     /// on schedule draws the change with its next frame, or now if that frame
     /// is due, without moving the schedule.
     fn request_present(&mut self) {
+        if self.display_paced() {
+            self.present_pending = true;
+            return;
+        }
         let now = Instant::now();
         let period = self.frame_duration();
         match present_action(self.frames_scheduled(), self.last_redraw, now, period) {
@@ -16417,13 +16453,22 @@ impl App {
 
     fn output_pacing_report(&self) -> present_pacing::PacingReport {
         let frame_ms = self.frame_duration().as_secs_f64() * 1000.0;
-        let refresh_ms = self.output_refresh_hz.filter(|hz| *hz > 0.0).map(|hz| 1000.0 / hz);
+        let refresh_ms = self.paced_refresh_hz().filter(|hz| *hz > 0.0).map(|hz| 1000.0 / hz);
         self.renderer.as_ref().map(|renderer| renderer.pacing.report(frame_ms, refresh_ms)).unwrap_or_default()
     }
 
     fn frame_duration(&self) -> Duration {
-        let refresh = if self.output_window_attached { self.output_refresh_hz } else { None };
+        let refresh = if self.output_window_attached { self.paced_refresh_hz() } else { None };
         Duration::from_secs_f64(1.0 / paced_frame_rate(self.target_fps, refresh))
+    }
+
+    /// The output display's refresh rate: the display clock's own period
+    /// while it paces the frames, else the rate the display reports.
+    fn paced_refresh_hz(&self) -> Option<f64> {
+        self.display_clock.as_ref()
+            .filter(|clock| clock.ticking(Instant::now()))
+            .and_then(display_pacing::DisplayClock::refresh_hz)
+            .or(self.output_refresh_hz)
     }
 
     /// Re-read the refresh rate of the display the output window is on.
@@ -16431,6 +16476,134 @@ impl App {
         let monitor = self.renderer.as_ref().and_then(|renderer| renderer.window.current_monitor());
         self.output_refresh_hz = monitor.as_ref().and_then(monitor_refresh_hz);
         self.output_refresh_monitor = monitor;
+        self.sync_display_clock();
+    }
+
+    /// Run a refresh clock on the output window's display while the window
+    /// is shown, following it to another display; none otherwise.
+    fn sync_display_clock(&mut self) {
+        self.phase_lock.reset();
+        self.paced_refresh_at = None;
+        self.paced_frame_at = None;
+        let monitor = self.output_refresh_monitor.clone()
+            .filter(|_| self.display_pacing_enabled && self.output_window_attached && self.renderer.is_some());
+        let Some(monitor) = monitor else {
+            self.display_clock = None;
+            self.last_paced_refresh = None;
+            return;
+        };
+        let result = match self.display_clock.as_mut() {
+            Some(clock) => clock.follow(&monitor),
+            None => {
+                let proxy = std::sync::Mutex::new(self.event_proxy.clone());
+                display_pacing::DisplayClock::start(&monitor, Box::new(move || {
+                    if let Ok(proxy) = proxy.lock() {
+                        let _ = proxy.send_event(UserEvent::DisplayRefresh);
+                    }
+                }))
+                .map(|clock| self.display_clock = Some(clock))
+            }
+        };
+        if let Err(error) = result {
+            eprintln!("[GhostRenderCore] display pacing unavailable, using the frame timer: {error}");
+            self.display_clock = None;
+            self.display_clock_error = Some(error);
+        } else {
+            self.display_clock_error = None;
+        }
+    }
+
+    /// Frames are paced by the output display's refreshes right now (not
+    /// by the timer): the window is shown and its refreshes are arriving.
+    fn display_paced(&self) -> bool {
+        self.output_window_attached
+            && self.display_clock.as_ref().is_some_and(|clock| clock.ticking(Instant::now()))
+    }
+
+    /// The output display refreshed: draw if a frame is due on this refresh.
+    fn on_display_refresh(&mut self) {
+        let Some(refresh) = self.display_clock.as_ref().map(display_pacing::DisplayClock::take_refresh) else {
+            return;
+        };
+        if !self.output_window_attached {
+            // Detached by closing the window: stop the clock.
+            self.sync_display_clock();
+            return;
+        }
+        if !self.running {
+            return;
+        }
+        self.pump_frame_media();
+        if !self.frames_scheduled() {
+            return;
+        }
+        let hz = self.paced_refresh_hz();
+        let period = hz.map_or(Duration::from_micros(16_667), |hz| Duration::from_secs_f64(1.0 / hz));
+        self.observe_paced_phase(period);
+        let now = Instant::now();
+        if self.paced_frame_at.is_some() {
+            // The last refresh's frame never got its turn: draw it now.
+            self.draw_paced_frame(now);
+        }
+        let divisor = hz.map_or(1, |hz| display_pacing::refresh_divisor(self.target_fps, hz));
+        // A frame skipped for backpressure is normally drawn when the GPU
+        // frees up (GpuFrameCompleted); if that has not happened, now.
+        if display_pacing::refresh_due(refresh, self.last_paced_refresh, divisor) || self.pending_render_retry {
+            if self.last_paced_refresh.is_some_and(|last| refresh.wrapping_sub(last) > divisor) {
+                self.late_paced_frames = self.late_paced_frames.saturating_add(1);
+            }
+            self.last_paced_refresh = Some(refresh);
+            let refresh_at = self.display_clock.as_ref()
+                .and_then(display_pacing::DisplayClock::last_refresh_at)
+                .unwrap_or(now)
+                .min(now);
+            self.paced_refresh_at = Some(refresh_at);
+            let start_at = refresh_at + self.phase_lock.offset();
+            if self.pending_render_retry || start_at <= now + Duration::from_micros(500) {
+                self.draw_paced_frame(now);
+            } else {
+                self.paced_frame_at = Some(start_at);
+            }
+        }
+    }
+
+    /// Draw the paced frame that is due.
+    fn draw_paced_frame(&mut self, now: Instant) {
+        self.paced_frame_at = None;
+        self.last_redraw = now;
+        self.drive_frame(now);
+    }
+
+    /// The paced frame's start is here (RPCs keep the loop busy, so this is
+    /// checked between them as well as when the loop goes idle).
+    fn paced_frame_ready(&self, now: Instant) -> bool {
+        self.paced_frame_at.is_some_and(|at| now >= at)
+    }
+
+    /// Learn from the last paced frame when its drawable came.
+    fn observe_paced_phase(&mut self, period: Duration) {
+        let Some(times) = self.renderer.as_mut().and_then(|renderer| renderer.pacing.take_frame_times()) else {
+            return;
+        };
+        if let Some(refresh_at) = self.paced_refresh_at {
+            self.phase_lock.observe(refresh_at, times.started, times.acquire_started, times.acquired, period);
+        }
+    }
+
+    fn display_pacing_report(&self) -> Value {
+        let clock = self.display_clock.as_ref();
+        json!({
+            "enabled": self.display_pacing_enabled,
+            "active": self.display_paced(),
+            "source": if self.display_paced() { clock.map_or("timer", display_pacing::DisplayClock::source) } else { "timer" },
+            "clock_refresh_hz": clock.and_then(display_pacing::DisplayClock::refresh_hz),
+            "display_refresh_hz": self.output_refresh_hz,
+            "refreshes": clock.map_or(0, display_pacing::DisplayClock::refreshes),
+            "late_frames": self.late_paced_frames,
+            "phase_offset_ms": self.phase_lock.offset_ms(),
+            "frame_interval_ms": self.frame_duration().as_secs_f64() * 1000.0,
+            "error": self.display_clock_error,
+        })
     }
 
     /// Frames are wanted on a clock right now: the output window is shown,
@@ -22172,7 +22345,12 @@ impl ApplicationHandler<UserEvent> for App {
                 }
                 // A stream of RPCs must not indefinitely postpone the window redraw event.
                 // Service output between bounded transactions, after all their mutations.
-                if self.running && self.output_window_attached
+                // Paced by the display, the refreshes interleave with the
+                // RPCs and draw the frames themselves.
+                if self.running && self.display_paced() && self.paced_frame_ready(Instant::now()) {
+                    self.draw_paced_frame(Instant::now());
+                }
+                if self.running && self.output_window_attached && !self.display_paced()
                     && self.last_submission_at.is_none_or(|last| last.elapsed() >= self.frame_duration()) {
                     self.render();
                 }
@@ -22186,6 +22364,7 @@ impl ApplicationHandler<UserEvent> for App {
             UserEvent::NativeVideoFrameDecoded(result) => {
                 self.apply_native_video_decode_result(result)
             }
+            UserEvent::DisplayRefresh => self.on_display_refresh(),
             UserEvent::RepublishRpcSnapshot => {
                 self.fast_path.release_republish();
                 self.refresh_rpc_snapshot();
@@ -22207,6 +22386,15 @@ impl ApplicationHandler<UserEvent> for App {
                     renderer.drain_native_recording();
                 }
                 if !self.running {
+                    return;
+                }
+                if self.display_paced() {
+                    // The next refresh draws the next frame. A frame skipped
+                    // because the GPU was still busy is drawn now, before
+                    // that refresh, so it is not lost.
+                    if self.pending_render_retry {
+                        self.drive_frame(Instant::now());
+                    }
                     return;
                 }
                 let frame_duration = self.frame_duration();
@@ -22282,12 +22470,14 @@ impl ApplicationHandler<UserEvent> for App {
                 if monitor != self.output_refresh_monitor {
                     self.output_refresh_hz = monitor.as_ref().and_then(monitor_refresh_hz);
                     self.output_refresh_monitor = monitor;
+                    self.sync_display_clock();
                 }
             }
             WindowEvent::ScaleFactorChanged { .. } => {
                 let monitor = renderer.window.current_monitor();
                 self.output_refresh_hz = monitor.as_ref().and_then(monitor_refresh_hz);
                 self.output_refresh_monitor = monitor;
+                self.sync_display_clock();
             }
             _ => {}
         }
@@ -22335,6 +22525,20 @@ impl App {
         self.pump_frame_media();
         if !self.frames_scheduled() {
             return None;
+        }
+        if self.display_paced() {
+            // The refreshes draw the frames; wake for a frame starting a
+            // little after its refresh, or to fall back to the timer if the
+            // refreshes stop.
+            let now = Instant::now();
+            if self.paced_frame_ready(now) {
+                self.draw_paced_frame(now);
+            }
+            let stall = self.display_clock.as_ref().map(|clock| clock.stall_deadline(now));
+            return match (self.paced_frame_at, stall) {
+                (Some(at), Some(stall)) => Some(at.min(stall)),
+                (at, stall) => at.or(stall),
+            };
         }
         let next_frame_at = self.last_redraw + frame_duration;
         let now = Instant::now();
