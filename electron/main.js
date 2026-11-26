@@ -2771,7 +2771,9 @@ async function resetRemotePairing() {
   writePairingToken(remotePairingFile(), token);
   remotePairingToken = token;
   if (embeddedServerModule?.setPairingToken) {
-    embeddedServerModule.setPairingToken(token);
+    // The Rust server applies it in its own process: wait until it has, so
+    // the desktop's reconnect with the new token is not refused.
+    await embeddedServerModule.setPairingToken(token);
   } else if (sidecarProcess) {
     // The fallback child got its token in its environment at spawn, so a new
     // token means a new child. Killing the old one drops its connections.
@@ -2786,6 +2788,43 @@ async function resetRemotePairing() {
 }
 
 let remotePortsPicked = false;
+
+// The phone server as its own process (phone-server/, Rust): same protocol
+// and checks as server/ws-server.js, but its traffic stays off this thread
+// and a fault in it cannot take this process down. Opt-in for now with
+// GA_RUST_PHONE_SERVER=1; ws-server.js stays the default, and takes over if
+// the binary is missing, does not start, or exits while the app runs.
+let rustPhoneServerGeneration = 0;
+let rustPhoneServerFailed = false;
+let stoppingServer = false;
+
+async function startRustPhoneServer() {
+  if (process.env.GA_RUST_PHONE_SERVER !== '1' || rustPhoneServerFailed) return false;
+  const adapterPath = path.join(__dirname, '..', 'server', 'phone-server-rust.js');
+  let mod = null;
+  try {
+    // A fresh module (and child) for every start: a pairing reset or a
+    // restart must not get the one that already exited.
+    const url = `${pathToFileURL(adapterPath).href}?start=${++rustPhoneServerGeneration}`;
+    mod = await import(url);
+    const ports = await mod.listening;
+    console.log(`[Main] Rust phone server listening on ${ports.wsPort}/${ports.httpPort}`);
+  } catch (e) {
+    console.warn('[Main] Rust phone server did not start, using the JS one:', e?.message || e);
+    try { mod?.shutdownServer?.({ force: true }); } catch {}
+    rustPhoneServerFailed = true;
+    return false;
+  }
+  embeddedServerModule = mod;
+  mod.exited.then((code) => {
+    if (embeddedServerModule !== mod || stoppingServer) return;
+    console.error(`[Main] Rust phone server exited (${code}); switching to the JS server`);
+    embeddedServerModule = null;
+    rustPhoneServerFailed = true;
+    startNodeServer().catch((err) => console.error('[Main] JS server fallback failed:', err?.message || err));
+  });
+  return true;
+}
 
 async function startNodeServer() {
   // Start the Node.js WS/HTTP server (server/ws-server.js)
@@ -2810,6 +2849,13 @@ async function startNodeServer() {
   // Set env vars the server expects
   process.env.WS_PORT = String(REMOTE_WS_PORT);
   process.env.HTTP_PORT = String(REMOTE_HTTP_PORT);
+
+  if (await startRustPhoneServer()) {
+    // It refuses every connection until it has the token, like the JS one.
+    await embeddedServerModule.setDesktopCredential(remoteDesktopCredential);
+    await embeddedServerModule.setPairingToken(getRemotePairingToken());
+    return;
+  }
 
   // Import the server module in-process — it auto-starts on import.
   // On Windows, dynamic import() needs a file:// URL, not a raw path.
@@ -2876,6 +2922,7 @@ async function startNodeServer() {
 }
 
 function stopServer() {
+  stoppingServer = true;
   if (embeddedServerModule?.shutdownServer) {
     try {
       embeddedServerModule.shutdownServer({ force: true });
