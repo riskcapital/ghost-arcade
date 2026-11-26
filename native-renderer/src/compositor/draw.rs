@@ -536,6 +536,7 @@ impl RenderState {
         #[cfg(target_os = "macos")]
         self.capture_native_recording_frame(&mut mirror_encoder);
         self.capture_texture_share_frame(&mut mirror_encoder);
+        self.capture_pixelmap_frame(&mut mirror_encoder);
         if let Some(frame) = surface_frame.as_ref() {
             if self.surface_copy_dst_supported {
                 mirror_encoder.copy_texture_to_texture(

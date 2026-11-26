@@ -1417,6 +1417,7 @@ impl RenderState {
             #[cfg(any(target_os = "macos", target_os = "windows"))]
             native_recorder_error: None,
             texture_share: Default::default(),
+            pixelmap_capture: Default::default(),
             deck_monitor_targets: None,
             dome_view_target: None,
             mirror: None,

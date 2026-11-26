@@ -48,6 +48,7 @@ mod mac_video_recorder;
 #[cfg(target_os = "macos")]
 mod mac_syphon;
 mod texture_share;
+mod pixelmap_out;
 #[cfg(target_os = "windows")]
 mod win_spout;
 #[cfg(target_os = "macos")]
@@ -518,6 +519,8 @@ struct RenderState {
     native_recorder_error: Option<String>,
     /// Syphon / Spout sender published by the core itself (texture_share.rs).
     texture_share: texture_share::TextureShare,
+    /// Program picture for the core's own pixel-map output (pixelmap_out).
+    pixelmap_capture: pixelmap_out::Capture,
     /// Deck confidence monitors: two small targets (bank A, bank B) the VJ
     /// panel shows beside Program. Created lazily on the first frame that
     /// carries deck-monitor-tagged layers.
@@ -1123,6 +1126,8 @@ impl ApplicationHandler<UserEvent> for App {
     fn user_event(&mut self, event_loop: &ActiveEventLoop, event: UserEvent) {
         match event {
             UserEvent::OwnerDisconnected => {
+                // Black out and terminate pixel-map streams before going.
+                pixelmap_out::shutdown();
                 self.running = false;
                 self.clip_audio = None;
                 event_loop.exit();

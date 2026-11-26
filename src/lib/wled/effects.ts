@@ -582,6 +582,23 @@ function blendPixel(
 }
 
 /** Apply all active and automated LED FX in project order to one controller or fixture. */
+/**
+ * Whether any LED FX could change this output now or while automation
+ * plays: an active effect, or (automation playing) any enabled one, that
+ * targets it. Used to keep pixel-map fixtures an effect reaches on the
+ * editor path, which is where effects run.
+ */
+export function effectsTouchOutput(
+  controller: LEDEffectOutput,
+  groups: WLEDGroup[],
+  effects: WLEDEffect[],
+  automation: WLEDEffectAutomation | undefined,
+): boolean {
+  return effects.some(effect =>
+    (effect.active || (automation?.playing === true && effect.enabled))
+    && targetSpans(controller, effect, groups).length > 0);
+}
+
 export function applyWLEDEffects(
   source: Uint8Array,
   output: Uint8Array,
