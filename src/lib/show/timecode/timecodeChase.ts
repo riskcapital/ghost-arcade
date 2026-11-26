@@ -36,6 +36,7 @@
 import { writable, get } from 'svelte/store';
 import { LtcDecoder, ltcFrameToTimecode, type LtcFrame } from './ltc';
 import { MtcParser } from './mtc';
+import { requestMidiAccess } from '../../midi/midiAccess';
 import { invoke } from '../../bridge';
 import { abletonLink } from '../../sync/abletonLink';
 import type { ShowTempoMap } from '../../types';
@@ -632,10 +633,9 @@ async function startLtcInput(chase: TimecodeChaseController, deviceId: string, c
 }
 
 async function startMtcInput(chase: TimecodeChaseController, inputId: string): Promise<SourceHandle> {
-  if (typeof navigator === 'undefined' || !navigator.requestMIDIAccess) throw new Error('Web MIDI is not available');
   // Our own access with SysEx on: full-frame locates are SysEx, and the
   // shared MIDI manager asks without it.
-  const access = await navigator.requestMIDIAccess({ sysex: true });
+  const access = await requestMidiAccess({ sysex: true });
   // One parser per port: quarter frames from two ports ("All MIDI Inputs")
   // never mix into one corrupt timecode.
   const parsers = new Map<EventTarget, MtcParser>();
@@ -676,10 +676,9 @@ async function startMtcInput(chase: TimecodeChaseController, inputId: string): P
   };
 }
 
-/** MIDI clock + Song Position on Web MIDI (its own access, like MTC). */
+/** MIDI clock + Song Position (its own access, like MTC). */
 async function startMidiClockInput(chase: TimecodeChaseController, inputId: string): Promise<SourceHandle> {
-  if (typeof navigator === 'undefined' || !navigator.requestMIDIAccess) throw new Error('Web MIDI is not available');
-  const access = await navigator.requestMIDIAccess({ sysex: false });
+  const access = await requestMidiAccess({ sysex: false });
   // One parser per port, as for MTC: two clocks never average into one tempo.
   const parsers = new Map<EventTarget, MidiClockParser>();
   const listening = new Set<MIDIInput>();

@@ -1,6 +1,8 @@
 import { getRawElectronApi } from '$lib/bridge';
 import { emitProgramChange } from './programChange';
-// MIDI Manager - Web MIDI API wrapper with device detection and hot-plug
+// MIDI Manager - device detection and hot-plug over Web MIDI or the native
+// backend (midiAccess.ts picks one; both look like Web MIDI here).
+import { midiAccessPossible, requestMidiAccess } from './midiAccess';
 import { runMidiTaps } from './midiTaps';
 import { addonUsable } from '../addons/addonAccess';
 import { midiStore } from './midiStore';
@@ -188,21 +190,15 @@ export class MidiManager {
   private _clockOutLastSendMs = 0;
 
   async init(): Promise<boolean> {
-    if (!navigator.requestMIDIAccess) {
+    if (!midiAccessPossible()) {
       console.warn('[MIDI] Web MIDI API not available');
       midiStore.setAvailable(false);
       return false;
     }
     try {
-      // Workaround for an Electron 33.x bug on macOS: the FIRST renderer call to
-      // requestMIDIAccess() in a packaged build hangs forever — the main-process
-      // permission handler grants the request via callback(true), but Chromium
-      // never observes the grant and the returned Promise never settles. A
-      // subsequent call resolves immediately because the permission is then
-      // cached. So we issue the first call, and if it doesn't resolve in 1.5s,
-      // fire a second call and await whichever wins. The first hung promise
-      // becomes a harmless dangling reference.
-      this.access = await this.requestMIDIAccessWithRetry();
+      // Web MIDI's first request can hang in a packaged macOS build; see
+      // requestWebMidiWithRetry in midiAccess.ts.
+      this.access = await requestMidiAccess({ sysex: false }, { retryHang: true });
       midiStore.setAvailable(true);
       this.refreshDevices();
       this.access.onstatechange = () => this.refreshDevices();
@@ -273,7 +269,7 @@ export class MidiManager {
       // Device initialization requires SysEx. Ask only when the performer
       // explicitly enables controller lights; ordinary MIDI remains unchanged.
       if (!this.access?.sysexEnabled) {
-        const access = await navigator.requestMIDIAccess({ sysex: true });
+        const access = await requestMidiAccess({ sysex: true });
         if (request !== this.lightsRequest) return;
         if (this.access) this.access.onstatechange = null;
         this.detachInputs(); this.detachClockInput();
@@ -321,18 +317,6 @@ export class MidiManager {
     }
     midiRouter.dispatchPath(path, value > 0 ? 1 : 0, { inputId: input });
     return true;
-  }
-
-  private requestMIDIAccessWithRetry(): Promise<MIDIAccess> {
-    const first = navigator.requestMIDIAccess({ sysex: false });
-    return Promise.race([
-      first,
-      new Promise<MIDIAccess>((resolve, reject) => {
-        setTimeout(() => {
-          navigator.requestMIDIAccess({ sysex: false }).then(resolve, reject);
-        }, 1500);
-      }),
-    ]);
   }
 
   private refreshDevices() {

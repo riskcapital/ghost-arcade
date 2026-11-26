@@ -7,6 +7,7 @@
    * count bars, so they are offered once the show has a tempo map.
    */
   import { onMount } from 'svelte';
+  import { midiAccessPossible, requestMidiAccess } from '../../midi/midiAccess';
   import { isBeatSource, timecodeChase, type TimecodeSettings } from '../../show/timecode/timecodeChase';
   import { showTimeline } from '../../stores/showTimeline';
   import {
@@ -37,8 +38,8 @@
       audioInputs = [];
     }
     try {
-      if (navigator.requestMIDIAccess) {
-        const access = await navigator.requestMIDIAccess({ sysex: false });
+      if (midiAccessPossible()) {
+        const access = await requestMidiAccess({ sysex: false });
         const list: Array<{ id: string; name: string }> = [];
         access.inputs.forEach((input) => list.push({ id: input.id, name: input.name ?? input.id }));
         midiInputs = list;

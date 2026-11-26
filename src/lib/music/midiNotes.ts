@@ -13,6 +13,7 @@
 import { get, writable } from 'svelte/store';
 import { heardControllerNote } from './controllerKeys';
 import { midiStore } from '../midi/midiStore';
+import { midiAccessPossible, requestMidiAccess } from '../midi/midiAccess';
 import { mappingHearsDevice, midiInputSetup, midiInputsInUse, type MidiInputsInUse } from '../midi/midiInputs';
 
 export interface MusicMidiDevice {
@@ -114,7 +115,7 @@ export class MusicMidiInput {
     if (this.running) return;
     this.running = true;
     this.unsubscribeInUse ??= midiInputsInUse.subscribe((inUse) => (this.inUse = inUse));
-    if (typeof navigator === 'undefined' || !navigator.requestMIDIAccess) {
+    if (!midiAccessPossible()) {
       musicMidiStatus.set('unavailable');
       return;
     }
@@ -122,7 +123,7 @@ export class MusicMidiInput {
     try {
       // The app asks for MIDI at launch; once granted, asking again resolves
       // straight away with the same permission.
-      const access = await navigator.requestMIDIAccess({ sysex: false });
+      const access = await requestMidiAccess({ sysex: false });
       if (!this.running) return;
       this.access = access;
       access.addEventListener('statechange', this.onStateChange);

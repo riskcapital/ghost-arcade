@@ -92,6 +92,7 @@
   import ControllerLightsSettings from './ControllerLightsSettings.svelte';
   import MidiInputList from './MidiInputList.svelte';
   import { midiManager } from '../midi/midiManager';
+  import { midiBackendInfo, setNativeMidiSetting } from '../midi/midiAccess';
   import {
     groupMappingsByControl,
     groupMatchesMessage,
@@ -2138,6 +2139,32 @@
                 <MidiInputList />
               </div>
             </div>
+
+            {#if $midiBackendInfo.nativeAvailable || $midiBackendInfo.setting}
+              <div class="setting-row">
+                <div class="setting-label">
+                  <span class="label-text">Native MIDI</span>
+                  <span class="label-hint">
+                    {#if $midiBackendInfo.backend === 'native'}
+                      In use{$midiBackendInfo.virtualPorts ? ' · a DAW can send to and receive from the "Ghost Arcade" MIDI ports' : ''}.
+                    {:else if $midiBackendInfo.error}
+                      Not available ({$midiBackendInfo.error}); using the built-in MIDI.
+                    {:else}
+                      The app talks to MIDI devices itself and, on macOS, adds "Ghost Arcade" MIDI ports a DAW can use.
+                    {/if}
+                    {#if $midiBackendInfo.setting !== ($midiBackendInfo.backend === 'native') && !$midiBackendInfo.envOptIn} Takes effect after a restart.{/if}
+                  </span>
+                </div>
+                <label class="toggle">
+                  <input type="checkbox"
+                    checked={$midiBackendInfo.setting || $midiBackendInfo.envOptIn}
+                    disabled={$midiBackendInfo.envOptIn}
+                    onchange={(e) => setNativeMidiSetting((e.target as HTMLInputElement).checked)}
+                  />
+                  <span class="toggle-slider"></span>
+                </label>
+              </div>
+            {/if}
 
             <div class="setting-row">
               <div class="setting-label">
