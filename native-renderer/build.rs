@@ -12,6 +12,8 @@ fn main() {
     println!("cargo:rerun-if-changed=src/mac_video_decoder.h");
     println!("cargo:rerun-if-changed=src/mac_video_recorder.mm");
     println!("cargo:rerun-if-changed=src/mac_video_recorder.h");
+    println!("cargo:rerun-if-changed=src/mac_syphon_server.mm");
+    println!("cargo:rerun-if-changed=src/mac_syphon_server.h");
     println!("cargo:rerun-if-env-changed=MACOSX_DEPLOYMENT_TARGET");
     println!("cargo:rerun-if-env-changed=SDKROOT");
     if env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("macos") {
@@ -21,6 +23,7 @@ fn main() {
     let output = PathBuf::from(env::var_os("OUT_DIR").expect("OUT_DIR"));
     let object = output.join("mac_video_decoder.o");
     let recorder_object = output.join("mac_video_recorder.o");
+    let syphon_object = output.join("mac_syphon_server.o");
     let library = output.join("libghost_mac_video_decoder.a");
     let arch = match env::var("CARGO_CFG_TARGET_ARCH").as_deref() {
         Ok("aarch64") => "arm64",
@@ -74,12 +77,38 @@ fn main() {
             .arg(&recorder_object),
         "compile macOS hardware video recorder",
     );
+    // Syphon out from the core: an OpenGL Syphon server fed by the core's
+    // own IOSurface textures. The framework is opened at run time, so only
+    // the system OpenGL framework is linked.
+    run(
+        Command::new("xcrun")
+            .args([
+                "--sdk",
+                "macosx",
+                "clang++",
+                "-std=c++17",
+                "-fobjc-arc",
+                "-fblocks",
+                "-fvisibility=hidden",
+                "-Wall",
+                "-Wextra",
+                "-Wno-deprecated-declarations",
+                "-O2",
+                "-arch",
+                arch,
+            ])
+            .arg(format!("-mmacosx-version-min={deployment}"))
+            .args(["-c", "src/mac_syphon_server.mm", "-o"])
+            .arg(&syphon_object),
+        "compile macOS Syphon server",
+    );
     run(
         Command::new("xcrun")
             .args(["ar", "crs"])
             .arg(&library)
             .arg(&object)
-            .arg(&recorder_object),
+            .arg(&recorder_object)
+            .arg(&syphon_object),
         "archive macOS hardware video decoder",
     );
     println!("cargo:rustc-link-search=native={}", output.display());
@@ -91,7 +120,9 @@ fn main() {
         "CoreMedia",
         "CoreVideo",
         "Foundation",
+        "AppKit",
         "IOSurface",
+        "OpenGL",
     ] {
         println!("cargo:rustc-link-lib=framework={framework}");
     }

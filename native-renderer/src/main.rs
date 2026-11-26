@@ -46,6 +46,9 @@ mod mac_video_decoder;
 #[cfg(target_os = "macos")]
 mod mac_video_recorder;
 #[cfg(target_os = "macos")]
+mod mac_syphon;
+mod texture_share;
+#[cfg(target_os = "macos")]
 mod video_texture;
 mod native_graph_manifest;
 mod native_quality;
@@ -5327,6 +5330,8 @@ struct RenderState {
     native_recorder: Option<mac_video_recorder::MacVideoRecorder>,
     #[cfg(any(target_os = "macos", target_os = "windows"))]
     native_recorder_error: Option<String>,
+    /// Syphon / Spout sender published by the core itself (texture_share.rs).
+    texture_share: texture_share::TextureShare,
     /// Deck confidence monitors: two small targets (bank A, bank B) the VJ
     /// panel shows beside Program. Created lazily on the first frame that
     /// carries deck-monitor-tagged layers.
@@ -6533,7 +6538,7 @@ impl App {
             "native_post_composite_graph": true,
             "shared_texture_upload": shared_texture_media_transport,
             "shared_texture_output_export": output_shared_texture_export_ready,
-            "native_texture_share_sender": false,
+            "native_texture_share_sender": texture_share::implemented(),
             "native_editor_preview_frame_source": output_shared_texture_export_ready,
             "native_media_decode": true,
             "media_prefetch": true,
@@ -7998,6 +8003,9 @@ impl App {
             // still works; this is the path that skips the readback entirely.
             #[cfg(any(target_os = "macos", target_os = "windows"))]
             "start_native_recording" => self.start_native_recording_rpc(&req.params),
+            "texture_share_start" | "texture_share_stop" | "texture_share_state" => {
+                self.texture_share_rpc(req.method.as_str(), &req.params)
+            }
             #[cfg(any(target_os = "macos", target_os = "windows"))]
             "stop_native_recording" => self.stop_native_recording_rpc(),
             #[cfg(any(target_os = "macos", target_os = "windows"))]
@@ -22428,6 +22436,7 @@ impl ApplicationHandler<UserEvent> for App {
                 self.sync_gpu_frame_stats();
                 if let Some(renderer) = self.renderer.as_mut() {
                     renderer.drain_native_recording();
+                    renderer.drain_texture_share();
                 }
                 if !self.running {
                     return;
@@ -23678,6 +23687,7 @@ impl RenderState {
             native_recorder: None,
             #[cfg(any(target_os = "macos", target_os = "windows"))]
             native_recorder_error: None,
+            texture_share: Default::default(),
             deck_monitor_targets: None,
             dome_view_target: None,
             mirror: None,
@@ -29561,6 +29571,7 @@ impl RenderState {
         self.refresh_output_export(&mut mirror_encoder);
         #[cfg(target_os = "macos")]
         self.capture_native_recording_frame(&mut mirror_encoder);
+        self.capture_texture_share_frame(&mut mirror_encoder);
         if let Some(frame) = surface_frame.as_ref() {
             if self.surface_copy_dst_supported {
                 mirror_encoder.copy_texture_to_texture(
@@ -29603,6 +29614,7 @@ impl RenderState {
         pass_timing::after_submit();
         #[cfg(any(target_os = "macos", target_os = "windows"))]
         self.encode_native_recording_frame();
+        self.texture_share_submitted();
         if !frozen && output_gate > 0.0 {
             self.mark_graph_frames_submitted(native_graph_jobs.iter().flat_map(|job| job.render_plans.iter()).filter_map(|plan| match plan.target {
                 NativeComputeGraphRenderTarget::SourceFrame { slot, .. } => Some(slot), _ => None,
