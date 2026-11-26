@@ -74,7 +74,7 @@ function createNativeRpc(): NativeRpc {
         const timer = setTimeout(() => {
           pending.delete(id);
           reject(new Error(`native rpc timeout: ${method}`));
-        }, timeoutMs);
+        }, timeoutMs * rpcDeadlineScale);
         pending.set(id, { timer, resolve, reject });
         child.stdin!.write(`${JSON.stringify({ id, method, params })}\n`);
       });
@@ -245,7 +245,7 @@ describe('content in a Custom Shape on the native core', () => {
       expect(Math.abs(at(masked, topLeft.x, topLeft.y, masked.red) - 0.26 * 255)).toBeLessThan(16);
       expect(Math.abs(at(masked, topLeft.x, topLeft.y, masked.green) - 0.31 * 255)).toBeLessThan(16);
     } finally { await rpc.close(); }
-  }, 60000);
+  }, 60000 * rpcDeadlineScale);
 });
 
 describe('mesh fitted to a Custom Shape on the native core', () => {
@@ -266,7 +266,7 @@ describe('mesh fitted to a Custom Shape on the native core', () => {
         expect(differingShare(plain, meshed), name).toBeLessThan(0.002);
       }
     } finally { await rpc.close(); }
-  }, 60000);
+  }, 60000 * rpcDeadlineScale);
 
   itIfNativeCore('keeps the shape where it was drawn and warps the content inside it', async () => {
     const rpc = createNativeRpc();
@@ -302,7 +302,7 @@ describe('mesh fitted to a Custom Shape on the native core', () => {
       expect(shift(0.55, 0.65), 'content near the pulled corner').toBeGreaterThan(SHIFT_MOVED);
       expect(shift(0.28, 0.33), 'content at the far corner').toBeLessThanOrEqual(SHIFT_STILL);
     } finally { await rpc.close(); }
-  }, 60000);
+  }, 60000 * rpcDeadlineScale);
 
   itIfNativeCore('keeps a circle round when an outline mesh border point is pulled out', async () => {
     const rpc = createNativeRpc();
@@ -334,5 +334,5 @@ describe('mesh fitted to a Custom Shape on the native core', () => {
       const dRed = Math.abs(at(shot, pulled.x - 0.04, pulled.y, shot.red) - at(plain, pulled.x - 0.04, pulled.y, plain.red));
       expect(dRed, 'content near the pulled point').toBeGreaterThan(SHIFT_MOVED);
     } finally { await rpc.close(); }
-  }, 60000);
+  }, 60000 * rpcDeadlineScale);
 });

@@ -81,7 +81,7 @@ function createNativeRpc(): NativeRpc {
         const timer = setTimeout(() => {
           pending.delete(id);
           reject(new Error(`native rpc timeout: ${method}`));
-        }, timeoutMs);
+        }, timeoutMs * rpcDeadlineScale);
         pending.set(id, { timer, resolve, reject });
         child.stdin!.write(`${JSON.stringify({ id, method, params })}\n`);
       });
@@ -251,7 +251,7 @@ describe('Bezier mesh warp on the native core', () => {
       const chordRow = (1 - sag(1 / 3)) * SIZE * 0.5;
       expect(topEdgeRow(shot, Math.round(SIZE / 6))).toBeGreaterThan(chordRow + 4);
     } finally { await rpc.close(); }
-  }, 60000);
+  }, 60000 * rpcDeadlineScale);
 
   itIfNativeCore('keeps the curve on the picture when the layer is corner-pinned', async () => {
     const rpc = createNativeRpc();
@@ -279,7 +279,7 @@ describe('Bezier mesh warp on the native core', () => {
       // Outside the pinned quad nothing draws.
       expect(channel(shot, Math.round(SIZE * 0.05), SIZE / 2, shot.red)).toBeLessThan(32);
     } finally { await rpc.close(); }
-  }, 60000);
+  }, 60000 * rpcDeadlineScale);
 
   itIfNativeCore('renders a mesh without tangents on the straight path, matching explicit straight tangents', async () => {
     const rpc = createNativeRpc();
@@ -361,7 +361,7 @@ describe('Bezier mesh warp on the native core', () => {
       expect(worstRing, 'the outer anti-alias ramp stays within a few levels').toBeLessThanOrEqual(16);
       expect(differingPixels(before, after)).toBeLessThan(0.02);
     } finally { await rpc.close(); }
-  }, 60000);
+  }, 60000 * rpcDeadlineScale);
 });
 
 /** A 2x2 mesh on a pinned quad whose top edge bows up past the quad: the
@@ -483,7 +483,7 @@ describe('Bezier mesh bulging past its corner quad', () => {
         expect(channel(stroked, px, edge + 1, stroked.green)).toBeLessThan(64);
       }
     } finally { await rpc.close(); }
-  }, 60000);
+  }, 60000 * rpcDeadlineScale);
 });
 
 describe('Custom Shape on a straight mesh', () => {
@@ -525,5 +525,5 @@ describe('Custom Shape on a straight mesh', () => {
       // content, since the shape did not move.
       expect(red(shot, 0.8)).toBeGreaterThan(200);
     } finally { await rpc.close(); }
-  }, 60000);
+  }, 60000 * rpcDeadlineScale);
 });

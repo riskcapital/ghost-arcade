@@ -550,7 +550,13 @@ fn default_scan_path() -> Option<String> {
     let exe = std::env::current_exe().ok()?;
     let dir = exe.parent()?;
     // Packaged: {resources}/native-renderer/assets. Dev: target/{profile}/ -> native-renderer/assets.
-    [dir.join("assets"), dir.join("../../assets"), dir.join("../../../assets")]
+    let mut candidates = vec![dir.join("assets"), dir.join("../../assets"), dir.join("../../../assets")];
+    // Test binaries sit wherever cargo puts them (newer cargo builds them under
+    // target/{profile}/build/<crate>/<hash>/out), so tests look in the crate itself.
+    if cfg!(test) {
+        candidates.push(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("assets"));
+    }
+    candidates
         .into_iter()
         .map(|d| d.join("default-scan.ply"))
         .find(|p| p.is_file())

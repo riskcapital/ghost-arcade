@@ -4,6 +4,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
+// CI's Linux runner renders on lavapipe (software Vulkan, GA_TEST_SOFTWARE_VULKAN=1):
+// its first frame compiles the compositor on the CPU and can take longer than
+// a GPU's deadline. Stretch every RPC deadline there, as the vitest suites do.
+const RPC_DEADLINE_SCALE = process.env.GA_TEST_SOFTWARE_VULKAN === '1' ? 4 : 1;
+
 const root = process.cwd();
 const bin = join(
   root,
@@ -477,7 +482,7 @@ export function createRpcProcess() {
     const timer = setTimeout(() => {
       pending.delete(id);
       reject(new Error(`native render-core timed out handling ${method}`));
-    }, timeoutMs);
+    }, timeoutMs * RPC_DEADLINE_SCALE);
     pending.set(id, { resolve, reject, timer, method });
     child.stdin.write(`${JSON.stringify({ id, method, params })}\n`);
   });

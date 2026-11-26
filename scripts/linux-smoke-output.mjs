@@ -152,14 +152,15 @@ export const stepOutputAndQuit = {
     t.check('exactly one render core process is running', cores.length === 1, cores.map((p) => p.pid).join(','));
     if (await c.exists("document.querySelector('button.win-close')")) {
       await c.clickElement("document.querySelector('button.win-close')");
-      // Unsaved work: the app asks first, as it should.
-      const asked = await c.waitFor("!!document.querySelector('.close-modal .btn-discard')", 6000, 'Unsaved Changes dialog').catch(() => false);
-      t.number('unsavedPrompt', asked ? 'shown' : 'not shown');
-      if (asked) await c.clickElement("document.querySelector('.close-modal .btn-discard')").catch(() => {});
     } else {
       t.note('no DOM close button on this platform (OS title bar); asking the app to quit with SIGTERM');
       t.app().kill('SIGTERM');
     }
+    // Unsaved work: the app asks first, as it should (a SIGTERM quits the
+    // same way as the OS Quit command).
+    const asked = await c.waitFor("!!document.querySelector('.close-modal .btn-discard')", 6000, 'Unsaved Changes dialog').catch(() => false);
+    t.number('unsavedPrompt', asked ? 'shown' : 'not shown');
+    if (asked) await c.clickElement("document.querySelector('.close-modal .btn-discard')").catch(() => {});
     const exit = await Promise.race([t.app().exited, sleep(20000).then(() => null)]);
     t.check('app exits within 20 s of Close', !!exit, exit ? `code=${exit.code} signal=${exit.signal}` : 'still running');
     await sleep(2000);

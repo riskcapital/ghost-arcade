@@ -45,37 +45,50 @@ export const stepInteractive = {
     await addLayer(c, 'Interactive');
     await c.waitFor(`!!(${ADD_EFFECT}) && !!(${PREVIEW})`, 30000, 'Interactive Studio');
     const enabled = (name) => `document.querySelector('input[aria-label="Enable ${name}"]')`;
-    // Empty stage first (only the shape outlines), so "renders" has a baseline.
-    await setCheckbox(c, enabled('Living Architecture'), false);
-    await sleep(2500);
-    const empty = await studioPreview(c);
-    t.number('emptyStage', `meanLuma=${empty.meanLuma} nonBlack=${empty.nonBlackFraction} colours=${empty.distinctColours}`);
+    const addEffect = async (name) => {
+      await c.clickElement(ADD_EFFECT);
+      await c.clickElement(`[...document.querySelectorAll('.add-effect-menu button')].find(b=>b.textContent.trim()===${JSON.stringify(name)})`);
+      await c.waitFor(`!!(${enabled(name)})`, 8000, `${name} in the effect stack`);
+    };
+    const stack = () => c.eval("JSON.stringify([...document.querySelectorAll('.effect-card')].map(e=>e.getAttribute('aria-label')+':'+e.querySelector('input').checked))");
+    try {
+      // Empty stage first: the starter scene's effects off, only the shape
+      // outlines left, so "renders" has a baseline.
+      const starters = JSON.parse(await c.eval("JSON.stringify([...document.querySelectorAll('.effect-card input[type=checkbox]')].map(i=>(i.getAttribute('aria-label')||'').replace(/^Enable /,'')))"));
+      for (const name of starters) await setCheckbox(c, enabled(name), false);
+      await sleep(2500);
+      const empty = await studioPreview(c);
+      t.number('emptyStage', `meanLuma=${empty.meanLuma} nonBlack=${empty.nonBlackFraction} colours=${empty.distinctColours} (starters off: ${starters.join(', ')})`);
 
-    await setCheckbox(c, enabled('Living Architecture'), true);
-    const simple = await waitForPicture(c, empty, 120000);
-    const simpleFps = await measuredFps(c, 4000);
-    t.number('livingArchitecture', `meanLuma=${simple.meanLuma} nonBlack=${simple.nonBlackFraction} colours=${simple.distinctColours}; ${simpleFps.frameMs} ms/frame (${simpleFps.fps} fps)`);
-    t.check('simple style (Living Architecture) renders in the Studio preview', simple.ok, JSON.stringify(simple));
-    await t.shot('e-living-architecture');
+      // A simple style, added from the menu.
+      await addEffect('Living Architecture');
+      await setCheckbox(c, enabled('Living Architecture'), true);
+      const simple = await waitForPicture(c, empty, 120000);
+      const simpleFps = await measuredFps(c, 4000);
+      t.number('livingArchitecture', `meanLuma=${simple.meanLuma} nonBlack=${simple.nonBlackFraction} colours=${simple.distinctColours}; ${simpleFps.frameMs} ms/frame (${simpleFps.fps} fps)`);
+      t.check('simple style (Living Architecture) renders in the Studio preview', simple.ok, JSON.stringify(simple));
+      await t.shot('e-living-architecture');
 
-    await setCheckbox(c, enabled('Living Architecture'), false);
-    await c.clickElement(ADD_EFFECT);
-    await c.clickElement("[...document.querySelectorAll('.add-effect-menu button')].find(b=>b.textContent.trim()==='Fire')");
-    const added = 'Fire';
-    await c.waitFor(`!!(${enabled('Fire')})`, 8000, 'Fire in the effect stack');
-    const stack = await c.eval("JSON.stringify([...document.querySelectorAll('.effect-card')].map(e=>e.getAttribute('aria-label')+':'+e.querySelector('input').checked))");
-    t.number('effectStack', stack);
-    const fire = await waitForPicture(c, empty, 120000);
-    const fireFps = await measuredFps(c, 4000);
-    t.number('fire', `meanLuma=${fire.meanLuma} nonBlack=${fire.nonBlackFraction} colours=${fire.distinctColours}; ${fireFps.frameMs} ms/frame (${fireFps.fps} fps)`);
-    t.check('compute style (Fire) renders in the Studio preview', fire.ok, `${JSON.stringify(fire)} (select showed "${added}")`);
-    t.check('core keeps producing frames with a compute style running', fireFps.frames > 0, `${fireFps.frames} frames in 4 s`);
-    const status = await rpc(c, 'native_renderer_get_status');
-    t.check('core reports no shader or frame error', status?.running === true && !status?.last_shader_error && !status?.last_frame_error, `shader=${status?.last_shader_error || ''} frame=${status?.last_frame_error || ''}`);
-    await t.shot('e-fire');
-    await c.clickElement(el.button('Close'));
-    await sleep(500);
-    for (const name of await layerNames(c)) if (/Interactive/.test(name)) await setLayerVisible(c, name, false);
+      // A compute style: the starter scene's Fire, or one added if it has none.
+      await setCheckbox(c, enabled('Living Architecture'), false);
+      if (!(await c.exists(enabled('Fire')))) await addEffect('Fire');
+      await setCheckbox(c, enabled('Fire'), true);
+      t.number('effectStack', await stack());
+      const fire = await waitForPicture(c, empty, 120000);
+      const fireFps = await measuredFps(c, 4000);
+      t.number('fire', `meanLuma=${fire.meanLuma} nonBlack=${fire.nonBlackFraction} colours=${fire.distinctColours}; ${fireFps.frameMs} ms/frame (${fireFps.fps} fps)`);
+      t.check('compute style (Fire) renders in the Studio preview', fire.ok, JSON.stringify(fire));
+      t.check('core keeps producing frames with a compute style running', fireFps.frames > 0, `${fireFps.frames} frames in 4 s`);
+      const status = await rpc(c, 'native_renderer_get_status');
+      t.check('core reports no shader or frame error', status?.running === true && !status?.last_shader_error && !status?.last_frame_error, `shader=${status?.last_shader_error || ''} frame=${status?.last_frame_error || ''}`);
+      await t.shot('e-fire');
+    } finally {
+      // Leave the editor as the later steps expect it, even after a failure
+      // here: the Studio covers the whole window while it is open.
+      if (await c.exists(el.button('Close'))) await c.clickElement(el.button('Close')).catch(() => {});
+      await sleep(500);
+      for (const name of await layerNames(c)) if (/Interactive/.test(name)) await setLayerVisible(c, name, false);
+    }
   },
 };
 

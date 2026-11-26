@@ -25,6 +25,7 @@ vi.mock('../../stores/showTimeline', async () => {
       isChasing: () => false,
       play: vi.fn(), pause: vi.fn(), stop: vi.fn(), seek: vi.fn(), setLoop: vi.fn(),
     },
+    showSectionStatus: { subscribe: writable({ holdId: null }).subscribe },
   };
 });
 vi.mock('../../stores/layers', async () => {
