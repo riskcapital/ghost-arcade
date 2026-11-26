@@ -9911,6 +9911,7 @@ function registerIpcHandlers() {
 
   ipcMain.handle('js_source_open', (_event, args = {}) => jsSourceHost.open(args));
   ipcMain.handle('js_source_close', (_event, args = {}) => jsSourceHost.close(args?.id));
+  ipcMain.handle('js_source_paint', (_event, args = {}) => jsSourceHost.setPainting(args?.id, args?.paint));
   ipcMain.handle('js_source_params', (_event, args = {}) => jsSourceHost.setParams(args?.id, args?.values));
   ipcMain.handle('js_source_audio', (_event, args = {}) => jsSourceHost.setAudio(args?.fields));
   ipcMain.handle('js_source_status', () => jsSourceHost.status());

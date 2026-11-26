@@ -28,7 +28,7 @@ function fakeHost(overrides: { open?: unknown; status?: unknown } = {}) {
     if (command === 'js_source_status') return overrides.status ?? { hosts: [] };
     return { ok: true };
   });
-  return { hosts: new NativeJsCanvasHosts(call), calls, of: (command: string) => calls.filter((c) => c.command === command) };
+  return { call, hosts: new NativeJsCanvasHosts(call), calls, of: (command: string) => calls.filter((c) => c.command === command) };
 }
 
 const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
@@ -130,6 +130,56 @@ describe('NativeJsCanvasHosts', () => {
     hosts.sweep(21_000);
     expect(of('js_source_close').map((c) => c.args.id)).toEqual(['z']);
     expect(hosts.isOpen('z')).toBe(false);
+  });
+
+  it('stops painting a lingering host and paints again the moment it is used', async () => {
+    const { hosts, of } = fakeHost({ status: { hosts: [{ id: 'p' }] } });
+    const src = source('p', scenePage);
+    hosts.use(src, 1920, 1080, 1_000);
+    await settle();
+    expect(hosts.use(src, 1920, 1080, 1_016)).toBe(true);
+    hosts.sweep(1_500);
+    expect(of('js_source_paint')).toHaveLength(0);
+    hosts.sweep(2_016);
+    hosts.sweep(2_500);
+    expect(of('js_source_paint').map((c) => c.args)).toEqual([{ id: 'p', paint: false }]);
+    // Used again: the same host, painting again, no reopen.
+    expect(hosts.use(src, 1920, 1080, 3_000)).toBe(true);
+    expect(of('js_source_paint').map((c) => c.args)).toEqual([{ id: 'p', paint: false }, { id: 'p', paint: true }]);
+    expect(of('js_source_open')).toHaveLength(1);
+  });
+
+  it('does not pause pages while a render steps them', async () => {
+    const { hosts, of } = fakeHost();
+    hosts.use(source('r', scenePage), 1920, 1080, 1_000);
+    await settle();
+    await hosts.setRenderClock(true, 0);
+    hosts.sweep(5_000);
+    expect(of('js_source_paint')).toHaveLength(0);
+  });
+
+  it('sweeps on its own timer, so hosts close with no frame sync running', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'Date'] });
+    try {
+      const { call } = fakeHost({ status: { hosts: [{ id: 't' }] } });
+      const calls: string[] = [];
+      const hosts = new NativeJsCanvasHosts(async (command, args) => {
+        calls.push(command);
+        return call(command, args);
+      }, 1_000);
+      hosts.use(source('t', scenePage), 1920, 1080, Date.now());
+      await vi.advanceTimersByTimeAsync(0);
+      await vi.advanceTimersByTimeAsync(2_000);
+      expect(calls).toContain('js_source_paint');
+      expect(calls).not.toContain('js_source_close');
+      await vi.advanceTimersByTimeAsync(20_000);
+      expect(calls).toContain('js_source_close');
+      expect(hosts.isOpen('t')).toBe(false);
+      // Nothing left: the timer stops.
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('reopens a host that was closed on the Electron side', async () => {

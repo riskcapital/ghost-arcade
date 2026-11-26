@@ -168,6 +168,7 @@ export function createJsSourceHost({ broker, libDir, threeDir, preloadPath, isPa
       errors: entry.errors,
       last_error: entry.lastError,
       last_upload_at: entry.lastUploadAt,
+      painting: !entry.paused,
     };
   }
 
@@ -330,6 +331,7 @@ export function createJsSourceHost({ broker, libDir, threeDir, preloadPath, isPa
     }
     if (entry) {
       entry.lastRequestedAt = Date.now();
+      setPaintingEntry(entry, true);
       if (entry.width !== width || entry.height !== height) {
         entry.width = width;
         entry.height = height;
@@ -405,6 +407,7 @@ export function createJsSourceHost({ broker, libDir, threeDir, preloadPath, isPa
       frameWidth: 0,
       frameHeight: 0,
       lastRequestedAt: Date.now(),
+      paused: false,
     };
     hosts.set(id, entry);
     byToken.set(token, entry);
@@ -610,6 +613,36 @@ export function createJsSourceHost({ broker, libDir, threeDir, preloadPath, isPa
     return { ok: true };
   }
 
+  /**
+   * A host the editor is not showing stops painting: the page keeps running
+   * (its state and clock carry on) but no frames are made or uploaded. Used
+   * again, it paints at once. A render steps pages itself, so they always paint.
+   */
+  function setPaintingEntry(entry, paint) {
+    if (!entry || entry.closed || entry.window.isDestroyed()) return false;
+    const wanted = paint || entry.manual;
+    if (wanted === !entry.paused) return true;
+    entry.paused = !wanted;
+    const wc = entry.window.webContents;
+    try {
+      if (wanted) {
+        wc.startPainting();
+        wc.invalidate();
+      } else {
+        wc.stopPainting();
+      }
+    } catch {
+      /* the window is going away */
+    }
+    return true;
+  }
+
+  function setPainting(id, paint) {
+    const entry = hosts.get(String(id ?? ''));
+    if (!entry) return { ok: false };
+    return { ok: setPaintingEntry(entry, paint !== false) };
+  }
+
   function setParams(id, values) {
     const entry = hosts.get(String(id ?? ''));
     if (!entry) return { ok: false };
@@ -652,6 +685,7 @@ export function createJsSourceHost({ broker, libDir, threeDir, preloadPath, isPa
       const manual = !!renderClock;
       if (entry.manual === manual) continue;
       entry.manual = manual;
+      setPaintingEntry(entry, true);
       entry.html = buildHostHtml(entry.pageHtml, { renderClock: manual ? renderClock : null });
       entry.loaded = false;
       entry.drawn = false;
@@ -741,5 +775,5 @@ export function createJsSourceHost({ broker, libDir, threeDir, preloadPath, isPa
     return failed.length ? { ok: false, failed } : { ok: true };
   }
 
-  return { open, close, setParams, setAudio, status, closeAll, thumbnail, trial, setRenderClock, step, noteStepped };
+  return { open, close, setPainting, setParams, setAudio, status, closeAll, thumbnail, trial, setRenderClock, step, noteStepped };
 }

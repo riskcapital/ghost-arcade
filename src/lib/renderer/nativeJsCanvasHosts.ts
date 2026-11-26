@@ -5,7 +5,9 @@
  * The native sync flush calls `use()` for every visible JavaScript source it
  * cannot turn into a core shader. A host opens the first time its source is
  * used, and closes once nothing has used it for LINGER_MS, so a VJ clip that
- * comes back a few seconds later is still running. Each host sends its own
+ * comes back a few seconds later is still running. While it lingers unused it
+ * stops painting (PAUSE_MS after its last use): the page keeps its state and
+ * clock, but sends no frames nobody shows. Each host sends its own
  * frames to the core under the source's id; this side only decides which
  * hosts should exist and forwards parameters and audio to them.
  */
@@ -19,6 +21,11 @@ import { singlePlayablePage } from '../p5sketch/wrapSketch';
 
 const JS_SOURCE_TYPES = new Set(['threejs', 'p5js', 'javascript']);
 const LINGER_MS = 20_000;
+/** Unused this long, a host stops painting until it is used again. */
+const PAUSE_MS = 1_000;
+/** How often the singleton sweeps on its own, so hosts are reaped even when
+ *  no frame sync runs (an empty scene, a hidden editor). */
+const AUTO_SWEEP_MS = 1_000;
 const RETRY_MS = 2_000;
 const RECONCILE_MS = 2_000;
 const AUDIO_PUSH_MS = 33;
@@ -103,6 +110,8 @@ interface HostRecord {
   params: string;
   /** Render to video: the render frame that last showed this page. */
   usedFrame: number;
+  /** Told to stop painting while it lingers unused. */
+  paused: boolean;
 }
 
 /** The fields a page reads as window.ghostAudio. */
@@ -133,7 +142,29 @@ export class NativeJsCanvasHosts {
   private renderClock = false;
   private renderFrame = 0;
 
-  constructor(private readonly call: Invoke) {}
+  private sweepTimer: ReturnType<typeof setInterval> | null = null;
+
+  /** `autoSweepMs` > 0: sweep on a timer while any host exists, as well as
+   *  from the frame sync. Off by default so tests drive the clock. */
+  constructor(private readonly call: Invoke, private readonly autoSweepMs = 0) {}
+
+  private armSweepTimer(): void {
+    if (this.autoSweepMs <= 0 || this.sweepTimer !== null || this.records.size === 0) return;
+    this.sweepTimer = setInterval(() => {
+      this.sweep(Date.now());
+      if (this.records.size === 0 && this.sweepTimer !== null) {
+        clearInterval(this.sweepTimer);
+        this.sweepTimer = null;
+      }
+    }, this.autoSweepMs);
+  }
+
+  /** Paint again right away when a lingering host is used. */
+  private resume(id: string, record: HostRecord): void {
+    if (!record.paused) return;
+    record.paused = false;
+    void this.call('js_source_paint', { id, paint: true }).catch(() => {});
+  }
 
   /**
    * Keep the host for `src` open this frame. Returns true once the host
@@ -150,6 +181,7 @@ export class NativeJsCanvasHosts {
       if (record.opening) return false;
       if (record.signature === signature) {
         if (record.ready) {
+          this.resume(src.id, record);
           // Values that change without an edit in the panel (timeline lines,
           // keyframes) reach an open page here.
           const params = JSON.stringify(jsAnimation.paramValues ?? {});
@@ -162,8 +194,9 @@ export class NativeJsCanvasHosts {
         if (now - record.failedAt < RETRY_MS) return false;
       }
     }
-    const next: HostRecord = { signature, lastUsedAt: now, ready: false, opening: true, failedAt: 0, params: JSON.stringify(jsAnimation.paramValues ?? {}), usedFrame: this.renderFrame };
+    const next: HostRecord = { signature, lastUsedAt: now, ready: false, opening: true, failedAt: 0, params: JSON.stringify(jsAnimation.paramValues ?? {}), usedFrame: this.renderFrame, paused: false };
     this.records.set(src.id, next);
+    this.armSweepTimer();
     this.call('js_source_open', {
       id: src.id,
       // A sketch kept as files plays as one document with its files folded
@@ -194,7 +227,16 @@ export class NativeJsCanvasHosts {
   /** Close hosts nothing has used lately, and notice ones closed on the other side. */
   sweep(now = Date.now()): void {
     for (const [id, record] of this.records) {
-      if (record.opening || now - record.lastUsedAt < LINGER_MS) continue;
+      if (record.opening) continue;
+      if (now - record.lastUsedAt < LINGER_MS) {
+        // A render steps every page it shows; pages it does not show are
+        // reloaded when it ends, so only live hosts pause.
+        if (record.ready && !record.paused && !this.renderClock && now - record.lastUsedAt >= PAUSE_MS) {
+          record.paused = true;
+          void this.call('js_source_paint', { id, paint: false }).catch(() => {});
+        }
+        continue;
+      }
       this.records.delete(id);
       void this.call('js_source_close', { id }).catch(() => {});
     }
@@ -208,6 +250,7 @@ export class NativeJsCanvasHosts {
           // Evicted, crashed, or closed with the core: reopen on next use.
           if (record.ready && !open.has(id)) {
             record.ready = false;
+            record.paused = false;
             record.failedAt = 0;
             record.signature = '';
           }
@@ -236,6 +279,8 @@ export class NativeJsCanvasHosts {
   async setRenderClock(on: boolean, dateMs = Date.now()): Promise<void> {
     this.renderClock = on;
     this.renderFrame = 0;
+    // Every page reloads on the new clock and paints again.
+    for (const record of this.records.values()) record.paused = false;
     await this.call('js_source_render_clock', { on, dateMs });
   }
 
@@ -267,10 +312,14 @@ export class NativeJsCanvasHosts {
   closeAll(): void {
     for (const id of this.records.keys()) void this.call('js_source_close', { id }).catch(() => {});
     this.records.clear();
+    if (this.sweepTimer !== null) {
+      clearInterval(this.sweepTimer);
+      this.sweepTimer = null;
+    }
   }
 }
 
-export const nativeJsCanvasHosts = new NativeJsCanvasHosts((command, args) => invoke(command, args));
+export const nativeJsCanvasHosts = new NativeJsCanvasHosts((command, args) => invoke(command, args), AUTO_SWEEP_MS);
 
 if (isDesktopApp) {
   setJSAnimationParamForwarder((id, params) => nativeJsCanvasHosts.setParams(id, params));
