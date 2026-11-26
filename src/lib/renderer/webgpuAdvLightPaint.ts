@@ -43,6 +43,7 @@ import { createAndWarmWgslShaderModule } from './wgsl';
  */
 
 import type { AdvLightPaintingContent, AdvLightPaintBrush } from '$lib/types';
+import { advanceSpawnCursor } from './particleSpawnRing';
 
 // 3D particle struct: position(vec3) + velocity(vec3) + color(vec3) + life(f32)
 //   Layout: pos(12) + pad(4) + vel(12) + pad(4) + col(12) + life(4) = 48 bytes
@@ -58,7 +59,7 @@ const ABSOLUTE_MIN_PARTICLES = 5000;
 //   vec4 forces        (gravity, viscosity, audio_bass, brush_id)
 //   vec4 misc          (size, glow, depth_fade, hue_cycle_speed)
 //   vec4 viewport      (w, h, emissionZ, spawn_spread)
-//   vec4 prev_spawn    (prev_x, prev_y, prev_active, _pad)  ← stroke interp
+//   vec4 prev_spawn    (prev_x, prev_y, prev_active, spawn_cursor)  ← stroke interp + ring spawn window
 const UNIFORM_BYTES = 112;
 
 const COMPUTE_WGSL = /* wgsl */ `
@@ -78,7 +79,7 @@ struct U {
   forces: vec4<f32>,          // gravity, viscosity, audio_bass, brush_id
   misc: vec4<f32>,            // size, glow, depth_fade, hue_cycle_speed
   viewport: vec4<f32>,        // w, h, emissionZ, spawn_spread
-  prev_spawn: vec4<f32>,      // prev_x, prev_y, was_active (1=continuous), pad
+  prev_spawn: vec4<f32>,      // prev_x, prev_y, was_active (1=continuous), spawn_cursor
 };
 
 @group(0) @binding(0) var<storage, read_write> particles: array<Particle>;
@@ -136,8 +137,13 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
   // canvas widths per second); without interpolation we'd get
   // sparse puffs spread along the path. With interpolation we get
   // a continuous bead of particles tracing the cursor.
+  // The spawn window is a ring [cursor, cursor + spawn_per_frame)
+  // modulo the pool, advanced on the CPU every frame, so every slot
+  // gets used (mirrors spawnWindowOffset in particleSpawnRing.ts).
+  // ring_k is the slot's position inside the window, 0..spawn_per_frame-1.
+  let ring_k = (i + count - (u32(u.prev_spawn.w) % count)) % count;
   if (p.life <= 0.0) {
-    if (u.spawn.w > 0.5 && i < spawn_per_frame) {
+    if (u.spawn.w > 0.5 && ring_k < spawn_per_frame) {
       let r = hash21_v2(vec2(f32(i), t));
       let r2 = hash21_v2(vec2(f32(i) * 1.7, t * 1.3));
       let spread = u.viewport.w;
@@ -149,7 +155,7 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
       // collapse to a single point — no previous pos to interpolate
       // from.
       let was_active = u.prev_spawn.z;
-      var stroke_t = f32(i) / f32(max(1u, spawn_per_frame - 1u));
+      var stroke_t = f32(ring_k) / f32(max(1u, spawn_per_frame - 1u));
       if (was_active < 0.5) { stroke_t = 1.0; }
       let stroke_pos = mix(u.prev_spawn.xy, u.spawn.xy, stroke_t);
 
@@ -407,6 +413,7 @@ export class WebGPUAdvLightPaint {
   private renderBindGroup: any = null;
 
   private currentCapacity = 0;
+  private spawnCursor = 0;
   private content: AdvLightPaintingContent | null = null;
   private spawnU = 0.5;
   private spawnV = 0.5;
@@ -505,6 +512,7 @@ export class WebGPUAdvLightPaint {
     const zeros = new Float32Array(clamped * (PARTICLE_BYTES / 4));
     this.device.queue.writeBuffer(this.particleBuffer, 0, zeros.buffer);
     this.currentCapacity = clamped;
+    this.spawnCursor = 0;
     this.stats.particleCapacity = clamped;
     this.computeBindGroup = this.device.createBindGroup({
       layout: this.computeBindGroupLayout,
@@ -591,7 +599,7 @@ export class WebGPUAdvLightPaint {
     cuF[0] = this.spawnU; cuF[1] = this.spawnV; cuF[2] = c.emissionZ; cuF[3] = this.spawnActive ? 1 : 0;
     cuF[4] = dt; cuF[5] = totalTime;
     cuF[6] = this.currentCapacity;
-    cuF[7] = Math.max(1, Math.min(2000, c.spawnRate));
+    cuF[7] = Math.max(1, Math.min(2000, Math.floor(c.spawnRate)));
     cuF[8] = r; cuF[9] = g; cuF[10] = b; cuF[11] = c.lifespanSec;
     cuF[12] = c.gravity; cuF[13] = c.viscosity; cuF[14] = this.bassEnergy; cuF[15] = brushId(c.brush);
     cuF[16] = c.size; cuF[17] = c.glow; cuF[18] = 0.6; cuF[19] = c.hueCycleSpeed;
@@ -602,7 +610,10 @@ export class WebGPUAdvLightPaint {
     cuF[24] = this.prevSpawnU;
     cuF[25] = this.prevSpawnV;
     cuF[26] = this.prevSpawnActive ? 1 : 0;
-    cuF[27] = 0;
+    cuF[27] = this.spawnCursor;
+    if (this.spawnActive) {
+      this.spawnCursor = advanceSpawnCursor(this.spawnCursor, cuF[7], this.currentCapacity);
+    }
     this.prevSpawnU = this.spawnU;
     this.prevSpawnV = this.spawnV;
     this.prevSpawnActive = this.spawnActive;

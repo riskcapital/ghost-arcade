@@ -1,5 +1,6 @@
 import { getGhostGpuRuntime } from './webgpuShared';
 import { createAndWarmWgslShaderModule } from './wgsl';
+import { advanceSpawnCursor } from './particleSpawnRing';
 
 /**
  * WebGPUPaintDrip — Phase 3.1 showcase: glowing drips of paint
@@ -62,7 +63,10 @@ const LIFE_SECONDS = 3.0;           // particles live ~3s before dying
 //   vec2 viewport     (xy aspect-correct multipliers)
 //   f32  gravity
 //   f32  viscosity
-const UNIFORM_BYTES = 64;
+//   ---
+//   u32  spawn_cursor (x) — ring-buffer start of this frame's spawn window
+//   u32  _pad × 3
+const UNIFORM_BYTES = 80;
 
 // HSV → RGB. Used CPU-side to compute the "current spawn color" each
 // frame as the hue cycles slowly over time.
@@ -107,6 +111,11 @@ struct Uniforms {
   viewport: vec2<f32>,
   gravity: f32,
   viscosity: f32,
+  // vec4 #4
+  spawn_cursor: u32,
+  _pad0: u32,
+  _pad1: u32,
+  _pad2: u32,
 };
 
 @group(0) @binding(0) var<storage, read_write> particles: array<Particle>;
@@ -129,11 +138,13 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
   if (i >= u.particle_count) { return; }
   var p = particles[i];
 
-  // Spawn dead particles when the mouse is active. Distribute spawns
-  // across the first SPAWN_PER_FRAME dead slots — index ranges further
-  // out are reserved for future "audio burst" spawns.
+  // Spawn dead particles when the mouse is active. The spawn window is
+  // a ring: [spawn_cursor, spawn_cursor + spawn_per_frame) modulo the
+  // pool, advanced by the CPU every frame, so the whole pool gets used
+  // (mirrors spawnWindowOffset in particleSpawnRing.ts).
   if (p.life <= 0.0) {
-    if (u.spawn_active > 0.5 && i < u.spawn_per_frame) {
+    let ring_k = (i + u.particle_count - (u.spawn_cursor % u.particle_count)) % u.particle_count;
+    if (u.spawn_active > 0.5 && ring_k < u.spawn_per_frame) {
       // Per-particle stable seed from id + time — avoids entire spawn
       // batches landing on the same point.
       let r = hash21_v2(vec2(f32(i), u.total_time));
@@ -306,6 +317,7 @@ export class WebGPUPaintDrip {
   private spawnU = 0.5;
   private spawnV = 0.5;
   private spawnActive = false;
+  private spawnCursor = 0;
   private bassEnergy = 0;       // exponential-decay buffered bass
   private bassTarget = 0;       // raw audio bass set externally
   private hue = 0;              // 0..1, cycles slowly
@@ -491,6 +503,12 @@ export class WebGPUPaintDrip {
     cuF[13] = this.viewportH;
     cuF[14] = 0.45;   // gravity (downward)
     cuF[15] = 0.85;   // viscosity (per-second damping)
+    // vec4 #4 — ring-buffer spawn cursor (u32). Only advances while the
+    // pointer is held so each stroke keeps sweeping fresh slots.
+    cuU[16] = this.spawnCursor;
+    if (this.spawnActive) {
+      this.spawnCursor = advanceSpawnCursor(this.spawnCursor, SPAWN_PER_FRAME, PARTICLE_COUNT);
+    }
     this.device.queue.writeBuffer(this.computeUniformBuffer, 0, cu);
 
     // Render uniforms — billboard sized in UV with aspect correction
