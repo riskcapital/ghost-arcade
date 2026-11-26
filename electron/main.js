@@ -278,6 +278,10 @@ const nativeRendererBroker = createNativeRendererBroker({
     if (coreTextureShareActive && coreTextureShareName) {
       void nativeRendererBroker.invoke('native_renderer_texture_share_start', coreTextureShareRequest(coreTextureShareName)).catch(() => null);
     }
+    // The same for the Screens' senders; the editor resends the Screens.
+    if (coreSliceSendersActive) {
+      void nativeRendererBroker.invoke('native_renderer_texture_share_slices_start', coreTextureShareRequest(null)).catch(() => null);
+    }
   },
 });
 
@@ -2487,7 +2491,7 @@ function closeAuxiliaryWindows() {
   clearPreviewMonitorReopenTimer();
   closePreviewMonitorWindow();
 
-  try { stopAtlasOutput('shutdown'); } catch {}
+  try { stopSliceSenders('shutdown'); } catch {}
 }
 
 function closeAllWledSockets() {
@@ -5095,7 +5099,8 @@ function coreTextureShareRequest(name) {
   // Clients list a sender as "<app> - <name>"; the core is a helper
   // executable, so it is told the app's own name.
   // Spout keeps the host executable's path with the sender.
-  return { name, app_name: app.getName(), host_path: process.execPath };
+  const request = { app_name: app.getName(), host_path: process.execPath };
+  return name ? { name, ...request } : request;
 }
 
 async function startCoreTextureShare(name) {
@@ -5163,6 +5168,161 @@ function fallBackFromCoreTextureShare() {
   spoutSendActive = false;
   const ok = createSpoutSender(name, spoutSendW, spoutSendH, { startOsr: false });
   if (ok) startNativeOutputTextureSharePromotion('core-sender-failed');
+}
+
+// ============================================================
+// Screen (slice) senders published by the render core
+// ============================================================
+// Each sender Screen gets its own Syphon server / Spout sender in the core,
+// fed from the Screen's own core target after its crop, warp, colour and
+// edge blend. The editor's native sync sends those Screens to the core with
+// their sender names (nativeRendererSync pushSliceOutputs). The hidden
+// slice-atlas window, which rendered the whole project a second time in the
+// browser just to feed these senders, is then not created. Same sender
+// names, so receivers keep their connections.
+// Follows the whole-output rule above (macOS on, Windows with
+// GA_CORE_SPOUT=1); GA_CORE_SLICE_SENDERS=0 keeps the atlas window path, and
+// a core that cannot publish (old core, Linux) falls back to it.
+const CORE_SLICE_SENDERS_ALLOWED = CORE_TEXTURE_SHARE_ALLOWED && process.env.GA_CORE_SLICE_SENDERS !== '0';
+let coreSliceSendersActive = false;
+let coreSliceSendersState = null;
+let coreSliceSendersWatchdog = null;
+let coreSliceSendersCheckInFlight = false;
+// The editor asked for core senders before the core could take them (it was
+// still starting): try again for a while, then keep the atlas window.
+let coreSliceSendersPromoteTimer = null;
+const CORE_SLICE_SENDERS_PROMOTE_MS = 1000;
+const CORE_SLICE_SENDERS_PROMOTE_TRIES = 60;
+
+function coreSliceSendersSupported() {
+  if (!CORE_SLICE_SENDERS_ALLOWED || !nativeRendererBroker?.coreCapabilitiesConfirmed) return false;
+  const methods = nativeRendererBroker.capabilities?.implemented_methods;
+  return Array.isArray(methods) && methods.includes('texture_share_slices_start');
+}
+
+async function startCoreSliceSenders() {
+  if (!coreSliceSendersSupported()) return false;
+  const state = await nativeRendererBroker.invoke('native_renderer_texture_share_slices_start', coreTextureShareRequest(null))
+    .catch(() => null);
+  if (!state || state.slices_enabled !== true) {
+    console.warn(`[${textureShareLabel} Core] core could not publish Screen senders; using the slice-atlas window${state?.last_error ? `: ${state.last_error}` : ''}`);
+    return false;
+  }
+  if (!coreSliceSendersActive) console.log(`[${textureShareLabel} Core] render core publishes the Screen senders`);
+  coreSliceSendersActive = true;
+  coreSliceSendersState = state;
+  startCoreSliceSendersWatchdog();
+  return true;
+}
+
+// The core publishes on its own; this notices a restarted core (and asks
+// the new one) or a Screen sender the core could not open (and moves the
+// Screen senders back to the slice-atlas window).
+function startCoreSliceSendersWatchdog() {
+  if (coreSliceSendersWatchdog) return;
+  coreSliceSendersWatchdog = setInterval(async () => {
+    if (!coreSliceSendersActive || coreSliceSendersCheckInFlight) return;
+    coreSliceSendersCheckInFlight = true;
+    try {
+      const state = await nativeRendererBroker.invoke('native_renderer_texture_share_state', {}).catch(() => null);
+      if (!coreSliceSendersActive || !state) return;
+      coreSliceSendersState = state;
+      const errors = Array.isArray(state.slice_errors) ? state.slice_errors : [];
+      if (errors.length > 0) {
+        const first = errors[0];
+        console.warn(`[${textureShareLabel} Core] Screen sender "${first?.name}" failed (${first?.error}); using the slice-atlas window`);
+        fallBackFromCoreSliceSenders();
+        return;
+      }
+      if (state.slices_enabled === false && coreSliceSendersSupported()) {
+        await nativeRendererBroker.invoke('native_renderer_texture_share_slices_start', coreTextureShareRequest(null)).catch(() => null);
+      }
+    } finally {
+      coreSliceSendersCheckInFlight = false;
+    }
+  }, CORE_TEXTURE_SHARE_CHECK_MS);
+}
+
+function stopCoreSliceSenders() {
+  const wasActive = coreSliceSendersActive;
+  coreSliceSendersActive = false;
+  coreSliceSendersState = null;
+  if (coreSliceSendersWatchdog) {
+    clearInterval(coreSliceSendersWatchdog);
+    coreSliceSendersWatchdog = null;
+  }
+  if (wasActive) {
+    void nativeRendererBroker.invoke('native_renderer_texture_share_slices_stop', {}).catch(() => null);
+  }
+}
+
+function fallBackFromCoreSliceSenders() {
+  stopCoreSliceSenders();
+  const ok = startAtlasOutput();
+  notifyMainWindowAtlasStatus(ok, ok ? 'core-sender-failed' : 'unavailable', ok ? 'atlas' : null);
+}
+
+function stopCoreSliceSendersPromotion() {
+  if (coreSliceSendersPromoteTimer) {
+    clearInterval(coreSliceSendersPromoteTimer);
+    coreSliceSendersPromoteTimer = null;
+  }
+}
+
+function startCoreSliceSendersPromotion() {
+  if (coreSliceSendersPromoteTimer || !CORE_SLICE_SENDERS_ALLOWED) return;
+  let tries = 0;
+  let inFlight = false;
+  coreSliceSendersPromoteTimer = setInterval(async () => {
+    if (inFlight) return;
+    if (++tries > CORE_SLICE_SENDERS_PROMOTE_TRIES || !atlasState.active) {
+      stopCoreSliceSendersPromotion();
+      return;
+    }
+    // Only once the core says what it can do: an old core keeps the atlas.
+    if (!nativeRendererBroker?.coreCapabilitiesConfirmed) return;
+    if (!coreSliceSendersSupported()) {
+      stopCoreSliceSendersPromotion();
+      return;
+    }
+    inFlight = true;
+    try {
+      // One real try: a core that is up and still refuses (no Syphon
+      // framework, say) keeps refusing, so the atlas window stays.
+      stopCoreSliceSendersPromotion();
+      if (await startCoreSliceSenders()) {
+        if (!atlasState.active) {
+          // The senders were stopped while the core was being asked.
+          stopCoreSliceSenders();
+          return;
+        }
+        stopAtlasOutput('moved-to-core', { notify: false });
+        notifyMainWindowAtlasStatus(true, 'moved-to-core', 'core');
+      }
+    } finally {
+      inFlight = false;
+    }
+  }, CORE_SLICE_SENDERS_PROMOTE_MS);
+}
+
+/** Start the Screen senders: from the core when the editor renders with it
+ *  and the core can publish them, otherwise the slice-atlas window. */
+async function startSliceSenders({ core = false } = {}) {
+  stopCoreSliceSendersPromotion();
+  if (core && await startCoreSliceSenders()) {
+    if (atlasState.active) stopAtlasOutput('moved-to-core', { notify: false });
+    return { ok: true, publisher: 'core' };
+  }
+  if (coreSliceSendersActive) stopCoreSliceSenders();
+  const ok = startAtlasOutput();
+  if (ok && core) startCoreSliceSendersPromotion();
+  return ok ? { ok: true, publisher: 'atlas' } : false;
+}
+
+function stopSliceSenders(reason = 'stopped') {
+  stopCoreSliceSendersPromotion();
+  stopCoreSliceSenders();
+  stopAtlasOutput(reason);
 }
 
 function stopSpoutSender() {
@@ -5987,10 +6147,10 @@ function stopOsrWatchdog() {
 // slice count. See docs/multi-slice-zerocopy-plan.md.
 // ============================================================
 
-function notifyMainWindowAtlasStatus(active, reason) {
+function notifyMainWindowAtlasStatus(active, reason, publisher = active ? 'atlas' : null) {
   if (mainWindow && !mainWindow.isDestroyed()) {
     try {
-      mainWindow?.webContents.send('texshare-atlas-status', { active, reason });
+      mainWindow?.webContents.send('texshare-atlas-status', { active, reason, publisher });
     } catch {}
   }
 }
@@ -6070,7 +6230,7 @@ function startAtlasOutput() {
   return true;
 }
 
-function stopAtlasOutput(reason = 'stopped') {
+function stopAtlasOutput(reason = 'stopped', { notify = true } = {}) {
   const wasActive = atlasState.active;
   atlasState.active = false;
   destroyAtlasOsrWindow();
@@ -6080,7 +6240,7 @@ function stopAtlasOutput(reason = 'stopped') {
   }
   if (wasActive) {
     console.log(`[Atlas] Fan-out stopped (${reason})`);
-    notifyMainWindowAtlasStatus(false, reason);
+    if (notify) notifyMainWindowAtlasStatus(false, reason);
   }
 }
 
@@ -7506,8 +7666,13 @@ function registerIpcHandlers() {
         spoutReceiver !== null && typeof spoutReceiver.receiveTextureInfo === 'function',
       receiver_texture_info_supported: getReceiverTextureInfoSupport(spoutAddon),
       receivers: [],
-      atlas_active: atlasState.active,
-      atlas_sender_count: atlasState.layout?.tiles?.length ?? 0,
+      atlas_active: atlasState.active || coreSliceSendersActive,
+      atlas_sender_count: coreSliceSendersActive
+        ? (Array.isArray(coreSliceSendersState?.slices) ? coreSliceSendersState.slices.length : 0)
+        : atlasState.layout?.tiles?.length ?? 0,
+      // Who publishes the Screen senders: the render core, or the hidden
+      // slice-atlas window.
+      slice_senders_publisher: coreSliceSendersActive ? 'core' : atlasState.active ? 'atlas' : null,
     };
   });
 
@@ -7547,12 +7712,14 @@ function registerIpcHandlers() {
 
   // Editor lifecycle: start/stop the atlas fan-out from the sender-slice
   // set in Canvas.svelte (≥1 Spout/Syphon sender slice → start).
-  ipcMain.handle('texshare_start_atlas', () => {
-    return startAtlasOutput();
+  // `core: true` when the editor renders with the core: the core then
+  // publishes the senders itself where it can (startSliceSenders).
+  ipcMain.handle('texshare_start_atlas', (_, options) => {
+    return startSliceSenders({ core: options?.core === true });
   });
 
   ipcMain.handle('texshare_stop_atlas', () => {
-    stopAtlasOutput('stopped');
+    stopSliceSenders('stopped');
     return true;
   });
 

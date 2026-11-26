@@ -193,6 +193,7 @@
     updateNativeEditorPreview,
   } from '$lib/api/native-renderer';
   import { nativeRendererRuntime } from '$lib/stores/nativeRenderer';
+  import { coreSliceSendersActive } from '$lib/stores/screenOutputStatus';
   import {
     editorCanvasGeometry,
     type EditorCanvasGeometry,
@@ -523,7 +524,7 @@
   // working unchanged.
   let atlasFanoutActive = false;
   let atlasStartInFlight = false;
-  let lastAtlasWantOn: boolean | null = null;
+  let lastAtlasWantOn: 'off' | 'core' | 'atlas' | null = null;
   let stopAtlasStatusListener: (() => void) | null = null;
 
   // Spout receive state for plugin layers — uses WebSocket binary push for zero-copy frames
@@ -3126,6 +3127,7 @@
     if (isElectron && !isOsrMode && !isOutputMode && (window as any).electronAPI?.on) {
       const offAtlas = (window as any).electronAPI.on('texshare-atlas-status', (status: any) => {
         atlasFanoutActive = !!status?.active;
+        coreSliceSendersActive.set(!!status?.active && status?.publisher === 'core');
         console.log(`[Canvas] Atlas fan-out ${atlasFanoutActive ? 'active' : `inactive (${status?.reason ?? 'unknown'})`}`);
       });
       stopAtlasStatusListener = typeof offAtlas === 'function' ? offAtlas : null;
@@ -4345,20 +4347,31 @@
   // ≥1 enabled Spout/Syphon sender slice starts the atlas, zero stops
   // it. Independent of the master spoutEnabled toggle (that's the
   // full-frame sender; slices are their own named senders).
+  //
+  // While the render core draws the editor it publishes these senders
+  // itself, from each Screen's own core target (main falls back to the
+  // slice-atlas window when it cannot).
   $: if (isElectron && !isOsrMode && !isOutputMode && !atlasStartInFlight) {
     const wantOn = ($settings?.output?.slices ?? []).some(isAtlasSenderSlice);
-    if (wantOn !== lastAtlasWantOn) {
-      lastAtlasWantOn = wantOn;
+    // nativePrimary named here (not through nativePrimaryActive()) so the
+    // statement reruns when the editor switches renderer.
+    const fromCore = nativePrimary;
+    const wantKey = wantOn ? (fromCore ? 'core' : 'atlas') : 'off';
+    if (wantKey !== lastAtlasWantOn) {
+      lastAtlasWantOn = wantKey;
       atlasStartInFlight = true;
       if (wantOn) {
-        invoke('texshare_start_atlas')
-          .then((ok: any) => { atlasFanoutActive = !!ok; })
-          .catch(() => { atlasFanoutActive = false; })
+        invoke('texshare_start_atlas', { core: fromCore })
+          .then((result: any) => {
+            atlasFanoutActive = !!result;
+            coreSliceSendersActive.set(!!result && result?.publisher === 'core');
+          })
+          .catch(() => { atlasFanoutActive = false; coreSliceSendersActive.set(false); })
           .finally(() => { atlasStartInFlight = false; });
       } else {
         invoke('texshare_stop_atlas')
           .catch(() => {})
-          .finally(() => { atlasFanoutActive = false; atlasStartInFlight = false; });
+          .finally(() => { atlasFanoutActive = false; coreSliceSendersActive.set(false); atlasStartInFlight = false; });
       }
     }
   }

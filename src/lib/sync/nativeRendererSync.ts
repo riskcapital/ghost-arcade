@@ -17,7 +17,8 @@ import { vjGroupSourceId, buildVJGroupedMixGraph, type VJGroupedMixOptions } fro
 import { cubeLutHandle } from '../color/cubeLutAssets';
 import { nativeVideoLaunchTime, nativeVideoAnchorRate, nativeVideoMetadataPatch } from '../media/nativeTransport';
 import { get } from 'svelte/store';
-import { screenOutputError, screenAlignmentAids, screenPatternFrames, openScreenOutputList, screenRegion, autoMapTargets, mainOutputRaster, MAIN_OUTPUT_ID, type OpenScreenOutput } from '../stores/screenOutputStatus';
+import { isAtlasSenderSlice, sliceOutputSize } from '../output/atlasLayout';
+import { coreSliceSendersActive, screenOutputError, screenAlignmentAids, screenPatternFrames, openScreenOutputList, screenRegion, autoMapTargets, mainOutputRaster, MAIN_OUTPUT_ID, type OpenScreenOutput } from '../stores/screenOutputStatus';
 import { createLayer } from '$lib/types';
 import {
   buildVJClipTransitionGraph,
@@ -9628,13 +9629,29 @@ export class NativeRendererSync {
   private pushSliceOutputs() {
     const out = get(settings)?.output;
     const open = new Set([...this.openSliceWindowIds, ...get(recordingScreenIds)]);
+    // Sender Screens the core publishes itself (Syphon / Spout): rendered at
+    // the size the slice-atlas path sent them at, their share of the master
+    // canvas, so receivers see the same resolution under the same name.
+    const senders = new Map<string, { width: number; height: number; name: string }>();
+    if (get(coreSliceSendersActive)) {
+      const masterW = out?.masterCanvasWidth ?? 1920;
+      const masterH = out?.masterCanvasHeight ?? 1080;
+      for (const s of (out?.slices ?? []) as any[]) {
+        if (!s?.id || !isAtlasSenderSlice(s) || open.has(s.id)) continue;
+        const name = String(s.spoutName ?? '').trim();
+        if (!name) continue;
+        const { w, h } = sliceOutputSize(s, masterW, masterH);
+        senders.set(String(s.id), { width: Math.max(16, w), height: Math.max(16, h), name });
+      }
+    }
     const aids = get(screenAlignmentAids);
     const patterns = get(screenPatternFrames);
     openScreenOutputList.set(this.openScreenOutputs());
     const screenNumber = new Map((out?.slices ?? []).map((s: any, index: number) => [s?.id, index + 1]));
     const slices = (out?.slices ?? [])
-      .filter((s: any) => s?.enabled !== false && open.has(s?.id))
+      .filter((s: any) => s?.enabled !== false && (open.has(s?.id) || senders.has(String(s?.id))))
       .map((s: any) => {
+        const sender = senders.get(String(s.id));
         // Row 4 w carries the Screen's number for the identify flash.
         const calibration = projectorCalibrationUniforms(s);
         const pattern = patterns[s.id];
@@ -9646,8 +9663,9 @@ export class NativeRendererSync {
         const scale = display?.scaleFactor && display.scaleFactor > 0 ? display.scaleFactor : 1;
         return {
         id: String(s.id),
-        width: Math.round((display?.width ?? out?.masterCanvasWidth ?? 1920) * scale),
-        height: Math.round((display?.height ?? out?.masterCanvasHeight ?? 1080) * scale),
+        width: sender?.width ?? Math.round((display?.width ?? out?.masterCanvasWidth ?? 1920) * scale),
+        height: sender?.height ?? Math.round((display?.height ?? out?.masterCanvasHeight ?? 1080) * scale),
+        ...(sender ? { senderName: sender.name } : {}),
         cropX: s.cropX ?? 0,
         cropY: nativeOutputCropY(s.cropY ?? 0, s.cropH ?? 1),
         cropW: s.cropW ?? 1,
@@ -9699,7 +9717,7 @@ export class NativeRendererSync {
     // A mesh grid larger than the compositor's 16x16 cap is dropped by the
     // core rather than scrambled, so say which screen lost its warp.
     const oversized = (out?.slices ?? []).filter((s: any) => {
-      if (!open.has(s?.id) || s?.warpMode !== 'mesh') return false;
+      if (!(open.has(s?.id) || senders.has(String(s?.id))) || s?.warpMode !== 'mesh') return false;
       const grid = s.meshGrid;
       return !!grid && (grid.rows > 16 || grid.cols > 16);
     });
@@ -9711,7 +9729,7 @@ export class NativeRendererSync {
     }
     // Meshes the core has not been given yet go first, in the same batch.
     const meshes = (out?.slices ?? [])
-      .map((s: any) => (s?.mirrorMesh && s.mirrorMeshEnabled !== false && open.has(s.id) ? s.mirrorMesh as MirrorMesh : null))
+      .map((s: any) => (s?.mirrorMesh && s.mirrorMeshEnabled !== false && (open.has(s.id) || senders.has(String(s.id))) ? s.mirrorMesh as MirrorMesh : null))
       .filter((mesh: MirrorMesh | null): mesh is MirrorMesh => !!mesh && !this.sentMirrorMeshes.has(mesh.id));
     for (const mesh of meshes) this.sentMirrorMeshes.add(mesh.id);
     void submitNativeRendererCommands([...meshes.map(mirrorMeshCommand), { type: 'set_slice_outputs', slices, domeRig }])
@@ -9903,6 +9921,7 @@ export class NativeRendererSync {
     this.outputStateUnsubs.push(domeView.subscribe(() => this.pushDomeView()));
     this.outputStateUnsubs.push(settings.subscribe(() => this.pushSliceOutputs()));
     this.outputStateUnsubs.push(recordingScreenIds.subscribe(() => this.pushSliceOutputs()));
+    this.outputStateUnsubs.push(coreSliceSendersActive.subscribe(() => this.pushSliceOutputs()));
     this.outputStateUnsubs.push(screenAlignmentAids.subscribe(() => this.pushSliceOutputs()));
     this.outputStateUnsubs.push(screenPatternFrames.subscribe(() => { this.pushSliceOutputs(); this.pushOutputStage(); }));
     this.outputStateUnsubs.push(mainOutputRaster.subscribe(() => { this.pushSliceOutputs(); this.pushOutputStage(); }));

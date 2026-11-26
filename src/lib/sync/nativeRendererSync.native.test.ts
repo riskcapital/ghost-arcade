@@ -3246,6 +3246,54 @@ describe('screen mask payload', () => {
   });
 });
 
+describe('sender screens published by the core', () => {
+  it('sends Syphon / Spout sender screens with their names only while the core publishes them', async () => {
+    const api = await import('../api/native-renderer');
+    const { settings, createDefaultSlice } = await import('../stores/settings');
+    const { coreSliceSendersActive } = await import('../stores/screenOutputStatus');
+    const { get } = await import('svelte/store');
+    const submit = vi.spyOn(api, 'submitNativeRendererCommands').mockResolvedValue({ applied: 1, dropped: 0, errors: [] } as any);
+    const original = get(settings).output;
+    const sync = new NativeRendererSyncCtor() as any;
+    const command = () => (submit.mock.calls.at(-1)?.[0] as any[] | undefined)?.find(c => c.type === 'set_slice_outputs');
+    try {
+      settings.update(s => ({ ...s, output: { ...s.output, masterCanvasWidth: 1920, masterCanvasHeight: 1080, slices: [
+        { ...createDefaultSlice('left', 'Left', 'Left', 0, 0.5), outputType: 'syphon' },
+        { ...createDefaultSlice('turned', 'Turned', 'Turned', 0.5, 0.5), outputType: 'spout', rotation: 90 },
+        { ...createDefaultSlice('ndi', 'NDI', 'NDI'), outputType: 'ndi' },
+        { ...createDefaultSlice('off', 'Off', 'Off'), enabled: false },
+        { ...createDefaultSlice('wall', 'Wall', 'Wall'), targetType: 'display' },
+      ] } }));
+      coreSliceSendersActive.set(false);
+      sync.lastSliceOutputsSig = null;
+      sync.pushSliceOutputs();
+      expect(command()?.slices ?? []).toEqual([]);
+
+      coreSliceSendersActive.set(true);
+      sync.pushSliceOutputs();
+      const slices = command()!.slices;
+      expect(slices.map((s: any) => s.id)).toEqual(['left', 'turned']);
+      // The size and name the slice-atlas path published them at.
+      expect(slices[0]).toMatchObject({ senderName: 'ghostArcade-Left', width: 960, height: 1080, cropX: 0, cropW: 0.5 });
+      expect(slices[1]).toMatchObject({ senderName: 'ghostArcade-Turned', width: 1080, height: 960, rotation: 90 });
+
+      // An open Screen window keeps its own display size and no sender.
+      sync.openSliceWindowIds = ['wall'];
+      sync.pushSliceOutputs();
+      const wall = command()!.slices.find((s: any) => s.id === 'wall');
+      expect(wall.senderName).toBeUndefined();
+
+      coreSliceSendersActive.set(false);
+      sync.pushSliceOutputs();
+      expect(command()!.slices.map((s: any) => s.id)).toEqual(['wall']);
+    } finally {
+      submit.mockRestore();
+      coreSliceSendersActive.set(false);
+      settings.update(s => ({ ...s, output: original }));
+    }
+  });
+});
+
 describe('screen output rejection feedback', () => {
   it('shows rejected changes and clears the message after an accepted update', async () => {
     const api = await import('../api/native-renderer');

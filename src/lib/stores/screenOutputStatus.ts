@@ -3,6 +3,11 @@ import { writable } from 'svelte/store';
 /** Last rejected screen configuration; the native core keeps the previous outputs. */
 export const screenOutputError = writable<string | null>(null);
 
+/** The render core publishes the Syphon / Spout senders of sender Screens
+ *  itself (main reports it when the Screen senders start): the native sync
+ *  then sends those Screens to the core with their sender names. */
+export const coreSliceSendersActive = writable(false);
+
 /** Alignment aids the render core draws on a Screen's own output instead of
  *  its picture: 'grid' is the numbered composition grid, 'identify' the
  *  Screen's number. Session-only on purpose, so a saved project or an undo
