@@ -3,7 +3,8 @@
 // GA_CORE_COMPOSITOR_BENCH=1) timed.
 //
 // Scenes: plain image quads, Bezier mesh warps, polygon masks, Edge
-// Effects, every blend mode, the dome output and minified pictures. The
+// Effects, hierarchy masks, every blend mode, the dome output and minified
+// pictures. The
 // comparison runs by default and fails when a setting that must not change
 // the picture does. The benchmark prints, per scene and setting, the GPU
 // time of the composite pass (the frame timer) and the layer data the
@@ -167,29 +168,30 @@ const BLEND_MODES = ['normal', 'add', 'multiply', 'screen', 'overlay', 'subtract
   'average', 'hardlight', 'softlight', 'exclusion', 'color-dodge', 'color-burn', 'hue', 'saturation', 'color',
   'luminosity', 'divide', 'negation', 'phoenix', 'linear-light', 'hard-mix', 'vivid-light', 'pin-light'];
 
-function edgeLayers(width: number, height: number, count: number): Command[] {
-  const glow = {
-    id: 'bench-glow', enabled: true, opacity: 1, blendMode: 'normal',
-    stroke: { ...edgeTypeDefaults('stroke', 'glow'), width: 3, glowSize: 14 },
-    fill: { type: 'none' }, animation: { type: 'none' },
-  } as unknown as EdgeEffect;
-  const specs = Array.from({ length: count }, (_, i) => {
-    const side = Math.ceil(Math.sqrt(count));
-    const w = 1 / side;
-    const x = (i % side) * w + w * 0.15;
-    const y = Math.floor(i / side) * w + w * 0.15;
-    return { id: `edge-${i}`, corners: corners(x, y, w * 0.7, w * 0.7) };
-  });
+type EdgeSpec = {
+  id: string; corners: WarpCorners; stroke: string; fill?: string; effectBlend?: string;
+  /** The layer's own blend mode and opacity; a colour layer when rgba is set. */
+  extra?: Command; rgba?: [number, number, number, number];
+};
+
+function edgeLayersFrom(width: number, height: number, specs: EdgeSpec[]): Command[] {
+  const effect = (spec: EdgeSpec) => ({
+    id: `${spec.id}-fx`, enabled: true, opacity: 1, blendMode: spec.effectBlend ?? 'normal',
+    stroke: { ...edgeTypeDefaults('stroke', spec.stroke), width: 3, ...(spec.stroke === 'glow' ? { glowSize: 14 } : {}) },
+    fill: spec.fill ? edgeTypeDefaults('fill', spec.fill) : { type: 'none' }, animation: { type: 'none' },
+  }) as unknown as EdgeEffect;
   const layers = specs.map(spec => ({
     id: spec.id, layerShape: null, corners: spec.corners, warpMode: 'corners', meshGrid: null,
-    edgeEffects: { enabled: true, effects: [glow] },
+    edgeEffects: { enabled: true, effects: [effect(spec)] },
   }) as unknown as Layer);
   const context = buildEdgeEffectContext(layers, width, height);
   const commands: Command[] = [];
   specs.forEach((spec, i) => {
     const payload = nativeEdgeEffectPayload(layers[i], width, height, context);
     commands.push(
-      ...imageLayer(spec.id, i, fit(width, height, 0.2), i, spec.corners),
+      ...(spec.rgba
+        ? colorLayer(spec.id, i, spec.rgba, spec.corners, spec.extra)
+        : imageLayer(spec.id, i, fit(width, height, 0.2), i, spec.corners, spec.extra)),
       {
         type: 'set_layer_edge_effects', layer_id: spec.id,
         edge_effects: payload?.effects ?? [], edge_outline: payload?.outline ?? [], edge_corners: payload?.corners ?? [],
@@ -199,6 +201,35 @@ function edgeLayers(width: number, height: number, count: number): Command[] {
     );
   });
   return commands;
+}
+
+function edgeLayers(width: number, height: number, count: number): Command[] {
+  return edgeLayersFrom(width, height, Array.from({ length: count }, (_, i) => {
+    const side = Math.ceil(Math.sqrt(count));
+    const w = 1 / side;
+    const x = (i % side) * w + w * 0.15;
+    const y = Math.floor(i / side) * w + w * 0.15;
+    return { id: `edge-${i}`, corners: corners(x, y, w * 0.7, w * 0.7), stroke: 'glow' };
+  }));
+}
+
+/** A hierarchy mask: `points` ([x, y] in the layer, y down) as one shape. */
+function maskLayer(id: string, z: number, layerCorners: WarpCorners, points: Array<[number, number]>, inverted = false,
+  feather = 0, extra: Command = {}): Command[] {
+  return [
+    { type: 'upsert_layer', layer_id: id, opacity: 1, z_index: z, blend_mode: 'hierarchy-mask', corners: layerCorners,
+      mask_info: [1, inverted ? 1 : 0, feather, points.length],
+      mask_points: points.map(([x, y], i) => [x, y, (i + 1) % points.length, 0]), ...extra },
+    { type: 'set_layer_visibility', layer_id: id, visible: true },
+  ];
+}
+
+function ring(count: number, radius: number, wobble: number): Array<[number, number]> {
+  return Array.from({ length: count }, (_, i) => {
+    const a = (i / count) * Math.PI * 2;
+    const r = radius + wobble * Math.sin(a * 3);
+    return [0.5 + r * Math.cos(a), 0.5 + r * Math.sin(a)] as [number, number];
+  });
 }
 
 type Scene = {
@@ -314,6 +345,78 @@ const SCENES: Scene[] = [
       : imageLayer(`color-${i}`, i, fit(width, height, 0.1), i, corners(r.x, r.y, r.w, r.h), { opacity: 0.6 })),
   },
   {
+    // Edge Effects of several kinds on overlapping layers that blend in
+    // hardware and by reading the stack back, on pictures and colour layers.
+    name: 'edge-effects-mixed', mover: 'edgemix-0',
+    build: (width, height) => edgeLayersFrom(width, height, scatter(10, 13).map((r, i) => ({
+      id: `edgemix-${i}`, corners: corners(r.x, r.y, r.w, r.h),
+      stroke: ['neon', 'electric', 'dashed', 'offset', 'fire', 'solid'][i % 6],
+      fill: i % 3 === 0 ? 'solid' : i % 3 === 1 ? 'gradient' : undefined,
+      effectBlend: ['normal', 'screen', 'add', 'difference'][i % 4],
+      extra: { blend_mode: ['normal', 'screen', 'overlay', 'normal', 'difference'][i % 5], opacity: 0.6 + 0.4 * r.a },
+      rgba: i % 4 === 3 ? [r.a, 0.4, 1 - r.a, 1] as [number, number, number, number] : undefined,
+    }))),
+  },
+  {
+    // Edge Effects whose glow reaches past the canvas edge and over its
+    // neighbours, with a mesh-warped and a perspective layer.
+    name: 'edge-effects-warped', mover: 'edgewarp-0',
+    build: (width, height) => [
+      ...edgeLayersFrom(width, height, [
+        { id: 'edgewarp-0', corners: corners(-0.05, 0.1, 0.5, 0.6), stroke: 'glow' },
+        { id: 'edgewarp-1', corners: corners(0.3, 0.3, 0.5, 0.5), stroke: 'neon', extra: { corner_perspective: true } },
+        { id: 'edgewarp-2', corners: corners(0.55, 0.05, 0.5, 0.5), stroke: 'glow', fill: 'solid',
+          extra: { mesh_grid: bezierMesh(5, 5, 0.3, 2), blend_mode: 'screen' } },
+      ]),
+    ],
+  },
+  {
+    // Hierarchy masks over the layers below them, one inside another: an
+    // outer wobbly ring, an inverted feathered square inside it, a
+    // perspective-pinned mask, with layers between them.
+    name: 'group-masks', mover: 'gm-0',
+    build: (width, height) => [
+      ...colorLayer('gm-bg', 0, [0.2, 0.3, 0.8, 1], corners(0, 0, 1, 1)),
+      ...scatter(8, 21).flatMap((r, i) => imageLayer(`gm-${i}`, 1 + i, fit(width, height, 0.1), i, corners(r.x, r.y, r.w, r.h),
+        { opacity: 0.7, blend_mode: i % 3 === 2 ? 'overlay' : 'normal' })),
+      ...maskLayer('gm-mask-outer', 9, corners(0.05, 0.05, 0.9, 0.9), ring(40, 0.42, 0.05), false, 0.03),
+      ...scatter(6, 23).flatMap((r, i) => imageLayer(`gm-in-${i}`, 10 + i, fit(width, height, 0.1), 10 + i,
+        corners(r.x, r.y, r.w, r.h), { opacity: 0.8, blend_mode: i % 2 ? 'screen' : 'normal' })),
+      ...maskLayer('gm-mask-inner', 16, corners(0.3, 0.25, 0.4, 0.5), [[0.1, 0.1], [0.9, 0.1], [0.9, 0.9], [0.1, 0.9]], true, 0.05),
+      ...colorLayer('gm-top', 17, [1, 0.6, 0.1, 0.5], corners(0.4, 0.4, 0.3, 0.3)),
+      ...maskLayer('gm-mask-persp', 18, {
+        topLeft: { x: 0.1, y: 0.95 }, topRight: { x: 0.8, y: 0.9 },
+        bottomRight: { x: 0.95, y: 0.1 }, bottomLeft: { x: 0.05, y: 0.05 },
+      }, ring(24, 0.45, 0.0), false, 0, { corner_perspective: true }),
+      ...imageLayer('gm-over', 19, fit(width, height, 0.3), 3, corners(0.6, 0.6, 0.35, 0.35), { blend_mode: 'difference' }),
+    ],
+  },
+  {
+    // Many read-back blends side by side: one pass reads them all.
+    name: 'readback-tiles', mover: 'rbt-0',
+    build: (width, height) => grid(48, (i, x, y, w, h) => imageLayer(`rbt-${i}`, i, fit(width, height, 1 / 8), i,
+      corners(x + w * 0.05, y + w * 0.05, w * 0.9, h * 0.9), { blend_mode: BLEND_MODES[1 + (i % 25)], opacity: 0.7 })),
+  },
+  {
+    // Read-back blends over pictures below them, a few at a time
+    // overlapping: several passes.
+    name: 'readback-layers', mover: 'rbl-0',
+    build: (width, height) => [
+      ...grid(16, (i, x, y, w, h) => imageLayer(`rbl-${i}`, i, fit(width, height, 1 / 4), i, corners(x, y, w, h))),
+      ...scatter(12, 17).flatMap((r, i) => imageLayer(`rbl-top-${i}`, 16 + i, fit(width, height, 0.1), 16 + i,
+        corners(r.x, r.y, r.w, r.h), { blend_mode: ['overlay', 'difference', 'softlight', 'hue', 'add', 'color-dodge'][i % 6],
+          opacity: 0.5 + 0.5 * r.a })),
+    ],
+  },
+  {
+    // The worst case for passes: colour layers over the whole canvas, each
+    // reading the stack the one before it changed.
+    name: 'readback-colors', mover: 'rbc-0',
+    build: () => Array.from({ length: 16 }, (_, i) => colorLayer(`rbc-${i}`, i,
+      [(i * 37 % 16) / 16, (i * 11 % 16) / 16, 0.5, 1], corners(0, 0, 1, 1),
+      { blend_mode: i === 0 ? 'normal' : ['overlay', 'difference', 'softlight', 'exclusion'][i % 4], opacity: 0.7 })).flat(),
+  },
+  {
     name: 'minified', minified: true, mover: 'mini-0',
     build: () => grid(16, (i, x, y, w, h) => imageLayer(`mini-${i}`, i, 1024, i, corners(x, y, w, h))),
   },
@@ -339,7 +442,7 @@ type Run = {
   pixels: Buffer; width: number; height: number; bgra: boolean; gpuMs: number | null; gpuP10: number | null;
   cpuMs: number | null; passes: string; layerBytesPerFrame: number | null;
   /** GA_CORE_COMPOSITOR=raster: frames it drew and why it last did not. */
-  raster: { frames: number; fallback_frames: number; last_fallback: string } | null;
+  raster: { frames: number; fallback_frames: number; last_fallback: string; last_passes?: number } | null;
 };
 
 async function renderScene(env: Env, scene: Scene, width: number, height: number, timed: boolean): Promise<Run> {
@@ -475,7 +578,9 @@ function rasterNote(run: Run) {
   if (!run.raster) return '';
   return run.raster.fallback_frames > 0 && run.raster.frames === 0
     ? `, legacy (${run.raster.last_fallback})`
-    : `, raster ${run.raster.frames}/${run.raster.frames + run.raster.fallback_frames} frames`;
+    : `, raster ${run.raster.frames}/${run.raster.frames + run.raster.fallback_frames} frames`
+      + `${run.raster.last_passes ? ` (${run.raster.last_passes} pass${run.raster.last_passes > 1 ? 'es' : ''})` : ''}`
+      + `${run.raster.fallback_frames > 0 ? `, last fallback: ${run.raster.last_fallback}` : ''}`;
 }
 
 function compareEnvs(): Record<string, Env> {
@@ -512,20 +617,24 @@ suite('Compositor scene set', () => {
   it('draws every scene the same with the raster compositor as with the legacy one', async () => {
     const width = 640;
     const height = 360;
-    for (const scene of SCENES) {
-      const legacy = await renderScene({}, scene, width, height, false);
-      const raster = await renderScene({ GA_CORE_COMPOSITOR: 'raster' }, scene, width, height, false);
-      dump(`${scene.name}-legacy`, legacy, legacy.bgra);
-      dump(`${scene.name}-raster`, raster, raster.bgra);
+    // Minified pictures are compared with source mips on too, where both
+    // read the mips.
+    const runs = SCENES.flatMap(scene => [{ scene, env: {} as Env, tag: '' },
+      ...(scene.minified ? [{ scene, env: { GA_CORE_SOURCE_MIPS: '1' } as Env, tag: '-mips' }] : [])]);
+    for (const { scene, env, tag } of runs) {
+      const legacy = await renderScene(env, scene, width, height, false);
+      const raster = await renderScene({ ...env, GA_CORE_COMPOSITOR: 'raster' }, scene, width, height, false);
+      dump(`${scene.name}${tag}-legacy`, legacy, legacy.bgra);
+      dump(`${scene.name}${tag}-raster`, raster, raster.bgra);
       const diff = difference(legacy, raster);
       if (process.env.GA_CORE_COMPOSITOR_BENCH_TRACE) {
-        console.log(`scene ${scene.name}: max diff ${diff.max}, differing ${(diff.differing * 100).toFixed(4)}%${rasterNote(raster)}`);
+        console.log(`scene ${scene.name}${tag}: max diff ${diff.max}, differing ${(diff.differing * 100).toFixed(4)}%${rasterNote(raster)}`);
       }
-      expect(diff.max, `${scene.name}: max channel difference`).toBeLessThanOrEqual(1);
-      expect(diff.differing, `${scene.name}: share of channels off by one`).toBeLessThan(0.001);
+      expect(diff.max, `${scene.name}${tag}: max channel difference`).toBeLessThanOrEqual(1);
+      expect(diff.differing, `${scene.name}${tag}: share of channels off by one`).toBeLessThan(0.001);
       expect(differenceOver(legacy, raster, 1)).toBe(0);
     }
-  }, 300000);
+  }, 420000);
 
   (bench ? it : it.skip)('benchmark: composite GPU time and layer upload per frame', async () => {
     const width = Number(process.env.GA_CORE_COMPOSITOR_BENCH_WIDTH ?? 1920);
