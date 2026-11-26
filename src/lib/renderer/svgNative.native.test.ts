@@ -17,6 +17,9 @@ function svgContent(svgSource: string): SVGContent {
   return {
     ...createDefaultSVGContent(),
     svgSource,
+    // The vector path: new layers default to Original SVG, which draws the
+    // rasterised source frame these tests don't upload.
+    renderMode: 'flat',
     fillMode: 'solid',
     colorMode: 'white',
     colorCycleEnabled: false,
