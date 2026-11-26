@@ -9,7 +9,7 @@ function packFirst(stroke: any) {
   el.stroke = stroke;
   const content = { ...createDefaultLinesContent(), elements: [el] };
   const graph = buildLinesNativeComputeGraph({ content, width: 1000, height: 500, time: 0 } as any);
-  const data = graph.config.buffers[0].initial_f32 as number[];
+  const data = Array.from(graph.config.buffers[0].initial_f32 as ArrayLike<number>);
   const e = HEADER_VEC4S * 4;
   return { p: data.slice(e + 8, e + 16), totalLen: data[e + 26] };
 }

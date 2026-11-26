@@ -654,7 +654,7 @@ export function buildModel3DNativeComputeGraph(options: Model3DNativeGraphOption
     state: null as null,
     config: {
       buffers: [
-        { id: uniformId, kind: 'uniform', byte_length: MODEL3D_UNIFORM_BYTES, initial_f32: Array.from(data) },
+        { id: uniformId, kind: 'uniform', byte_length: MODEL3D_UNIFORM_BYTES, initial_f32: data },
         meshBuffer,
         indexBuffer,
       ],

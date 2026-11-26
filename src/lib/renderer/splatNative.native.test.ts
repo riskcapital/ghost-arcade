@@ -53,7 +53,7 @@ function buildGraph(overrides: Record<string, unknown> = {}, tier?: 'low' | 'bal
 
 function uniformOf(graph: ReturnType<typeof buildGraph>): number[] {
   const buffers = graph.config.buffers as Array<Record<string, unknown>>;
-  return buffers[0].initial_f32 as number[];
+  return Array.from(buffers[0].initial_f32 as Float32Array);
 }
 
 /** vec4 `slot` of the packed uniform. */

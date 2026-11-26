@@ -6,6 +6,8 @@
  */
 import { spawn } from 'node:child_process';
 import { describe, expect, it } from 'vitest';
+// @ts-expect-error The Electron side is plain ESM JavaScript.
+import { encodeCoreRequest } from '../../../electron/core-ipc-frames.js';
 import { gpuTestPlatform, rpcDeadlineScale } from './nativeHardwareTestPlatform';
 import { createDefaultModel3DContent, type Model3DContent } from '../types';
 import {
@@ -81,7 +83,7 @@ function createRpc(): Rpc {
       reject(new Error(`native core timed out on ${method}: ${stderr.trim()}`));
     }, timeoutMs * rpcDeadlineScale);
     pending.set(id, { resolve, reject, timer });
-    child.stdin!.write(`${JSON.stringify({ id, method, params })}\n`);
+    child.stdin!.write(encodeCoreRequest({ id, method, params }).payload);
   });
   return {
     send,

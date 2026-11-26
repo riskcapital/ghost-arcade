@@ -103,7 +103,7 @@ describe('SVG 3D auto-spin', () => {
 
   it('draws the angle it is given', () => {
     const graph = build(art(4000), { spin: { x: 0, y: 0.75, z: 0 } }, { renderMode: 'extrude', rotateY: 0, rotateSpeedY: 9 });
-    const header = graph.config.buffers[0].initial_f32 as number[];
+    const header = Array.from(graph.config.buffers[0].initial_f32 as ArrayLike<number>);
     expect(header[81]).toBeCloseTo(0.75); // h20.y = rotation about Y
   });
 });

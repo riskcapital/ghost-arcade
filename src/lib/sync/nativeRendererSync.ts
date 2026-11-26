@@ -3933,11 +3933,15 @@ function nativeGraphBufferBase64(buffer: Record<string, any>): string | null {
   const byteLength = Math.round(Number(buffer?.byte_length));
   if (!(byteLength > 0)) return null;
   if (typeof buffer.initial_b64 === 'string') return buffer.initial_b64;
-  if (!Array.isArray(buffer.initial_f32)) return null;
+  // A graph builder may hand over its Float32Array as is.
+  const source: ArrayLike<number> | null = Array.isArray(buffer.initial_f32) || buffer.initial_f32 instanceof Float32Array
+    ? buffer.initial_f32
+    : null;
+  if (!source) return null;
   const floats = new Float32Array(Math.ceil(byteLength / 4));
-  const count = Math.min(floats.length, buffer.initial_f32.length);
+  const count = Math.min(floats.length, source.length);
   for (let index = 0; index < count; index++) {
-    const value = Number(buffer.initial_f32[index]);
+    const value = Number(source[index]);
     floats[index] = Number.isFinite(value) ? Math.max(-1e20, Math.min(1e20, value)) : 0;
   }
   const bytes = new Uint8Array(floats.buffer, 0, byteLength);

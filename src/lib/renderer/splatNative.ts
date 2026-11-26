@@ -741,7 +741,7 @@ export function buildSplatNativeComputeGraph(options: SplatNativeGraphOptions) {
   const shadowDepthId = `splat:${safe}:s${shadowDim}:depth`;
   const shadowStubId = `splat:${safe}:shadow-stub`;
   const buffers: Array<Record<string, unknown>> = [
-    { id: uniformId, kind: 'uniform', byte_length: SPLAT_UNIFORM_BYTES, initial_f32: Array.from(data) },
+    { id: uniformId, kind: 'uniform', byte_length: SPLAT_UNIFORM_BYTES, initial_f32: data },
     pointsBuffer,
   ];
   const passes: Array<Record<string, unknown>> = [];
