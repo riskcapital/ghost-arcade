@@ -1746,6 +1746,81 @@ fn fit_byte_scratch(scratch: &mut Vec<u8>, bytes: usize) {
     }
 }
 
+/// Composite view keys of the two deck monitors and the record target.
+const DECK_MONITOR_VIEWS: [&str; 2] = ["deck:a", "deck:b"];
+#[cfg_attr(not(any(target_os = "macos", target_os = "windows")), allow(dead_code))]
+const RECORD_TARGET_VIEW: &str = "record";
+
+/// Frames a composite view (see `CompositeView`) is kept after it was last drawn.
+const COMPOSITE_VIEW_KEEP_FRAMES: u64 = 120;
+
+/// Compositor inputs of one view drawn after the program in the same frame:
+/// a deck monitor, the record target or a full-detail Screen. They used to
+/// share the program's uniform and layer buffers, so every view overwrote
+/// the program's layers and the unchanged-upload check never matched.
+struct CompositeView {
+    uniform_buffer: wgpu::Buffer,
+    /// The view's own layers, or None when it draws the program's.
+    layers: Option<CompositeViewLayers>,
+    /// Scene bind group 0 over this view's buffers.
+    bind_group: wgpu::BindGroup,
+    paint_mask_generation: u64,
+    used_epoch: u64,
+}
+
+struct CompositeViewLayers {
+    layer_buffer: wgpu::Buffer,
+    /// LayerGpu slots `layer_buffer` holds.
+    slots: usize,
+    tile_buffer: wgpu::Buffer,
+    layer_last: Vec<u8>,
+    mesh_cell_bounds_last: Vec<u32>,
+    tile_last: Vec<u32>,
+}
+
+/// Where one composite's layers go, and what was sent there last.
+struct CompositeLayerState<'a> {
+    layer_buffer: &'a wgpu::Buffer,
+    tile_buffer: &'a wgpu::Buffer,
+    layer_last: &'a mut Vec<u8>,
+    mesh_cell_bounds_last: &'a mut Vec<u32>,
+    tile_last: &'a mut Vec<u32>,
+}
+
+/// Send `staged` (the first `filled` of them real layers) to `state`'s
+/// buffers, skipping whatever is unchanged since the last upload there.
+fn upload_composite_layers(
+    queue: &wgpu::Queue,
+    staged: &[LayerGpu],
+    filled: usize,
+    state: CompositeLayerState<'_>,
+    mesh_cell_bounds_scratch: &mut Vec<u32>,
+    tile_scratch: &mut Vec<u32>,
+) {
+    fit_byte_scratch(state.layer_last, std::mem::size_of_val(staged));
+    let layer_bytes: &[u8] = bytemuck::cast_slice(staged);
+    if state.layer_last.as_slice() != layer_bytes {
+        build_mesh_cell_bounds(&staged[..filled], mesh_cell_bounds_scratch);
+        if *state.mesh_cell_bounds_last != *mesh_cell_bounds_scratch {
+            churn_probe::write_buffer(queue,
+                state.tile_buffer,
+                (MESH_CELL_BOUNDS_BASE * std::mem::size_of::<u32>()) as u64,
+                bytemuck::cast_slice(mesh_cell_bounds_scratch),
+            );
+            std::mem::swap(state.mesh_cell_bounds_last, mesh_cell_bounds_scratch);
+        }
+        churn_probe::write_buffer(queue, state.layer_buffer, 0, layer_bytes);
+        state.layer_last.clear();
+        state.layer_last.extend_from_slice(layer_bytes);
+    }
+    let culls = staged[..filled].iter().map(|layer| layer.cull).collect::<Vec<_>>();
+    build_layer_tiles(&culls, tile_scratch);
+    if *state.tile_last != *tile_scratch {
+        churn_probe::write_buffer(queue, state.tile_buffer, 0, bytemuck::cast_slice(tile_scratch));
+        std::mem::swap(state.tile_last, tile_scratch);
+    }
+}
+
 fn build_layer_tiles(culls: &[[f32; 4]], out: &mut Vec<u32>) {
     out.clear();
     out.resize(LAYER_TILE_HEADER + LAYER_TILE_CELLS + 1, 0);
@@ -5061,6 +5136,9 @@ struct RenderState {
     /// Mesh cell bounds (MESH_CELL_BOUNDS_BASE), rebuilt when the layers change.
     mesh_cell_bounds_scratch: Vec<u32>,
     mesh_cell_bounds_last: Vec<u32>,
+    /// Deck monitors, the record target and full-detail Screens, each with
+    /// its own compositor inputs (see `CompositeView`), keyed by view.
+    composite_views: HashMap<String, CompositeView>,
     /// Picture slots (source_frames.rs): one shared array, or a texture per slot.
     slots: SourceFrameStore,
     /// Compositor binding-array length (PerSource), the per-source slot ceiling.
@@ -5221,6 +5299,9 @@ struct RenderState {
     /// paint-mask texture grows.
     scene_bind_group_layout: wgpu::BindGroupLayout,
     paint_mask_texture: wgpu::Texture,
+    paint_mask_view: wgpu::TextureView,
+    /// Bumped when the paint-mask texture is remade, so views rebind it.
+    paint_mask_generation: u64,
     paint_mask_size: u32,
     paint_mask_layers: u32,
     start_time: Instant,
@@ -23194,6 +23275,7 @@ impl RenderState {
             layer_tile_last: Vec::new(),
             mesh_cell_bounds_scratch: Vec::with_capacity(MAX_SCENE_LAYERS),
             mesh_cell_bounds_last: Vec::new(),
+            composite_views: HashMap::new(),
             source_frame_bind_generation: source_frame_store.generation(),
             slots: source_frame_store,
             source_frame_bindings,
@@ -23294,6 +23376,8 @@ impl RenderState {
             bind_group,
             scene_bind_group_layout: bind_group_layout,
             paint_mask_texture,
+            paint_mask_view,
+            paint_mask_generation: 0,
             paint_mask_size: 1,
             paint_mask_layers: 1,
             start_time: Instant::now(),
@@ -24007,13 +24091,15 @@ impl RenderState {
             return false;
         }
         for (index, layers) in [bank_a, bank_b].into_iter().enumerate() {
-            self.write_frame_inputs(
+            let key = DECK_MONITOR_VIEWS[index];
+            self.write_view_inputs(
+                key,
+                true,
                 command_phase,
                 layers.len() as u32,
                 time_seconds,
                 frame_count,
                 layers,
-                None,
                 audio0,
                 audio1,
                 audio2,
@@ -24033,11 +24119,11 @@ impl RenderState {
                     return false;
                 };
                 let target = &targets[index];
-                self.draw_fullscreen_to_view(
+                self.draw_composite_view(
                     &mut encoder,
+                    key,
                     &target.render_view,
                     "Ghost Deck Monitor Pass",
-                    None,
                 );
                 #[cfg(any(target_os = "macos", target_os = "windows"))]
                 target.export.blitter.copy(
@@ -24136,13 +24222,14 @@ impl RenderState {
         if !self.ensure_record_target(width, height, alpha) {
             return false;
         }
-        self.write_frame_inputs(
+        self.write_view_inputs(
+            RECORD_TARGET_VIEW,
+            true,
             command_phase,
             layers.len() as u32,
             time_seconds,
             frame_count,
             layers,
-            None,
             audio0,
             audio1,
             audio2,
@@ -24161,7 +24248,7 @@ impl RenderState {
             let Some(target) = self.record_target.as_ref() else {
                 return false;
             };
-            self.draw_fullscreen_to_view(&mut encoder, &target.render_view, "Ghost Record Target Pass", None);
+            self.draw_composite_view(&mut encoder, RECORD_TARGET_VIEW, &target.render_view, "Ghost Record Target Pass");
             target.export.blitter.copy(&self.device, &mut encoder, &target.render_view, &target.export.view);
         }
         churn_probe::submit(&self.queue, Some(encoder.finish()));
@@ -24266,9 +24353,12 @@ impl RenderState {
             if let Some(mesh) = spec.mirror_mesh.as_ref() {
                 self.prepare_mirror_mesh(mesh);
             }
+            // A full-detail Screen composites the program's layers (already
+            // uploaded this frame) with its own output stage.
+            let view_key = format!("slice:{}", spec.id);
             if direct {
-                self.write_frame_inputs(command_phase, layers.len() as u32, time_seconds, frame_count,
-                    layers, None, audio0, audio1, audio2, output_gate, post_effects, spec.stage);
+                self.write_view_inputs(&view_key, false, command_phase, layers.len() as u32, time_seconds, frame_count,
+                    layers, audio0, audio1, audio2, output_gate, post_effects, spec.stage);
             }
             #[cfg(not(any(target_os = "macos", target_os = "windows")))]
             let mut presented: Option<wgpu::SurfaceTexture> = None;
@@ -24286,7 +24376,7 @@ impl RenderState {
                         output_gate, OutputStage { dlayer: self.dome_layer_pass, ..spec.stage },
                         time_seconds.unwrap_or(0.0), &mesh.id);
                 } else if direct {
-                    self.draw_fullscreen_to_view(&mut encoder, &target.render_view, "Full-detail slice", None);
+                    self.draw_composite_view(&mut encoder, &view_key, &target.render_view, "Full-detail slice");
                 } else {
                 self.output_presenter.draw(&self.queue, &mut encoder, &target.render_view,
                     self.creative_frame_index, spec.width, spec.height,
@@ -25017,6 +25107,7 @@ impl RenderState {
 
     fn finish_frame(&mut self, frame_started: Instant) {
         self.frame_uniform_pool.truncate(self.frame_uniform_cursor);
+        self.prune_composite_views();
         // Fence after program, confidence monitors and slices, not just program.
         let submission = churn_probe::submit(&self.queue, std::iter::empty());
         self.gpu_frames_submitted = self.gpu_frames_submitted.saturating_add(1);
@@ -28258,21 +28349,22 @@ impl RenderState {
         }
     }
 
-    fn write_frame_inputs(
+    /// The compositor uniforms for one view of this frame. Also hands the
+    /// output presenter the clock and Flux every output plays.
+    #[allow(clippy::too_many_arguments)]
+    fn frame_uniforms(
         &mut self,
         command_phase: f32,
         layers_seen: u32,
         time_seconds: Option<f32>,
         frame_count: u64,
-        scene_layers: &[LayerGpu],
-        source_previews: Option<&[PreviewPixel]>,
         audio0: [f32; 4],
         audio1: [f32; 4],
         audio2: [f32; 4],
         output_gate: f32,
         post_effects: &[[f32; 4]],
         stage: OutputStage,
-    ) {
+    ) -> Uniforms {
         // The beat clock runs on the unwrapped clock; shaders get it wrapped
         // (see SHADER_CLOCK_WRAP_SECONDS). A manual clock arrives wrapped.
         let clock_seconds = time_seconds.map(f64::from).unwrap_or_else(|| self.start_time.elapsed().as_secs_f64());
@@ -28282,7 +28374,7 @@ impl RenderState {
         self.output_presenter.live_time = time;
         self.output_presenter.flux = self.output_flux;
         self.output_presenter.flux_regions = self.output_flux_regions;
-        let uniforms = Uniforms {
+        Uniforms {
             resolution: [self.config.width as f32, self.config.height as f32],
             time,
             clock,
@@ -28335,50 +28427,44 @@ impl RenderState {
                 }
                 slots
             },
-        };
-        churn_probe::write_buffer(&self.queue, &self.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
+        }
+    }
 
-        // Only the slots the compositor will actually read need to reach the
-        // GPU: `heartbeat.wgsl` walks `for i in 0..64 { if f32(i) >= layer_count
-        // { break } ... }`, so anything at or beyond `layer_count` is dead.
-        // Write `layers_seen` slots (and at least as many as the caller handed
-        // us), zero-filling any tail inside that prefix exactly as the old
-        // full-array upload did.
-        let filled = scene_layers.len().min(MAX_SCENE_LAYERS);
-        let upload_len = (layers_seen as usize).max(filled).min(MAX_SCENE_LAYERS);
-        fit_layer_upload_scratch(&mut self.layer_upload_scratch, upload_len);
-        fit_byte_scratch(&mut self.layer_upload_last, upload_len * std::mem::size_of::<LayerGpu>());
-        for (slot, layer) in self.layer_upload_scratch[..filled]
-            .iter_mut()
-            .zip(scene_layers.iter())
-        {
-            *slot = *layer;
-            slot.cull = layer_cull_bounds(layer);
-        }
-        for slot in &mut self.layer_upload_scratch[filled..upload_len] {
-            *slot = LayerGpu::zeroed();
-        }
-        let layer_bytes: &[u8] = bytemuck::cast_slice(&self.layer_upload_scratch[..upload_len]);
-        if self.layer_upload_last != layer_bytes {
-            build_mesh_cell_bounds(&self.layer_upload_scratch[..filled], &mut self.mesh_cell_bounds_scratch);
-            if self.mesh_cell_bounds_last != self.mesh_cell_bounds_scratch {
-                churn_probe::write_buffer(&self.queue, 
-                    &self.layer_tile_buffer,
-                    (MESH_CELL_BOUNDS_BASE * std::mem::size_of::<u32>()) as u64,
-                    bytemuck::cast_slice(&self.mesh_cell_bounds_scratch),
-                );
-                std::mem::swap(&mut self.mesh_cell_bounds_last, &mut self.mesh_cell_bounds_scratch);
-            }
-            churn_probe::write_buffer(&self.queue, &self.layer_buffer, 0, layer_bytes);
-            self.layer_upload_last.clear();
-            self.layer_upload_last.extend_from_slice(layer_bytes);
-        }
-        let culls = self.layer_upload_scratch[..filled].iter().map(|layer| layer.cull).collect::<Vec<_>>();
-        build_layer_tiles(&culls, &mut self.layer_tile_scratch);
-        if self.layer_tile_last != self.layer_tile_scratch {
-            churn_probe::write_buffer(&self.queue, &self.layer_tile_buffer, 0, bytemuck::cast_slice(&self.layer_tile_scratch));
-            std::mem::swap(&mut self.layer_tile_last, &mut self.layer_tile_scratch);
-        }
+    /// Uniforms and layers for the program composite (`self.bind_group`).
+    #[allow(clippy::too_many_arguments)]
+    fn write_frame_inputs(
+        &mut self,
+        command_phase: f32,
+        layers_seen: u32,
+        time_seconds: Option<f32>,
+        frame_count: u64,
+        scene_layers: &[LayerGpu],
+        source_previews: Option<&[PreviewPixel]>,
+        audio0: [f32; 4],
+        audio1: [f32; 4],
+        audio2: [f32; 4],
+        output_gate: f32,
+        post_effects: &[[f32; 4]],
+        stage: OutputStage,
+    ) {
+        let uniforms = self.frame_uniforms(command_phase, layers_seen, time_seconds, frame_count,
+            audio0, audio1, audio2, output_gate, post_effects, stage);
+        churn_probe::write_buffer(&self.queue, &self.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
+        let (filled, upload_len) = self.stage_layer_upload(scene_layers, layers_seen);
+        upload_composite_layers(
+            &self.queue,
+            &self.layer_upload_scratch[..upload_len],
+            filled,
+            CompositeLayerState {
+                layer_buffer: &self.layer_buffer,
+                tile_buffer: &self.layer_tile_buffer,
+                layer_last: &mut self.layer_upload_last,
+                mesh_cell_bounds_last: &mut self.mesh_cell_bounds_last,
+                tile_last: &mut self.layer_tile_last,
+            },
+            &mut self.mesh_cell_bounds_scratch,
+            &mut self.layer_tile_scratch,
+        );
 
         if let Some(source_previews) = source_previews {
             // `source_preview_pixel_data` already hands us an exactly-sized,
@@ -28393,6 +28479,179 @@ impl RenderState {
                 bytemuck::cast_slice(&source_previews[..preview_len]),
             );
         }
+    }
+
+    /// Uniforms (and, with `own_layers`, layers) for a view composited after
+    /// the program in the same frame: a deck monitor, the record target or a
+    /// full-detail Screen. Each view has its own buffers, so it no longer
+    /// overwrites the program's and every view's unchanged layers stay
+    /// uploaded from one frame to the next. A view without its own layers
+    /// draws the program's (a Screen shows the program's layers).
+    #[allow(clippy::too_many_arguments)]
+    fn write_view_inputs(
+        &mut self,
+        key: &str,
+        own_layers: bool,
+        command_phase: f32,
+        layers_seen: u32,
+        time_seconds: Option<f32>,
+        frame_count: u64,
+        scene_layers: &[LayerGpu],
+        audio0: [f32; 4],
+        audio1: [f32; 4],
+        audio2: [f32; 4],
+        output_gate: f32,
+        post_effects: &[[f32; 4]],
+        stage: OutputStage,
+    ) {
+        let uniforms = self.frame_uniforms(command_phase, layers_seen, time_seconds, frame_count,
+            audio0, audio1, audio2, output_gate, post_effects, stage);
+        let (filled, upload_len) = if own_layers {
+            self.stage_layer_upload(scene_layers, layers_seen)
+        } else {
+            (0, 0)
+        };
+        self.ensure_composite_view(key, own_layers, upload_len);
+        let Some(view) = self.composite_views.get_mut(key) else { return; };
+        churn_probe::write_buffer(&self.queue, &view.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
+        let Some(layers) = view.layers.as_mut() else { return; };
+        upload_composite_layers(
+            &self.queue,
+            &self.layer_upload_scratch[..upload_len],
+            filled,
+            CompositeLayerState {
+                layer_buffer: &layers.layer_buffer,
+                tile_buffer: &layers.tile_buffer,
+                layer_last: &mut layers.layer_last,
+                mesh_cell_bounds_last: &mut layers.mesh_cell_bounds_last,
+                tile_last: &mut layers.tile_last,
+            },
+            &mut self.mesh_cell_bounds_scratch,
+            &mut self.layer_tile_scratch,
+        );
+    }
+
+    /// Copy `scene_layers` into the upload scratch as the compositor reads
+    /// them. Returns (layers filled, slots to upload).
+    fn stage_layer_upload(&mut self, scene_layers: &[LayerGpu], layers_seen: u32) -> (usize, usize) {
+        // Only the slots the compositor will actually read need to reach the
+        // GPU: `heartbeat.wgsl` walks `for i in 0..64 { if f32(i) >= layer_count
+        // { break } ... }`, so anything at or beyond `layer_count` is dead.
+        // Write `layers_seen` slots (and at least as many as the caller handed
+        // us), zero-filling any tail inside that prefix exactly as the old
+        // full-array upload did.
+        let filled = scene_layers.len().min(MAX_SCENE_LAYERS);
+        let upload_len = (layers_seen as usize).max(filled).min(MAX_SCENE_LAYERS);
+        fit_layer_upload_scratch(&mut self.layer_upload_scratch, upload_len);
+        for (slot, layer) in self.layer_upload_scratch[..filled]
+            .iter_mut()
+            .zip(scene_layers.iter())
+        {
+            *slot = *layer;
+            slot.cull = layer_cull_bounds(layer);
+        }
+        for slot in &mut self.layer_upload_scratch[filled..upload_len] {
+            *slot = LayerGpu::zeroed();
+        }
+        (filled, upload_len)
+    }
+
+    /// Make (or refit) the buffers and bind group of composite view `key`.
+    fn ensure_composite_view(&mut self, key: &str, own_layers: bool, upload_len: usize) {
+        let epoch = self.frame_epoch;
+        let slots_needed = upload_len.max(1);
+        let rebuild = match self.composite_views.get_mut(key) {
+            Some(view) if view.layers.is_some() == own_layers => {
+                view.used_epoch = epoch;
+                let grow = view.layers.as_ref().is_some_and(|layers| layers.slots < slots_needed);
+                grow || view.paint_mask_generation != self.paint_mask_generation
+            }
+            _ => {
+                self.composite_views.remove(key);
+                true
+            }
+        };
+        if !rebuild {
+            return;
+        }
+        let existing = self.composite_views.remove(key);
+        let uniform_buffer = existing.as_ref().map(|view| view.uniform_buffer.clone()).unwrap_or_else(|| {
+            self.device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("Ghost Render Core View Uniforms"),
+                size: std::mem::size_of::<Uniforms>() as u64,
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            })
+        });
+        let layers = own_layers.then(|| {
+            match existing.and_then(|view| view.layers) {
+                Some(layers) if layers.slots >= slots_needed => layers,
+                previous => {
+                    // Grown in powers of two, so a scene that adds layers
+                    // one by one reallocates a handful of times.
+                    let slots = slots_needed.next_power_of_two().min(MAX_SCENE_LAYERS);
+                    let layer_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
+                        label: Some("Ghost Render Core View Layers"),
+                        size: (slots * std::mem::size_of::<LayerGpu>()) as u64,
+                        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                        mapped_at_creation: false,
+                    });
+                    // Tiles and mesh bounds keep their contents: only the
+                    // layer array is new and has to be sent again.
+                    match previous {
+                        Some(previous) => CompositeViewLayers {
+                            layer_buffer,
+                            slots,
+                            layer_last: Vec::new(),
+                            ..previous
+                        },
+                        None => CompositeViewLayers {
+                            layer_buffer,
+                            slots,
+                            // Zeroed like the program's: binning off and
+                            // no mesh boxes until the first upload.
+                            tile_buffer: self.device.create_buffer(&wgpu::BufferDescriptor {
+                                label: Some("Ghost Render Core View Layer Tiles"),
+                                size: ((LAYER_TILE_BUFFER_WORDS + MESH_CELL_BOUNDS_WORDS) * std::mem::size_of::<u32>()) as u64,
+                                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                                mapped_at_creation: false,
+                            }),
+                            layer_last: Vec::new(),
+                            mesh_cell_bounds_last: Vec::new(),
+                            tile_last: Vec::new(),
+                        },
+                    }
+                }
+            }
+        });
+        let (layer_buffer, tile_buffer) = match layers.as_ref() {
+            Some(layers) => (&layers.layer_buffer, &layers.tile_buffer),
+            None => (&self.layer_buffer, &self.layer_tile_buffer),
+        };
+        let bind_group = build_scene_bind_group(
+            &self.device,
+            &self.scene_bind_group_layout,
+            &uniform_buffer,
+            layer_buffer,
+            &self.source_preview_buffer,
+            &self.source_frame_sampler,
+            &self.paint_mask_view,
+            tile_buffer,
+        );
+        self.composite_views.insert(key.to_string(), CompositeView {
+            uniform_buffer,
+            layers,
+            bind_group,
+            paint_mask_generation: self.paint_mask_generation,
+            used_epoch: epoch,
+        });
+    }
+
+    /// Let go of views not drawn for a while (a closed Screen, a finished
+    /// recording, deck monitors gone idle).
+    fn prune_composite_views(&mut self) {
+        let epoch = self.frame_epoch;
+        self.composite_views.retain(|_, view| epoch.wrapping_sub(view.used_epoch) <= COMPOSITE_VIEW_KEEP_FRAMES);
     }
 
     fn create_paint_mask_texture(device: &wgpu::Device, size: u32, layers: u32) -> wgpu::Texture {
@@ -28435,6 +28694,8 @@ impl RenderState {
             &paint_mask_view,
             &self.layer_tile_buffer,
         );
+        self.paint_mask_view = paint_mask_view;
+        self.paint_mask_generation = self.paint_mask_generation.wrapping_add(1);
         true
     }
 
@@ -28512,6 +28773,24 @@ impl RenderState {
         label: &'static str,
         timestamp_writes: Option<wgpu::RenderPassTimestampWrites<'_>>,
     ) {
+        self.draw_composite(encoder, &self.bind_group, view, label, timestamp_writes);
+    }
+
+    /// Composite view `key` (written by `write_view_inputs`) into `view`.
+    fn draw_composite_view(&self, encoder: &mut wgpu::CommandEncoder, key: &str, view: &wgpu::TextureView, label: &'static str) {
+        if let Some(composite) = self.composite_views.get(key) {
+            self.draw_composite(encoder, &composite.bind_group, view, label, None);
+        }
+    }
+
+    fn draw_composite(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        bind_group: &wgpu::BindGroup,
+        view: &wgpu::TextureView,
+        label: &'static str,
+        timestamp_writes: Option<wgpu::RenderPassTimestampWrites<'_>>,
+    ) {
         // The frame timer (gpu_timing) owns this pass when it times it.
         let pass_time = if timestamp_writes.is_none() { pass_timing::slot(label) } else { None };
         let timestamp_writes = timestamp_writes.or_else(|| pass_timing::render_writes(&pass_time));
@@ -28532,7 +28811,7 @@ impl RenderState {
             multiview_mask: None,
         });
         pass.set_pipeline(&self.pipeline);
-        pass.set_bind_group(0, &self.bind_group, &[]);
+        pass.set_bind_group(0, bind_group, &[]);
         pass.set_bind_group(1, &self.source_frames_bind_group, &[]);
         pass.draw(0..3, 0..1);
     }
