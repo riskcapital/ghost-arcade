@@ -181,6 +181,9 @@ fn ghost_audio_pulse(phase: f32, width: f32) -> f32 {
   return 1.0 - smoothstep(0.0, max(width, 1e-4), p);
 }
 
+// One layer's core record (main.rs LayerCoreGpu, 240 bytes): what every
+// layer has. What only some layers use (a shape, effects, a mask, a mesh,
+// Edge Effects) lives in `layer_pool` records, read through pool_*().
 struct LayerData {
   // Conservative canvas-UV rectangle the layer can affect (see
   // layer_cull_bounds in main.rs); tested first in the composite loop.
@@ -189,50 +192,9 @@ struct LayerData {
   p1: vec4<f32>,
   color: vec4<f32>,
   info: vec4<f32>,
-  params0: vec4<f32>,
-  params1: vec4<f32>,
   style: vec4<f32>,
   uv0: vec4<f32>,
   uv1: vec4<f32>,
-  shape: vec4<f32>,
-  shape2: vec4<f32>,
-  shape_meta: vec4<f32>,
-  shape_pts: array<vec4<f32>, 32>,
-  effect0: vec4<f32>,
-  effect1: vec4<f32>,
-  effect2: vec4<f32>,
-  effect3: vec4<f32>,
-  // Edge Effects (see the Edge Effects section): 16 stacks of 22 resolved
-  // vec4s; (points, effects, corners, diagonals); (centroid px, perimeter
-  // px, inradius px); (seed); the centerline bbox px; the output-UV rectangle
-  // the stack can touch; 16-segment chunk bounds; corners (x, y, arc length,
-  // point index); diagonal corner pairs, two per vec4; and the centerline
-  // itself (x px, y px, arc length px, surface scale).
-  edge_effects: array<array<vec4<f32>, 22>, 16>,
-  edge_info: vec4<f32>,
-  edge_geom: vec4<f32>,
-  // x = edge-effect seed; y = strength of the layer's own colour when it has
-  // no source (1.0 for a colour layer, 0.56 for an empty layer's placeholder).
-  edge_extra: vec4<f32>,
-  edge_extra2: vec4<f32>,
-  edge_bounds: vec4<f32>,
-  edge_chunks: array<vec4<f32>, 32>,
-  edge_corners: array<vec4<f32>, 64>,
-  edge_diags: array<vec4<f32>, 32>,
-  edge_pts: array<vec4<f32>, 512>,
-  mask_info: vec4<f32>,
-  mask: array<vec4<f32>, 64>,
-  mesh: array<vec4<f32>, 128>,
-  // Where each mesh point rests on the layer (y down), packed like `mesh`:
-  // the layer position a cell shows. The even lattice unless the mesh was
-  // fitted to a Custom Shape.
-  mesh_rest: array<vec4<f32>, 128>,
-  // Bezier tangents, two vec4 per point: (right.xy, down.xy), (left.xy, up.xy).
-  // Read only while fast_flags.y says the mesh is a Bezier mesh.
-  mesh_tangents: array<vec4<f32>, 512>,
-  // Quad-local (min u, min v, max u, max v) holding a Bezier mesh's whole
-  // surface. Read only while fast_flags.y says the mesh is a Bezier mesh.
-  mesh_bounds: vec4<f32>,
   source_rect: vec4<f32>,
   fast_flags: vec4<u32>,
   // (r, g, b) colour multiplier (Screen FX colour chases; white leaves the
@@ -241,6 +203,14 @@ struct LayerData {
   // Placed on the dome (fast_flags.z): (azimuth, elevation, tangent of half
   // the angular width, roll), radians. See dome_place_uv.
   dome: vec4<f32>,
+  // x = edge-effect seed; y = strength of the layer's own colour when it has
+  // no source (1.0 for a colour layer, 0.56 for an empty layer's placeholder).
+  edge_extra: vec4<f32>,
+  // Where the layer's pool records start in `layer_pool` (vec4 index):
+  // (shape, effects, mask, mesh); pool2.x Edge Effects. 0 is an all-zero
+  // record, which every layer without that data points at.
+  pool: vec4<u32>,
+  pool2: vec4<u32>,
 }
 
 @group(0) @binding(1)
@@ -267,6 +237,32 @@ var paint_masks: texture_2d_array<f32>;
 // start per tile plus the end, then the layer indices, bottom to top.
 @group(0) @binding(6)
 var<storage, read> layer_tiles: array<u32>;
+
+// Layer pool records (main.rs pack_layer_pools), all vec4:
+//  shape   (shape, shape2, shape_meta, shape_pts[32])
+//  effects (params0, params1, effect0..3)
+//  mask    (mask_info, mask[64])
+//  mesh    (mesh_bounds, mesh[128], mesh_rest[128], mesh_tangents[512])
+//  edges   (edge_info, edge_geom, edge_extra2 (centerline bbox px),
+//           edge_bounds, edge_effects[16][22], edge_chunks[32],
+//           edge_corners[64], edge_diags[32], edge_pts[512])
+@group(0) @binding(7)
+var<storage, read> layer_pool: array<vec4<f32>>;
+const POOL_SHAPE_PTS: u32 = 3u;
+const POOL_MASK_PTS: u32 = 1u;
+const POOL_MESH_POINTS: u32 = 1u;
+const POOL_MESH_REST: u32 = 129u;
+const POOL_MESH_TANGENTS: u32 = 257u;
+const POOL_EDGE_EFFECTS: u32 = 4u;
+const POOL_EDGE_CHUNKS: u32 = 356u;
+const POOL_EDGE_CORNERS: u32 = 388u;
+const POOL_EDGE_DIAGS: u32 = 452u;
+const POOL_EDGE_PTS: u32 = 484u;
+fn pool_shape(li: u32, at: u32) -> vec4<f32> { return layer_pool[layers[li].pool.x + at]; }
+fn pool_fx(li: u32, at: u32) -> vec4<f32> { return layer_pool[layers[li].pool.y + at]; }
+fn pool_mask(li: u32, at: u32) -> vec4<f32> { return layer_pool[layers[li].pool.z + at]; }
+fn pool_mesh(li: u32, at: u32) -> vec4<f32> { return layer_pool[layers[li].pool.w + at]; }
+fn pool_edge(li: u32, at: u32) -> vec4<f32> { return layer_pool[layers[li].pool2.x + at]; }
 const LAYER_TILES_HEADER: u32 = 4u;
 // Mesh cell bounds after the bins (main.rs MESH_CELL_BOUNDS_BASE): one word
 // per layer slot, where its cell boxes start (0 = none), then per meshed
@@ -778,12 +774,12 @@ fn inverse_bilinear(p: vec2<f32>, a: vec2<f32>, b: vec2<f32>, c: vec2<f32>, d: v
 }
 
 fn layer_mesh_point(layer_index: u32, index: u32) -> vec2<f32> {
-  let packed = layers[layer_index].mesh[index / 2u];
+  let packed = pool_mesh(layer_index, POOL_MESH_POINTS + min(u32(index / 2u), 127u));
   return select(packed.zw, packed.xy, (index & 1u) == 0u);
 }
 
 fn layer_mesh_rest_point(layer_index: u32, index: u32) -> vec2<f32> {
-  let packed = layers[layer_index].mesh_rest[index / 2u];
+  let packed = pool_mesh(layer_index, POOL_MESH_REST + min(u32(index / 2u), 127u));
   return select(packed.zw, packed.xy, (index & 1u) == 0u);
 }
 
@@ -809,7 +805,7 @@ const MESH_TANGENT_LEFT: u32 = 2u;
 const MESH_TANGENT_UP: u32 = 3u;
 
 fn layer_mesh_tangent(layer_index: u32, index: u32, side: u32) -> vec2<f32> {
-  let packed = layers[layer_index].mesh_tangents[index * 2u + (side >> 1u)];
+  let packed = pool_mesh(layer_index, POOL_MESH_TANGENTS + min(u32(index * 2u + (side >> 1u)), 511u));
   return select(packed.zw, packed.xy, (side & 1u) == 0u);
 }
 
@@ -1273,7 +1269,7 @@ fn source_content_lod(slot_code: f32, layer_index: u32, duv_dx: vec2<f32>, duv_d
 /// Quad-local UV at p, unclamped, by the map the layer draws with: (ok, u, v).
 fn layer_local_raw(p: vec2<f32>, layer_index: u32, tl: vec2<f32>, tr: vec2<f32>, br: vec2<f32>, bl: vec2<f32>) -> vec3<f32> {
   if (layers[layer_index].fast_flags.y == 1u) {
-    return quad_local_uv_reach(p, tl, tr, br, bl, layers[layer_index].mesh_bounds);
+    return quad_local_uv_reach(p, tl, tr, br, bl, pool_mesh(layer_index, 0u));
   }
   if ((layers[layer_index].fast_flags.w & 2u) != 0u) {
     let raw = quad_perspective_raw(p, tl, tr, br, bl);
@@ -1321,11 +1317,11 @@ fn source_content_for_layer(sampled: vec4<f32>, source_kind: f32) -> vec4<f32> {
 // deformable surface — handles move the GEOMETRY, and both the mask and the
 // content are evaluated in the surface's local space, so they deform as one.
 fn native_shape_surface_uv(local_uv: vec2<f32>, layer_index: u32) -> vec2<f32> {
-  let warp_kind = i32(floor(layers[layer_index].shape_meta.w + 0.5));
+  let warp_kind = i32(floor(pool_shape(layer_index, 2u).w + 0.5));
   if (warp_kind == 1) {
-    let pts0 = layers[layer_index].shape_pts[0];
-    let pts1 = layers[layer_index].shape_pts[1];
-    let pts2 = layers[layer_index].shape_pts[2];
+    let pts0 = pool_shape(layer_index, POOL_SHAPE_PTS + min(u32(0), 31u));
+    let pts1 = pool_shape(layer_index, POOL_SHAPE_PTS + min(u32(1), 31u));
+    let pts2 = pool_shape(layer_index, POOL_SHAPE_PTS + min(u32(2), 31u));
     var w = native_inverse_quad_warp(local_uv, pts0.xy, pts0.zw, pts1.xy, pts1.zw);
     let center_offset = pts2.xy - vec2<f32>(0.5);
     let center_weight = 1.0 - smoothstep(0.0, 0.5, length(w - vec2<f32>(0.5)));
@@ -1340,7 +1336,7 @@ fn native_shape_surface_uv(local_uv: vec2<f32>, layer_index: u32) -> vec2<f32> {
 // content was authored against, so the texture stretches smoothly with the
 // dragged vertices.
 fn native_custom_mvc_uv(p: vec2<f32>, layer_index: u32) -> vec2<f32> {
-  let count = min(32, i32(floor(layers[layer_index].shape_meta.x + 0.5)));
+  let count = min(32, i32(floor(pool_shape(layer_index, 2u).x + 0.5)));
   if (count < 3) {
     return p;
   }
@@ -1348,10 +1344,10 @@ fn native_custom_mvc_uv(p: vec2<f32>, layer_index: u32) -> vec2<f32> {
   var dists: array<f32, 32>;
   for (var i: i32 = 0; i < 32; i = i + 1) {
     if (i >= count) { break; }
-    let packed_a = layers[layer_index].shape_pts[i / 2];
+    let packed_a = pool_shape(layer_index, POOL_SHAPE_PTS + min(u32(i / 2), 31u));
     let v_i = select(packed_a.zw, packed_a.xy, (i % 2) == 0);
     let next = (i + 1) % count;
-    let packed_b = layers[layer_index].shape_pts[next / 2];
+    let packed_b = pool_shape(layer_index, POOL_SHAPE_PTS + min(u32(next / 2), 31u));
     let v_n = select(packed_b.zw, packed_b.xy, (next % 2) == 0);
     let e_i = v_i - p;
     let e_n = v_n - p;
@@ -1359,7 +1355,7 @@ fn native_custom_mvc_uv(p: vec2<f32>, layer_index: u32) -> vec2<f32> {
     dists[i] = d_i;
     if (d_i < 0.0005) {
       // On a vertex: return its base position directly.
-      let base = layers[layer_index].shape_pts[16 + i / 2];
+      let base = pool_shape(layer_index, POOL_SHAPE_PTS + min(u32(16 + i / 2), 31u));
       return select(base.zw, base.xy, (i % 2) == 0);
     }
     let cross_z = e_i.x * e_n.y - e_i.y * e_n.x;
@@ -1374,7 +1370,7 @@ fn native_custom_mvc_uv(p: vec2<f32>, layer_index: u32) -> vec2<f32> {
     if (i >= count) { break; }
     let prev = (i + count - 1) % count;
     let w_i = (tans[prev] + tans[i]) / max(dists[i], 0.0005);
-    let base = layers[layer_index].shape_pts[16 + i / 2];
+    let base = pool_shape(layer_index, POOL_SHAPE_PTS + min(u32(16 + i / 2), 31u));
     let b_i = select(base.zw, base.xy, (i % 2) == 0);
     uv = uv + b_i * w_i;
     wsum = wsum + w_i;
@@ -1429,15 +1425,15 @@ fn layer_sample_uv(raw_uv: vec2<f32>, layer_index: u32) -> vec3<f32> {
   // content is bilinearly warped through the 4 corner handles and pulled
   // toward the center handle. Kind 2: triangle — content is barycentrically
   // remapped so it stretches with the dragged vertices.
-  let warp_kind = i32(floor(layers[layer_index].shape_meta.w + 0.5));
-  let content_follow = layers[layer_index].shape_meta.z >= 0.5;
+  let warp_kind = i32(floor(pool_shape(layer_index, 2u).w + 0.5));
+  let content_follow = pool_shape(layer_index, 2u).z >= 0.5;
   if (warp_kind == 1 && content_follow) {
     sampled_uv = clamp(native_shape_surface_uv(raw_uv, layer_index), vec2<f32>(0.0), vec2<f32>(1.0));
   } else if (warp_kind == 3) {
     sampled_uv = clamp(native_custom_mvc_uv(raw_uv, layer_index), vec2<f32>(0.0), vec2<f32>(1.0));
   } else if (warp_kind == 2 && content_follow) {
-    let pts0 = layers[layer_index].shape_pts[0];
-    let pts1 = layers[layer_index].shape_pts[1];
+    let pts0 = pool_shape(layer_index, POOL_SHAPE_PTS + min(u32(0), 31u));
+    let pts1 = pool_shape(layer_index, POOL_SHAPE_PTS + min(u32(1), 31u));
     let bc = native_barycentric(raw_uv, pts0.xy, pts0.zw, pts1.xy);
     if (bc.x >= 0.0 && bc.y >= 0.0 && bc.z >= 0.0) {
       let d0 = vec2<f32>(0.5, 0.1);
@@ -1449,11 +1445,11 @@ fn layer_sample_uv(raw_uv: vec2<f32>, layer_index: u32) -> vec3<f32> {
   // Custom-shape content fit: 1 = warp (stretch content into the polygon's
   // bounding box), 2 = fill (aspect-preserving cover of the bbox). shape2
   // carries the polygon bbox [minX, minY, sizeX, sizeY] for custom shapes.
-  if (layers[layer_index].shape.x >= 5.5 && warp_kind != 3) {
-    let fit = i32(floor(layers[layer_index].shape_meta.z + 0.5));
+  if (pool_shape(layer_index, 0u).x >= 5.5 && warp_kind != 3) {
+    let fit = i32(floor(pool_shape(layer_index, 2u).z + 0.5));
     if (fit >= 1) {
-      let bb_min = layers[layer_index].shape2.xy;
-      let bb_size = max(layers[layer_index].shape2.zw, vec2<f32>(0.0001));
+      let bb_min = pool_shape(layer_index, 1u).xy;
+      let bb_size = max(pool_shape(layer_index, 1u).zw, vec2<f32>(0.0001));
       var fitted = (sampled_uv - bb_min) / bb_size;
       if (fit == 2) {
         let bb_aspect = bb_size.x / bb_size.y;
@@ -1548,10 +1544,10 @@ fn apply_native_effect(color_in: vec3<f32>, effect: vec4<f32>, uv: vec2<f32>, t:
 fn apply_native_effects(color: vec3<f32>, layer_index: u32, uv: vec2<f32>, t: f32) -> vec3<f32> {
   let count = i32(floor(layers[layer_index].style.y + 0.5));
   var out = color;
-  if (count > 0) { out = apply_native_effect(out, layers[layer_index].effect0, uv, t); }
-  if (count > 1) { out = apply_native_effect(out, layers[layer_index].effect1, uv, t); }
-  if (count > 2) { out = apply_native_effect(out, layers[layer_index].effect2, uv, t); }
-  if (count > 3) { out = apply_native_effect(out, layers[layer_index].effect3, uv, t); }
+  if (count > 0) { out = apply_native_effect(out, pool_fx(layer_index, 2u), uv, t); }
+  if (count > 1) { out = apply_native_effect(out, pool_fx(layer_index, 3u), uv, t); }
+  if (count > 2) { out = apply_native_effect(out, pool_fx(layer_index, 4u), uv, t); }
+  if (count > 3) { out = apply_native_effect(out, pool_fx(layer_index, 5u), uv, t); }
   return out;
 }
 
@@ -2548,7 +2544,7 @@ fn native_ellipse_distance(p: vec2<f32>, r: vec2<f32>) -> f32 {
 // Signed distance to the custom shape polygon (points packed 2 per vec4 in
 // shape_pts, already in compositor local-UV space with y down).
 fn native_custom_shape_distance(local_uv: vec2<f32>, layer_index: u32) -> f32 {
-  let count = min(32, i32(floor(layers[layer_index].shape_meta.x + 0.5)));
+  let count = min(32, i32(floor(pool_shape(layer_index, 2u).x + 0.5)));
   if (count < 3) {
     return -1.0;
   }
@@ -2556,10 +2552,10 @@ fn native_custom_shape_distance(local_uv: vec2<f32>, layer_index: u32) -> f32 {
   var min_edge = 1000.0;
   for (var i: i32 = 0; i < 32; i = i + 1) {
     if (i >= count) { break; }
-    let packed_a = layers[layer_index].shape_pts[i / 2];
+    let packed_a = pool_shape(layer_index, POOL_SHAPE_PTS + min(u32(i / 2), 31u));
     let a = select(packed_a.zw, packed_a.xy, (i % 2) == 0);
     let next = (i + 1) % count;
-    let packed_b = layers[layer_index].shape_pts[next / 2];
+    let packed_b = pool_shape(layer_index, POOL_SHAPE_PTS + min(u32(next / 2), 31u));
     let b = select(packed_b.zw, packed_b.xy, (next % 2) == 0);
     let crosses = ((a.y <= local_uv.y && b.y > local_uv.y) || (a.y > local_uv.y && b.y <= local_uv.y)) &&
       (local_uv.x < (b.x - a.x) * (local_uv.y - a.y) / max(abs(b.y - a.y), 0.000001) * sign(b.y - a.y) + a.x);
@@ -2570,8 +2566,8 @@ fn native_custom_shape_distance(local_uv: vec2<f32>, layer_index: u32) -> f32 {
 }
 
 fn native_warp_quad_signed_distance(p: vec2<f32>, layer_index: u32) -> f32 {
-  let pts0 = layers[layer_index].shape_pts[0];
-  let pts1 = layers[layer_index].shape_pts[1];
+  let pts0 = pool_shape(layer_index, POOL_SHAPE_PTS + min(u32(0), 31u));
+  let pts1 = pool_shape(layer_index, POOL_SHAPE_PTS + min(u32(1), 31u));
   // Quad outline in draw order: tl -> tr -> br -> bl.
   var quad: array<vec2<f32>, 4>;
   quad[0] = pts0.xy;
@@ -2592,7 +2588,7 @@ fn native_warp_quad_signed_distance(p: vec2<f32>, layer_index: u32) -> f32 {
 }
 
 fn native_shape_signed_distance(local_uv: vec2<f32>, layer_index: u32) -> f32 {
-  let shape_type = i32(floor(layers[layer_index].shape.x + 0.5));
+  let shape_type = i32(floor(pool_shape(layer_index, 0u).x + 0.5));
   if (shape_type == 6) {
     return native_custom_shape_distance(local_uv, layer_index);
   }
@@ -2602,16 +2598,16 @@ fn native_shape_signed_distance(local_uv: vec2<f32>, layer_index: u32) -> f32 {
   // back into "inside" values — clip against the quad polygon itself so
   // nothing ever renders beyond the dragged surface.
   var quad_clip = -1.0;
-  if (i32(floor(layers[layer_index].shape_meta.w + 0.5)) == 1) {
+  if (i32(floor(pool_shape(layer_index, 2u).w + 0.5)) == 1) {
     quad_clip = native_warp_quad_signed_distance(local_uv, layer_index);
     if (quad_clip > 0.05) {
       return quad_clip;
     }
   }
   let eval_uv = native_shape_surface_uv(local_uv, layer_index);
-  let rotation = layers[layer_index].shape.z;
-  let scale = max(layers[layer_index].shape.w, 0.0001);
-  let extra = layers[layer_index].shape2;
+  let rotation = pool_shape(layer_index, 0u).z;
+  let scale = max(pool_shape(layer_index, 0u).w, 0.0001);
+  let extra = pool_shape(layer_index, 1u);
   // Compositor local UV runs y-down; the WebGL shape shader (the visual
   // reference) runs y-up. Mirror first, then rotate, so both the shape's
   // orientation and its direction of rotation match the editor and the
@@ -2623,10 +2619,10 @@ fn native_shape_signed_distance(local_uv: vec2<f32>, layer_index: u32) -> f32 {
     return max(length(centered) - max(extra.x, 0.01) * 0.5, quad_clip);
   }
   if (shape_type == 2) {
-    if (layers[layer_index].shape_meta.w > 1.5) {
+    if (pool_shape(layer_index, 2u).w > 1.5) {
       // Warped triangle: control points are absolute layer-local vertices.
-      let pts0 = layers[layer_index].shape_pts[0];
-      let pts1 = layers[layer_index].shape_pts[1];
+      let pts0 = pool_shape(layer_index, POOL_SHAPE_PTS + min(u32(0), 31u));
+      let pts1 = pool_shape(layer_index, POOL_SHAPE_PTS + min(u32(1), 31u));
       return triangle_signed_distance(local_uv, pts0.xy, pts0.zw, pts1.xy);
     }
     return triangle_signed_distance(centered + vec2<f32>(0.5), vec2<f32>(0.5, 0.88), vec2<f32>(0.14, 0.14), vec2<f32>(0.86, 0.14));
@@ -2713,7 +2709,7 @@ fn empty_layer_card(uv: vec2<f32>, size_px: vec2<f32>) -> vec3<f32> {
 }
 
 fn native_layer_shape(local_uv: vec2<f32>, layer_index: u32) -> vec2<f32> {
-  let feather = max(layers[layer_index].shape.y, 0.0);
+  let feather = max(pool_shape(layer_index, 0u).y, 0.0);
   let dist = native_shape_signed_distance(local_uv, layer_index);
   // ~1px anti-aliasing floor so unfeathered shapes still get clean edges.
   let aa = 1.5 / max(min(u.resolution.x, u.resolution.y), 64.0);
@@ -2722,7 +2718,7 @@ fn native_layer_shape(local_uv: vec2<f32>, layer_index: u32) -> vec2<f32> {
     1.0 - smoothstep(-feather, 0.0, dist),
     feather > 0.001
   );
-  if (layers[layer_index].shape_meta.y > 0.5) {
+  if (pool_shape(layer_index, 2u).y > 0.5) {
     mask = 1.0 - mask;
   }
   let edge_width = max(0.0065, feather * 0.42 + 0.0065);
@@ -2826,7 +2822,7 @@ fn edge_cov(sd: f32, aa: f32) -> f32 {
 }
 
 fn edge_pt(li: u32, i: i32) -> vec4<f32> {
-  return layers[li].edge_pts[i];
+  return pool_edge(li, POOL_EDGE_PTS + min(u32(i), 511u));
 }
 
 struct EdgeHit {
@@ -2848,7 +2844,7 @@ fn edge_hit(li: u32, p: vec2<f32>, count: i32) -> EdgeHit {
   let chunk_count = (count + 15) / 16;
   for (var c: i32 = 0; c < 32; c = c + 1) {
     if (c >= chunk_count) { break; }
-    let bb = layers[li].edge_chunks[c];
+    let bb = pool_edge(li, POOL_EDGE_CHUNKS + min(u32(c), 31u));
     let q = max(max(bb.xy - p, p - bb.zw), vec2<f32>(0.0));
     let box_d2 = dot(q, q);
     let ray_hits = p.y >= bb.y && p.y < bb.w && p.x <= bb.z;
@@ -3368,7 +3364,7 @@ fn edge_pattern(q: vec2<f32>, kind: i32, scale: f32, line_w: f32, aa: f32) -> f3
 // ---------- one edge effect ----------
 
 fn edge_fx(li: u32, e: i32, k: i32) -> vec4<f32> {
-  return layers[li].edge_effects[e][k];
+  return pool_edge(li, POOL_EDGE_EFFECTS + min(u32(e), 15u) * 22u + min(u32(k), 21u));
 }
 
 /// One edge effect at output pixel `p`, as premultiplied colour.
@@ -3546,7 +3542,7 @@ fn edge_effect_fragment(li: u32, e: i32, p: vec2<f32>, base: EdgeHit, ctx: EdgeC
       region = (1.0 - prog) * ctx.inradius + d;
     } else if (fill_type == 12) {
       let ci = clamp(i32(floor(fa.x + 0.5)), 0, max(ctx.corner_count - 1, 0));
-      let corner = select(center, layers[li].edge_corners[ci].xy, ctx.corner_count > 0);
+      let corner = select(center, pool_edge(li, POOL_EDGE_CORNERS + min(u32(ci), 63u)).xy, ctx.corner_count > 0);
       region = max(d, length(fill_px - corner) - prog * edge_far_corner(ctx.bbox, corner));
     } else if (fill_type == 13 || fill_type == 14) {
       let dir = vec2<f32>(cos(fa.x), sin(fa.x));
@@ -3600,7 +3596,7 @@ fn edge_effect_fragment(li: u32, e: i32, p: vec2<f32>, base: EdgeHit, ctx: EdgeC
         var best = 1.0e9;
         for (var i: i32 = 0; i < 64; i = i + 1) {
           if (i >= n) { break; }
-          let ca = layers[li].edge_corners[i].xy - center;
+          let ca = pool_edge(li, POOL_EDGE_CORNERS + min(u32(i), 63u)).xy - center;
           let da = edge_mod(ang - atan2(ca.y, ca.x), EDGE_TAU);
           if (da < best) { best = da; facet = f32(i); }
         }
@@ -3778,7 +3774,7 @@ fn edge_effect_fragment(li: u32, e: i32, p: vec2<f32>, base: EdgeHit, ctx: EdgeC
       var along = 1.0e6;
       for (var i: i32 = 0; i < 64; i = i + 1) {
         if (i >= ctx.corner_count) { break; }
-        let sc = layers[li].edge_corners[i].z;
+        let sc = pool_edge(li, POOL_EDGE_CORNERS + min(u32(i), 63u)).z;
         let du = abs(edge_mod(s_arc - sc + total * 0.5, total) - total * 0.5);
         along = min(along, du - max(sb.x, 0.0));
       }
@@ -3792,7 +3788,7 @@ fn edge_effect_fragment(li: u32, e: i32, p: vec2<f32>, base: EdgeHit, ctx: EdgeC
       var ring = 1.0e6;
       for (var i: i32 = 0; i < 64; i = i + 1) {
         if (i >= ctx.corner_count) { break; }
-        let dist = length(q - layers[li].edge_corners[i].xy);
+        let dist = length(q - pool_edge(li, POOL_EDGE_CORNERS + min(u32(i), 63u)).xy);
         dot_sd = min(dot_sd, dist - r);
         ring = min(ring, abs(dist - r0 * (1.0 + 3.0 * max(sb.y, 0.0) * beat)));
       }
@@ -3807,7 +3803,7 @@ fn edge_effect_fragment(li: u32, e: i32, p: vec2<f32>, base: EdgeHit, ctx: EdgeC
       if (sb.x > 0.5) {
         for (var i: i32 = 0; i < 64; i = i + 1) {
           if (i >= n) { break; }
-          let a = layers[li].edge_corners[i].xy;
+          let a = pool_edge(li, POOL_EDGE_CORNERS + min(u32(i), 63u)).xy;
           let pa = q - center;
           let ba = a - center;
           let h = clamp(dot(pa, ba) / max(dot(ba, ba), 1e-9), 0.0, 1.0);
@@ -3817,10 +3813,10 @@ fn edge_effect_fragment(li: u32, e: i32, p: vec2<f32>, base: EdgeHit, ctx: EdgeC
       if (sb.y > 0.5) {
         for (var i: i32 = 0; i < 64; i = i + 1) {
           if (i >= ctx.diag_count) { break; }
-          let pair = layers[li].edge_diags[i / 2];
+          let pair = pool_edge(li, POOL_EDGE_DIAGS + min(u32(i / 2), 31u));
           let ij = select(pair.zw, pair.xy, (i % 2) == 0);
-          let a = layers[li].edge_corners[i32(ij.x)].xy;
-          let b = layers[li].edge_corners[i32(ij.y)].xy;
+          let a = pool_edge(li, POOL_EDGE_CORNERS + min(u32(i32(ij.x)), 63u)).xy;
+          let b = pool_edge(li, POOL_EDGE_CORNERS + min(u32(i32(ij.y)), 63u)).xy;
           let pa = q - a;
           let ba = b - a;
           let h = clamp(dot(pa, ba) / max(dot(ba, ba), 1e-9), 0.0, 1.0);
@@ -4027,21 +4023,21 @@ fn edge_react(rx: vec4<f32>, rc: vec4<f32>) -> vec4<f32> {
 /// (W3C compositing), then the layer goes on with its own blend and opacity.
 /// `layer` is straight colour and coverage; so is the result.
 fn apply_native_edge_effects(layer: vec4<f32>, p_uv: vec2<f32>, li: u32, aa: f32) -> vec4<f32> {
-  let info = layers[li].edge_info;
+  let info = pool_edge(li, 0u);
   var ctx: EdgeCtx;
   ctx.count = min(i32(floor(info.x + 0.5)), 512);
   let effect_count = min(i32(floor(info.y + 0.5)), 16);
   if (ctx.count < 3 || effect_count < 1) { return layer; }
   ctx.corner_count = min(i32(floor(info.z + 0.5)), 64);
   ctx.diag_count = min(i32(floor(info.w + 0.5)), 64);
-  let geom = layers[li].edge_geom;
+  let geom = pool_edge(li, 1u);
   ctx.centroid = geom.xy;
   ctx.total = max(geom.z, 1.0);
   ctx.inradius = geom.w;
   ctx.aa = aa;
   ctx.res = u.resolution;
   ctx.seed = layers[li].edge_extra.x;
-  ctx.bbox = layers[li].edge_extra2;
+  ctx.bbox = pool_edge(li, 2u);
   let p = p_uv * u.resolution;
   var base: EdgeHit;
   var base_ready = false;
@@ -4051,22 +4047,22 @@ fn apply_native_edge_effects(layer: vec4<f32>, p_uv: vec2<f32>, li: u32, aa: f32
     if (e >= effect_count) { break; }
     // Cull per effect: outside its own rectangle, or (for effects that keep
     // the outline still) farther from the centerline than it can reach.
-    let rect = layers[li].edge_effects[e][19];
+    let rect = pool_edge(li, POOL_EDGE_EFFECTS + min(u32(e), 15u) * 22u + min(u32(19), 21u));
     if (any(p_uv < rect.xy) || any(p_uv > rect.zw)) { continue; }
     if (!base_ready) {
       base = edge_hit(li, p, ctx.count);
       base_ready = true;
     }
-    let cull = layers[li].edge_effects[e][20];
+    let cull = pool_edge(li, POOL_EDGE_EFFECTS + min(u32(e), 15u) * 22u + min(u32(20), 21u));
     if (base.d > cull.x || (cull.y < 0.5 && -base.d > cull.x)) { continue; }
-    let head = layers[li].edge_effects[e][0];
+    let head = pool_edge(li, POOL_EDGE_EFFECTS + min(u32(e), 15u) * 22u + min(u32(0), 21u));
     // Premultiplied effect colour.
     let frag = edge_effect_fragment(li, e, p, base, ctx);
     var src_a = clamp(frag.a, 0.0, 1.0) * clamp(head.y, 0.0, 1.0);
     var src_c = clamp(frag.rgb / max(frag.a, 1e-6), vec3<f32>(0.0), vec3<f32>(1.0));
-    let react_mode = layers[li].edge_effects[e][21];
+    let react_mode = pool_edge(li, POOL_EDGE_EFFECTS + min(u32(e), 15u) * 22u + min(u32(21), 21u));
     if (react_mode.x > 0.5) {
-      let r = edge_react(react_mode, layers[li].edge_effects[e][12]);
+      let r = edge_react(react_mode, pool_edge(li, POOL_EDGE_EFFECTS + min(u32(e), 15u) * 22u + min(u32(12), 21u)));
       src_a = clamp(src_a * r.x, 0.0, 1.0);
       if (r.z != 0.0) { src_c = edge_hue_rotate(src_c, r.z); }
       src_c = mix(src_c, vec3<f32>(1.0), clamp(r.y, 0.0, 1.0));
@@ -4097,8 +4093,8 @@ fn native_paint_mask(content_uv: vec2<f32>, layer_index: u32) -> f32 {
 }
 
 fn native_polygon_mask(local_uv: vec2<f32>, layer_index: u32) -> f32 {
-  let point_count = min(64, i32(floor(layers[layer_index].mask_info.w + 0.5)));
-  if (layers[layer_index].mask_info.x < 0.5 || point_count < 3) {
+  let point_count = min(64, i32(floor(pool_mask(layer_index, 0u).w + 0.5)));
+  if (pool_mask(layer_index, 0u).x < 0.5 || point_count < 3) {
     return 1.0;
   }
 
@@ -4109,11 +4105,11 @@ fn native_polygon_mask(local_uv: vec2<f32>, layer_index: u32) -> f32 {
     var shape_points = 0;
     for (var i: i32 = 0; i < 64; i = i + 1) {
       if (i >= point_count) { break; }
-      let packed = layers[layer_index].mask[i];
+      let packed = pool_mask(layer_index, POOL_MASK_PTS + min(u32(i), 63u));
       if (i32(floor(packed.w + 0.5)) != shape_index) { continue; }
       let next_index = clamp(i32(floor(packed.z + 0.5)), 0, point_count - 1);
       let a = packed.xy;
-      let b = layers[layer_index].mask[next_index].xy;
+      let b = pool_mask(layer_index, POOL_MASK_PTS + min(u32(next_index), 63u)).xy;
       shape_points = shape_points + 1;
       let crosses = ((a.y <= local_uv.y && b.y > local_uv.y) || (a.y > local_uv.y && b.y <= local_uv.y)) &&
         (local_uv.x < (b.x - a.x) * (local_uv.y - a.y) / max(abs(b.y - a.y), 0.000001) * sign(b.y - a.y) + a.x);
@@ -4126,11 +4122,11 @@ fn native_polygon_mask(local_uv: vec2<f32>, layer_index: u32) -> f32 {
   }
 
   var alpha = select(0.0, 1.0, inside_union);
-  let feather = max(0.0, layers[layer_index].mask_info.z);
+  let feather = max(0.0, pool_mask(layer_index, 0u).z);
   if (inside_union && feather > 0.001) {
     alpha = smoothstep(0.0, feather, min_edge_distance);
   }
-  if (layers[layer_index].mask_info.y > 0.5) {
+  if (pool_mask(layer_index, 0u).y > 0.5) {
     alpha = 1.0 - alpha;
   }
   return clamp(alpha, 0.0, 1.0);
@@ -4274,10 +4270,10 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     // (outside every shape, or kept when inverted), and before the alpha check
     // because a mask layer carries no fill of its own (color alpha 0).
     if (layers[layer_index].style.x >= 25.5 && layers[layer_index].style.x < 26.5) {
-      let mask_enabled = layers[layer_index].mask_info.x > 0.5 && layers[layer_index].mask_info.w >= 2.5;
+      let mask_enabled = pool_mask(layer_index, 0u).x > 0.5 && pool_mask(layer_index, 0u).w >= 2.5;
       if (mask_enabled) {
         let mask_local = select(quad_local_uv(layer_uv, tl, tr, br, bl), quad_local_uv_perspective(layer_uv, tl, tr, br, bl), (layers[layer_index].fast_flags.w & 2u) != 0u);
-        var coverage = select(0.0, 1.0, layers[layer_index].mask_info.y > 0.5);
+        var coverage = select(0.0, 1.0, pool_mask(layer_index, 0u).y > 0.5);
         if (mask_local.x > 0.5) {
           coverage = native_polygon_mask(mask_local.yz, layer_index);
         }
@@ -4291,8 +4287,8 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     }
     // Edge effects can glow past the layer's quad, so a layer that carries
     // them is also evaluated inside the rectangle its stack can reach.
-    let edge_bounds = layers[layer_index].edge_bounds;
-    let in_edges = layers[layer_index].edge_info.y > 0.5 && layers[layer_index].edge_info.x > 2.5
+    let edge_bounds = pool_edge(layer_index, 3u);
+    let in_edges = pool_edge(layer_index, 0u).y > 0.5 && pool_edge(layer_index, 0u).x > 2.5
       && all(layer_uv >= edge_bounds.xy) && all(layer_uv <= edge_bounds.zw);
     // Reject outside the conservative quad bounds before inverse mapping,
     // mesh search, masks and effects.
@@ -4302,7 +4298,7 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     var quad_min = min(min(tl, tr), min(br, bl));
     var quad_max = max(max(tl, tr), max(br, bl));
     if (bezier_mesh) {
-      let reach = quad_reach_bounds(tl, tr, br, bl, layers[layer_index].mesh_bounds);
+      let reach = quad_reach_bounds(tl, tr, br, bl, pool_mesh(layer_index, 0u));
       quad_min = min(quad_min, reach.xy);
       quad_max = max(quad_max, reach.zw);
     }
@@ -4333,7 +4329,7 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     if (in_quad_bounds) {
       var local: vec3<f32>;
       if (bezier_mesh) {
-        local = quad_local_uv_reach(layer_uv, tl, tr, br, bl, layers[layer_index].mesh_bounds);
+        local = quad_local_uv_reach(layer_uv, tl, tr, br, bl, pool_mesh(layer_index, 0u));
       } else if ((layers[layer_index].fast_flags.w & 2u) != 0u) {
         local = quad_local_uv_perspective(layer_uv, tl, tr, br, bl);
       } else {
@@ -4362,8 +4358,8 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
         // A plain rectangle keeps quad UV, so its anti-aliased edge stays one
         // output pixel wide in cells the mesh squeezes or stretches.
         let mask_uv = select(local.yz, mesh_sample.yz, bezier_mesh);
-        let shaped = layers[layer_index].shape.x > 0.5;
-        let custom_shape = i32(floor(layers[layer_index].shape.x + 0.5)) == 6;
+        let shaped = pool_shape(layer_index, 0u).x > 0.5;
+        let custom_shape = i32(floor(pool_shape(layer_index, 0u).x + 0.5)) == 6;
         let shape_uv = select(select(mask_uv, mesh_sample.yz, shaped), local.yz, custom_shape);
         let shape_sample = native_layer_shape(shape_uv, layer_index);
         let polygon_mask = native_polygon_mask(mask_uv, layer_index)
@@ -4396,7 +4392,7 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
           layer_rgb = preview.rgb;
           content_alpha = preview.a * content_mask * shape_mask;
         } else if (layers[layer_index].info.z >= 9.0) {
-          let proxy = gpu_proxy(layers[layer_index].info.z, sample_uv, t, layers[layer_index].info.y, layers[layer_index].params0, layers[layer_index].params1);
+          let proxy = gpu_proxy(layers[layer_index].info.z, sample_uv, t, layers[layer_index].info.y, pool_fx(layer_index, 0u), pool_fx(layer_index, 1u));
           let proxy_alpha = proxy.a * content_mask * shape_mask;
           layer_rgb = proxy.rgb;
           content_alpha = (0.62 + 0.28 * proxy_alpha) * content_mask * shape_mask;

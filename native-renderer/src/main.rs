@@ -1609,6 +1609,167 @@ struct LayerGpu {
     dome: [f32; 4],
 }
 
+/// What the compositor reads of every layer: `LayerGpu` without the data
+/// only some layers use, which `pack_layer_pools` moves into pool records
+/// (heartbeat.wgsl LayerData and layer_pool). 240 bytes against ~30 KB.
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+struct LayerCoreGpu {
+    cull: [f32; 4],
+    p0: [f32; 4],
+    p1: [f32; 4],
+    color: [f32; 4],
+    meta: [f32; 4],
+    style: [f32; 4],
+    uv0: [f32; 4],
+    uv1: [f32; 4],
+    source_rect: [f32; 4],
+    fast_flags: [u32; 4],
+    tint: [f32; 4],
+    dome: [f32; 4],
+    edge_extra: [f32; 4],
+    /// Record starts in the pool (vec4 index): shape, effects, mask, mesh.
+    pool: [u32; 4],
+    /// Edge Effects record start, then unused.
+    pool2: [u32; 4],
+}
+
+// Pool record layouts, in vec4s; heartbeat.wgsl's POOL_* constants match
+// (layer_pool_layout_matches_the_shader).
+const POOL_SHAPE_PTS: usize = 3;
+const POOL_SHAPE_LEN: usize = POOL_SHAPE_PTS + 32;
+const POOL_FX_LEN: usize = 6;
+const POOL_MASK_PTS: usize = 1;
+const POOL_MASK_LEN: usize = POOL_MASK_PTS + MAX_LAYER_MASK_POINTS;
+const POOL_MESH_POINTS: usize = 1;
+const POOL_MESH_REST: usize = POOL_MESH_POINTS + MAX_LAYER_MESH_VEC4S;
+const POOL_MESH_TANGENTS: usize = POOL_MESH_REST + MAX_LAYER_MESH_VEC4S;
+const POOL_MESH_LEN: usize = POOL_MESH_TANGENTS + MAX_LAYER_MESH_TANGENT_VEC4S;
+const POOL_EDGE_EFFECTS: usize = 4;
+const POOL_EDGE_CHUNKS: usize = POOL_EDGE_EFFECTS + MAX_LAYER_EDGE_EFFECTS * LAYER_EDGE_EFFECT_VEC4S;
+const POOL_EDGE_CORNERS: usize = POOL_EDGE_CHUNKS + MAX_LAYER_EDGE_CHUNKS;
+const POOL_EDGE_DIAGS: usize = POOL_EDGE_CORNERS + MAX_LAYER_EDGE_CORNERS;
+const POOL_EDGE_PTS: usize = POOL_EDGE_DIAGS + MAX_LAYER_EDGE_DIAGONALS / 2;
+const POOL_EDGE_LEN: usize = POOL_EDGE_PTS + MAX_LAYER_EDGE_POINTS;
+/// The all-zero record at the start of every pool: as long as the longest record.
+const POOL_ZERO_LEN: usize = POOL_EDGE_LEN;
+/// A pool buffer's first size, in vec4s (grown in powers of two).
+const POOL_MIN_CAPACITY: usize = 4096;
+
+/// GA_CORE_LAYER_UPLOAD=full: every layer gets every pool record and a
+/// buffer that changed is re-sent whole (close to the old upload, for
+/// comparing). Default: absent records share the zero record and only the
+/// changed ranges are sent.
+fn layer_upload_full() -> bool {
+    static FULL: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *FULL.get_or_init(|| std::env::var("GA_CORE_LAYER_UPLOAD").is_ok_and(|value| value.trim() == "full"))
+}
+
+/// Split `layers` into core records and pool records. A record whose data
+/// is all zero points at the zero record (unless `full`), so the shader
+/// reads the same zeros it read from the old full-size layer.
+fn pack_layer_pools(layers: &[LayerGpu], full: bool, cores: &mut Vec<LayerCoreGpu>, pool: &mut Vec<[f32; 4]>) {
+    cores.clear();
+    pool.clear();
+    pool.resize(POOL_ZERO_LEN, [0.0; 4]);
+    fn record(pool: &mut Vec<[f32; 4]>, full: bool, len: usize, parts: &[&[[f32; 4]]]) -> u32 {
+        debug_assert_eq!(parts.iter().map(|part| part.len()).sum::<usize>(), len);
+        let empty = parts.iter().all(|part| bytemuck::cast_slice::<[f32; 4], u8>(part).iter().all(|byte| *byte == 0));
+        if empty && !full {
+            return 0;
+        }
+        let start = pool.len() as u32;
+        for part in parts {
+            pool.extend_from_slice(part);
+        }
+        start
+    }
+    for layer in layers {
+        let shape = record(pool, full, POOL_SHAPE_LEN, &[&[layer.shape, layer.shape2, layer.shape_meta], &layer.shape_pts]);
+        let fx = record(pool, full, POOL_FX_LEN, &[&[layer.params0, layer.params1, layer.effect0, layer.effect1, layer.effect2, layer.effect3]]);
+        let mask = record(pool, full, POOL_MASK_LEN, &[&[layer.mask_info], &layer.mask]);
+        let mesh = record(pool, full, POOL_MESH_LEN, &[&[layer.mesh_bounds], &layer.mesh, &layer.mesh_rest, &layer.mesh_tangents]);
+        let edge = record(pool, full, POOL_EDGE_LEN, &[
+            &[layer.edge_info, layer.edge_geom, layer.edge_extra2, layer.edge_bounds],
+            bytemuck::cast_slice(&layer.edge_effects),
+            &layer.edge_chunks, &layer.edge_corners, &layer.edge_diags, &layer.edge_pts,
+        ]);
+        cores.push(LayerCoreGpu {
+            cull: layer.cull,
+            p0: layer.p0,
+            p1: layer.p1,
+            color: layer.color,
+            meta: layer.meta,
+            style: layer.style,
+            uv0: layer.uv0,
+            uv1: layer.uv1,
+            source_rect: layer.source_rect,
+            fast_flags: layer.fast_flags,
+            tint: layer.tint,
+            dome: layer.dome,
+            edge_extra: layer.edge_extra,
+            pool: [shape, fx, mask, mesh],
+            pool2: [edge, 0, 0, 0],
+        });
+    }
+}
+
+/// Send `new` to `buffer`, which holds `last`: only the `chunk`-byte blocks
+/// that differ (neighbours merged into one write), then anything past the
+/// end of `last`. `full` sends everything when anything changed. Returns
+/// the bytes sent.
+fn write_changed_ranges(queue: &wgpu::Queue, buffer: &wgpu::Buffer, new: &[u8], last: &mut Vec<u8>, chunk: usize, full: bool) -> usize {
+    if new == last.as_slice() {
+        return 0;
+    }
+    let mut sent = 0;
+    if full {
+        churn_probe::write_buffer(queue, buffer, 0, new);
+        sent = new.len();
+    } else {
+        for (start, end) in changed_ranges(new, last, chunk) {
+            churn_probe::write_buffer(queue, buffer, start as u64, &new[start..end]);
+            sent += end - start;
+        }
+    }
+    last.clear();
+    last.extend_from_slice(new);
+    sent
+}
+
+/// The byte ranges of `new` to send over a buffer holding `last`: runs of
+/// differing `chunk`-byte blocks, then whatever lies past `last`'s end.
+fn changed_ranges(new: &[u8], last: &[u8], chunk: usize) -> Vec<(usize, usize)> {
+    let common = new.len().min(last.len()) / chunk * chunk;
+    let mut ranges = Vec::new();
+    let mut at = 0;
+    while at < common {
+        if new[at..at + chunk] == last[at..at + chunk] {
+            at += chunk;
+            continue;
+        }
+        let start = at;
+        while at < common && new[at..at + chunk] != last[at..at + chunk] {
+            at += chunk;
+        }
+        ranges.push((start, at));
+    }
+    if new.len() > common {
+        ranges.push((common, new.len()));
+    }
+    ranges
+}
+
+/// A pool buffer of `capacity` vec4s.
+fn create_layer_pool_buffer(device: &wgpu::Device, capacity: usize, label: &str) -> wgpu::Buffer {
+    device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some(label),
+        size: (capacity * std::mem::size_of::<[f32; 4]>()) as u64,
+        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    })
+}
+
 /// The GPU's memory: Metal's recommended working set (on Apple silicon a
 /// share of the unified memory), or a D3D12 adapter's own memory.
 /// LUID as written to the presenters: HighPart then LowPart, 8 hex digits each.
@@ -1797,23 +1958,53 @@ struct CompositeView {
     layers: Option<CompositeViewLayers>,
     /// Scene bind group 0 over this view's buffers.
     bind_group: wgpu::BindGroup,
-    paint_mask_generation: u64,
+    scene_bindings_generation: u64,
     used_epoch: u64,
 }
 
 struct CompositeViewLayers {
     layer_buffer: wgpu::Buffer,
-    /// LayerGpu slots `layer_buffer` holds.
+    /// LayerCoreGpu slots `layer_buffer` holds.
     slots: usize,
+    pool: LayerPoolState,
     tile_buffer: wgpu::Buffer,
     layer_last: Vec<u8>,
     mesh_cell_bounds_last: Vec<u32>,
     tile_last: Vec<u32>,
 }
 
+/// One composite's pool buffer (see `pack_layer_pools`) and what it and the
+/// core records hold now.
+struct LayerPoolState {
+    buffer: wgpu::Buffer,
+    /// vec4s `buffer` holds.
+    capacity: usize,
+    core_last: Vec<u8>,
+    pool_last: Vec<u8>,
+}
+
+impl LayerPoolState {
+    fn new(device: &wgpu::Device, label: &str) -> Self {
+        Self {
+            buffer: create_layer_pool_buffer(device, POOL_MIN_CAPACITY, label),
+            capacity: POOL_MIN_CAPACITY,
+            core_last: Vec::new(),
+            pool_last: Vec::new(),
+        }
+    }
+}
+
+/// Scratch the packed layers are built in, reused frame to frame.
+#[derive(Default)]
+struct LayerPackScratch {
+    cores: Vec<LayerCoreGpu>,
+    pool: Vec<[f32; 4]>,
+}
+
 /// Where one composite's layers go, and what was sent there last.
 struct CompositeLayerState<'a> {
     layer_buffer: &'a wgpu::Buffer,
+    pool: &'a mut LayerPoolState,
     tile_buffer: &'a wgpu::Buffer,
     layer_last: &'a mut Vec<u8>,
     mesh_cell_bounds_last: &'a mut Vec<u32>,
@@ -1822,14 +2013,19 @@ struct CompositeLayerState<'a> {
 
 /// Send `staged` (the first `filled` of them real layers) to `state`'s
 /// buffers, skipping whatever is unchanged since the last upload there.
+/// True when the pool buffer had to grow: bind groups over it are stale.
+#[allow(clippy::too_many_arguments)]
 fn upload_composite_layers(
+    device: &wgpu::Device,
     queue: &wgpu::Queue,
     staged: &[LayerGpu],
     filled: usize,
     state: CompositeLayerState<'_>,
+    pack: &mut LayerPackScratch,
     mesh_cell_bounds_scratch: &mut Vec<u32>,
     tile_scratch: &mut Vec<u32>,
-) {
+) -> bool {
+    let mut grown = false;
     fit_byte_scratch(state.layer_last, std::mem::size_of_val(staged));
     let layer_bytes: &[u8] = bytemuck::cast_slice(staged);
     if state.layer_last.as_slice() != layer_bytes {
@@ -1843,8 +2039,20 @@ fn upload_composite_layers(
             churn_probe::layer_bytes(mesh_cell_bounds_scratch.len() * 4);
             std::mem::swap(state.mesh_cell_bounds_last, mesh_cell_bounds_scratch);
         }
-        churn_probe::write_buffer(queue, state.layer_buffer, 0, layer_bytes);
-        churn_probe::layer_bytes(layer_bytes.len());
+        let full = layer_upload_full();
+        pack_layer_pools(staged, full, &mut pack.cores, &mut pack.pool);
+        let pool = state.pool;
+        if pack.pool.len() > pool.capacity {
+            pool.capacity = pack.pool.len().next_power_of_two().max(POOL_MIN_CAPACITY);
+            pool.buffer = create_layer_pool_buffer(device, pool.capacity, "Ghost Render Core Layer Pool");
+            pool.pool_last.clear();
+            grown = true;
+        }
+        let sent = write_changed_ranges(queue, state.layer_buffer, bytemuck::cast_slice(&pack.cores),
+            &mut pool.core_last, std::mem::size_of::<LayerCoreGpu>(), full)
+            + write_changed_ranges(queue, &pool.buffer, bytemuck::cast_slice(&pack.pool),
+                &mut pool.pool_last, 256, full);
+        churn_probe::layer_bytes(sent);
         state.layer_last.clear();
         state.layer_last.extend_from_slice(layer_bytes);
     }
@@ -1855,6 +2063,7 @@ fn upload_composite_layers(
         churn_probe::layer_bytes(tile_scratch.len() * 4);
         std::mem::swap(state.tile_last, tile_scratch);
     }
+    grown
 }
 
 fn build_layer_tiles(culls: &[[f32; 4]], out: &mut Vec<u32>) {
@@ -5215,6 +5424,9 @@ struct RenderState {
     /// buffer contents persist, and the compositor only reads slots below
     /// `layer_count`, so skipping is observationally identical.
     layer_upload_last: Vec<u8>,
+    /// The program's layer pool (see `pack_layer_pools`).
+    layer_pool: LayerPoolState,
+    layer_pack_scratch: LayerPackScratch,
     /// Tile bins for the composite (see LAYER_TILES), rebuilt with the layer
     /// upload and sent only when they change.
     layer_tile_buffer: wgpu::Buffer,
@@ -5397,12 +5609,13 @@ struct RenderState {
     last_frame_metrics: Option<SnapshotMetrics>,
     bind_group: wgpu::BindGroup,
     /// Layout of `bind_group`, kept so the group can be rebuilt when the
-    /// paint-mask texture grows.
+    /// paint-mask texture or the layer pool grows.
     scene_bind_group_layout: wgpu::BindGroupLayout,
     paint_mask_texture: wgpu::Texture,
     paint_mask_view: wgpu::TextureView,
-    /// Bumped when the paint-mask texture is remade, so views rebind it.
-    paint_mask_generation: u64,
+    /// Bumped when the program's scene bind group is rebuilt (the paint-mask
+    /// texture was remade or the layer pool grew), so views rebind too.
+    scene_bindings_generation: u64,
     /// Compiled pipelines kept on disk (Vulkan; see pipeline_cache.rs).
     disk_pipeline_cache: Option<pipeline_cache::DiskPipelineCache>,
     paint_mask_size: u32,
@@ -22978,7 +23191,8 @@ impl RenderState {
                 contents: bytemuck::bytes_of(&NativeShaderUniforms::zeroed()),
                 usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             });
-        let empty_layers = vec![LayerGpu::zeroed(); MAX_SCENE_LAYERS];
+        let empty_layers = vec![LayerCoreGpu::zeroed(); MAX_SCENE_LAYERS];
+        let layer_pool = LayerPoolState::new(&device, "Ghost Render Core Layer Pool");
         let layer_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Ghost Render Core Scene Layers"),
             contents: bytemuck::cast_slice(&empty_layers),
@@ -23159,6 +23373,17 @@ impl RenderState {
                     },
                     count: None,
                 },
+                // Layer pool records (pack_layer_pools).
+                wgpu::BindGroupLayoutEntry {
+                    binding: 7,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
             ],
         });
         let paint_mask_texture = Self::create_paint_mask_texture(&device, 1, 1);
@@ -23183,6 +23408,7 @@ impl RenderState {
             &bind_group_layout,
             &uniform_buffer,
             &layer_buffer,
+            &layer_pool.buffer,
             &source_preview_buffer,
             &compositor_sampler,
             &paint_mask_view,
@@ -23664,6 +23890,8 @@ impl RenderState {
             source_preview_buffer,
             layer_upload_scratch: Vec::new(),
             layer_upload_last: Vec::new(),
+            layer_pool,
+            layer_pack_scratch: LayerPackScratch::default(),
             layer_tile_buffer,
             layer_tile_scratch: Vec::with_capacity(LAYER_TILE_HEADER + LAYER_TILE_CELLS + 1),
             layer_tile_last: Vec::new(),
@@ -23778,7 +24006,7 @@ impl RenderState {
             scene_bind_group_layout: bind_group_layout,
             paint_mask_texture,
             paint_mask_view,
-            paint_mask_generation: 0,
+            scene_bindings_generation: 0,
             disk_pipeline_cache,
             paint_mask_size: 1,
             paint_mask_layers: 1,
@@ -28876,20 +29104,26 @@ impl RenderState {
             audio0, audio1, audio2, output_gate, post_effects, stage);
         churn_probe::write_buffer(&self.queue, &self.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
         let (filled, upload_len) = self.stage_layer_upload(scene_layers, layers_seen);
-        upload_composite_layers(
+        let grown = upload_composite_layers(
+            &self.device,
             &self.queue,
             &self.layer_upload_scratch[..upload_len],
             filled,
             CompositeLayerState {
                 layer_buffer: &self.layer_buffer,
+                pool: &mut self.layer_pool,
                 tile_buffer: &self.layer_tile_buffer,
                 layer_last: &mut self.layer_upload_last,
                 mesh_cell_bounds_last: &mut self.mesh_cell_bounds_last,
                 tile_last: &mut self.layer_tile_last,
             },
+            &mut self.layer_pack_scratch,
             &mut self.mesh_cell_bounds_scratch,
             &mut self.layer_tile_scratch,
         );
+        if grown {
+            self.rebind_program_scene();
+        }
 
         if let Some(source_previews) = source_previews {
             // `source_preview_pixel_data` already hands us an exactly-sized,
@@ -28940,20 +29174,36 @@ impl RenderState {
         let Some(view) = self.composite_views.get_mut(key) else { return; };
         churn_probe::write_buffer(&self.queue, &view.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
         let Some(layers) = view.layers.as_mut() else { return; };
-        upload_composite_layers(
+        let grown = upload_composite_layers(
+            &self.device,
             &self.queue,
             &self.layer_upload_scratch[..upload_len],
             filled,
             CompositeLayerState {
                 layer_buffer: &layers.layer_buffer,
+                pool: &mut layers.pool,
                 tile_buffer: &layers.tile_buffer,
                 layer_last: &mut layers.layer_last,
                 mesh_cell_bounds_last: &mut layers.mesh_cell_bounds_last,
                 tile_last: &mut layers.tile_last,
             },
+            &mut self.layer_pack_scratch,
             &mut self.mesh_cell_bounds_scratch,
             &mut self.layer_tile_scratch,
         );
+        if grown {
+            view.bind_group = build_scene_bind_group(
+                &self.device,
+                &self.scene_bind_group_layout,
+                &view.uniform_buffer,
+                &layers.layer_buffer,
+                &layers.pool.buffer,
+                &self.source_preview_buffer,
+                &self.compositor_sampler,
+                &self.paint_mask_view,
+                &layers.tile_buffer,
+            );
+        }
     }
 
     /// Copy `scene_layers` into the upload scratch as the compositor reads
@@ -28989,7 +29239,7 @@ impl RenderState {
             Some(view) if view.layers.is_some() == own_layers => {
                 view.used_epoch = epoch;
                 let grow = view.layers.as_ref().is_some_and(|layers| layers.slots < slots_needed);
-                grow || view.paint_mask_generation != self.paint_mask_generation
+                grow || view.scene_bindings_generation != self.scene_bindings_generation
             }
             _ => {
                 self.composite_views.remove(key);
@@ -29017,7 +29267,7 @@ impl RenderState {
                     let slots = slots_needed.next_power_of_two().min(MAX_SCENE_LAYERS);
                     let layer_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
                         label: Some("Ghost Render Core View Layers"),
-                        size: (slots * std::mem::size_of::<LayerGpu>()) as u64,
+                        size: (slots * std::mem::size_of::<LayerCoreGpu>()) as u64,
                         usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
                         mapped_at_creation: false,
                     });
@@ -29028,11 +29278,13 @@ impl RenderState {
                             layer_buffer,
                             slots,
                             layer_last: Vec::new(),
+                            pool: LayerPoolState { core_last: Vec::new(), ..previous.pool },
                             ..previous
                         },
                         None => CompositeViewLayers {
                             layer_buffer,
                             slots,
+                            pool: LayerPoolState::new(&self.device, "Ghost Render Core View Layer Pool"),
                             // Zeroed like the program's: binning off and
                             // no mesh boxes until the first upload.
                             tile_buffer: self.device.create_buffer(&wgpu::BufferDescriptor {
@@ -29049,15 +29301,16 @@ impl RenderState {
                 }
             }
         });
-        let (layer_buffer, tile_buffer) = match layers.as_ref() {
-            Some(layers) => (&layers.layer_buffer, &layers.tile_buffer),
-            None => (&self.layer_buffer, &self.layer_tile_buffer),
+        let (layer_buffer, pool_buffer, tile_buffer) = match layers.as_ref() {
+            Some(layers) => (&layers.layer_buffer, &layers.pool.buffer, &layers.tile_buffer),
+            None => (&self.layer_buffer, &self.layer_pool.buffer, &self.layer_tile_buffer),
         };
         let bind_group = build_scene_bind_group(
             &self.device,
             &self.scene_bind_group_layout,
             &uniform_buffer,
             layer_buffer,
+            pool_buffer,
             &self.source_preview_buffer,
             &self.compositor_sampler,
             &self.paint_mask_view,
@@ -29067,7 +29320,7 @@ impl RenderState {
             uniform_buffer,
             layers,
             bind_group,
-            paint_mask_generation: self.paint_mask_generation,
+            scene_bindings_generation: self.scene_bindings_generation,
             used_epoch: epoch,
         });
     }
@@ -29109,19 +29362,26 @@ impl RenderState {
             dimension: Some(wgpu::TextureViewDimension::D2Array),
             ..Default::default()
         });
+        self.paint_mask_view = paint_mask_view;
+        self.rebind_program_scene();
+        true
+    }
+
+    /// Rebuild the program's scene bind group (a buffer or view in it was
+    /// replaced) and have every composite view rebuild its own.
+    fn rebind_program_scene(&mut self) {
         self.bind_group = build_scene_bind_group(
             &self.device,
             &self.scene_bind_group_layout,
             &self.uniform_buffer,
             &self.layer_buffer,
+            &self.layer_pool.buffer,
             &self.source_preview_buffer,
             &self.compositor_sampler,
-            &paint_mask_view,
+            &self.paint_mask_view,
             &self.layer_tile_buffer,
         );
-        self.paint_mask_view = paint_mask_view;
-        self.paint_mask_generation = self.paint_mask_generation.wrapping_add(1);
-        true
+        self.scene_bindings_generation = self.scene_bindings_generation.wrapping_add(1);
     }
 
     fn write_paint_mask(&self, upload: &paint_mask::PaintMaskUpload) {
@@ -35698,6 +35958,7 @@ fn build_scene_bind_group(
     layout: &wgpu::BindGroupLayout,
     uniform_buffer: &wgpu::Buffer,
     layer_buffer: &wgpu::Buffer,
+    layer_pool_buffer: &wgpu::Buffer,
     source_preview_buffer: &wgpu::Buffer,
     sampler: &wgpu::Sampler,
     paint_mask_view: &wgpu::TextureView,
@@ -35713,6 +35974,7 @@ fn build_scene_bind_group(
             wgpu::BindGroupEntry { binding: 4, resource: wgpu::BindingResource::Sampler(sampler) },
             wgpu::BindGroupEntry { binding: 5, resource: wgpu::BindingResource::TextureView(paint_mask_view) },
             wgpu::BindGroupEntry { binding: 6, resource: layer_tile_buffer.as_entire_binding() },
+            wgpu::BindGroupEntry { binding: 7, resource: layer_pool_buffer.as_entire_binding() },
         ],
     })
 }
@@ -38038,6 +38300,51 @@ mod tests {
     }
 
     #[test]
+    fn layer_pools_hold_only_what_layers_use() {
+        use super::*;
+        let plain = LayerGpu::zeroed();
+        let mut masked = LayerGpu::zeroed();
+        masked.mask_info = [1.0, 0.0, 0.0, 3.0];
+        masked.mask[2] = [0.5, 0.25, 0.0, 0.0];
+        let mut cores = Vec::new();
+        let mut pool = Vec::new();
+        pack_layer_pools(&[plain, masked], false, &mut cores, &mut pool);
+        assert_eq!(cores[0].pool, [0; 4]);
+        assert_eq!(cores[0].pool2, [0; 4]);
+        // Only the mask record follows the shared zero record.
+        assert_eq!(pool.len(), POOL_ZERO_LEN + POOL_MASK_LEN);
+        let base = cores[1].pool[2] as usize;
+        assert_eq!(base, POOL_ZERO_LEN);
+        assert_eq!(pool[base], masked.mask_info);
+        assert_eq!(pool[base + POOL_MASK_PTS + 2], masked.mask[2]);
+        assert!(pool[..POOL_ZERO_LEN].iter().all(|v| *v == [0.0; 4]));
+        // Full: every layer carries every record.
+        pack_layer_pools(&[plain, masked], true, &mut cores, &mut pool);
+        let per_layer = POOL_SHAPE_LEN + POOL_FX_LEN + POOL_MASK_LEN + POOL_MESH_LEN + POOL_EDGE_LEN;
+        assert_eq!(pool.len(), POOL_ZERO_LEN + 2 * per_layer);
+    }
+
+    #[test]
+    fn changed_ranges_send_only_what_differs() {
+        use super::changed_ranges;
+        let last = vec![0u8; 64];
+        let mut new = last.clone();
+        assert!(changed_ranges(&new, &last, 16).is_empty());
+        new[17] = 1;
+        new[40] = 1;
+        new[63] = 1;
+        assert_eq!(changed_ranges(&new, &last, 16), vec![(16, 64)]);
+        new[40] = 0;
+        assert_eq!(changed_ranges(&new, &last, 16), vec![(16, 32), (48, 64)]);
+        // Longer than before: the tail goes too; shorter: nothing past it.
+        new.extend_from_slice(&[7; 8]);
+        new[17] = 0;
+        new[63] = 0;
+        assert_eq!(changed_ranges(&new, &last, 16), vec![(64, 72)]);
+        assert!(changed_ranges(&last[..32], &last, 16).is_empty());
+    }
+
+    #[test]
     fn layer_upload_scratch_follows_the_scene_not_the_layer_limit() {
         use super::{fit_byte_scratch, fit_layer_upload_scratch, LayerGpu, LAYER_UPLOAD_SCRATCH_MIN_SLOTS, MAX_SCENE_LAYERS};
 
@@ -38484,7 +38791,7 @@ mod tests {
         )
         .validate(&module)
         .unwrap_or_else(|error| panic!("heartbeat.wgsl validation: {error:?}"));
-        // The storage struct must stay byte-compatible with LayerGpu.
+        // The storage struct must stay byte-compatible with LayerCoreGpu.
         let layer_data = module
             .types
             .iter()
@@ -38493,7 +38800,19 @@ mod tests {
         let naga::TypeInner::Struct { span, .. } = layer_data.1.inner else {
             panic!("LayerData is a struct");
         };
-        assert_eq!(span as usize, std::mem::size_of::<LayerGpu>());
+        assert_eq!(span as usize, std::mem::size_of::<LayerCoreGpu>());
+        assert!(std::mem::size_of::<LayerCoreGpu>() <= 256);
+        // The pool record offsets the shader reads by.
+        let source = heartbeat_wgsl(SourceFrameMode::Shared, 1);
+        for (name, value) in [
+            ("POOL_SHAPE_PTS", POOL_SHAPE_PTS), ("POOL_MASK_PTS", POOL_MASK_PTS),
+            ("POOL_MESH_POINTS", POOL_MESH_POINTS), ("POOL_MESH_REST", POOL_MESH_REST),
+            ("POOL_MESH_TANGENTS", POOL_MESH_TANGENTS), ("POOL_EDGE_EFFECTS", POOL_EDGE_EFFECTS),
+            ("POOL_EDGE_CHUNKS", POOL_EDGE_CHUNKS), ("POOL_EDGE_CORNERS", POOL_EDGE_CORNERS),
+            ("POOL_EDGE_DIAGS", POOL_EDGE_DIAGS), ("POOL_EDGE_PTS", POOL_EDGE_PTS),
+        ] {
+            assert!(source.contains(&format!("const {name}: u32 = {value}u;")), "{name} = {value} in heartbeat.wgsl");
+        }
         // And the uniform block with Uniforms, dome fields at the tail included.
         let uniforms = module
             .types

@@ -420,9 +420,9 @@ suite('Compositor scene set', () => {
         runs.push([name, run]);
         lines.push(`  ${scene.name.padEnd(20)} ${name.padEnd(12)} gpu median ${run.gpuMs?.toFixed(2) ?? 'n/a'} ms, p10 ${run.gpuP10?.toFixed(2) ?? 'n/a'} ms, layer upload ${run.layerBytesPerFrame?.toFixed(0) ?? 'n/a'} B/frame`);
       }
-      if (runs.length >= 2) {
-        const diff = difference(runs[0][1], runs[1][1]);
-        lines.push(`  ${''.padEnd(20)} ${runs[0][0]} vs ${runs[1][0]}: max diff ${diff.max}, differing ${(diff.differing * 100).toFixed(3)}%`);
+      for (const [name, run] of runs.slice(1)) {
+        const diff = difference(runs[0][1], run);
+        lines.push(`  ${''.padEnd(20)} ${runs[0][0]} vs ${name}: max diff ${diff.max}, differing ${(diff.differing * 100).toFixed(3)}%`);
       }
     }
     console.log(lines.join('\n'));
