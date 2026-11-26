@@ -168,7 +168,8 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             native-renderer/target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('native-renderer/Cargo.lock') }}
+            phone-server/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('native-renderer/Cargo.lock', 'phone-server/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-cargo-
 
       - name: Test Screen presentation capability
@@ -185,6 +186,7 @@ jobs:
         run: |
           node scripts/windows-core-imports.mjs native-renderer/target/release/ghost-render-core.exe --info native-renderer/target/release/dxcompiler.dll native-renderer/target/release/dxil.dll
           node scripts/native-core-start-check.mjs
+          node scripts/windows-core-imports.mjs phone-server/target/release/ghost-phone-server.exe
 
       - name: Build Electron (Windows NSIS, signed via Azure Trusted Signing)
         # --publish never disables electron-builder's auto-publish step. With
@@ -285,7 +287,8 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             native-renderer/target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('native-renderer/Cargo.lock') }}
+            phone-server/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('native-renderer/Cargo.lock', 'phone-server/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-cargo-
 
       - name: Test Screen presentation capability
@@ -473,7 +476,8 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             native-renderer/target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('native-renderer/Cargo.lock') }}
+            phone-server/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('native-renderer/Cargo.lock', 'phone-server/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-cargo-
 
       - name: Test Screen presentation capability

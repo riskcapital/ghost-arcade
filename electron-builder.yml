@@ -50,6 +50,15 @@ extraResources:
       - ghost-render-core.exe
       - dxcompiler.dll
       - dxil.dll
+  # The phone remote server (phone-server/, Rust), started instead of
+  # server/ws-server.js when GA_RUST_PHONE_SERVER=1 (electron/main.js). It
+  # resolves from `{resourcesPath}/phone-server/ghost-phone-server` — see
+  # server/phone-server-rust.js. Without it the app uses the JS server.
+  - from: phone-server/target/release/
+    to: phone-server/
+    filter:
+      - ghost-phone-server
+      - ghost-phone-server.exe
   # The cloud instruments' default scan (ply_reader.rs scan_path_or_default
   # finds it beside the core).
   - from: native-renderer/assets/
