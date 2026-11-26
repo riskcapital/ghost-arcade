@@ -12,10 +12,12 @@ import { describe, expect, it } from 'vitest';
 import { createRequire } from 'node:module';
 import fs from 'node:fs';
 import path from 'node:path';
-import type { PixelMapConfig, PixelMapFixture, WLEDColorSamplingMode, WLEDTestPattern } from '../types';
+import type { PixelMapConfig, PixelMapFixture, WLEDColorSamplingMode, WLEDController, WLEDTestPattern } from '../types';
 import { calibrateWLEDPixels, fillWLEDTestPattern, sampleWLEDSourcePixels } from '../wled/mapping';
 import { buildPixelMapFrame, createDefaultPixelMapConfig, createPixelMapFixture, normalizePixelMapConfig } from './fixtures';
 import { buildCorePixelMapPlan } from './corePlan';
+import { buildCoreWLEDPlan } from '../wled/corePlan';
+import { applyWLEDEffects } from '../wled/effects';
 
 const require = createRequire(import.meta.url);
 const packets = require('../../../electron/pixelmap-packets.cjs');
@@ -262,6 +264,57 @@ async function outputScenario() {
   };
 }
 
+function wledControllers(): WLEDController[] {
+  const base = { ipAddr: '127.0.0.1', port: 21324, enabled: true, brightness: 1, gamma: 1 };
+  return [
+    // A new controller as the panel makes it: auto grid, dominant sampling.
+    { ...base, id: 'grid', name: 'Grid', ledCount: 60 },
+    { ...base, id: 'strip', name: 'Strip', ledCount: 300, brightness: 0.8, gamma: 2.2, samplingMode: 'average',
+      mapping: { mode: 'strip', axis: 'horizontal', columns: 16, serpentine: false, reverse: true, flipX: false, flipY: false, sourceRegion: { x: 0.1, y: 0.2, width: 0.8, height: 0.5 }, sampleRadius: 0.02 } },
+    { ...base, id: 'matrix', name: 'Matrix', ledCount: 256, samplingMode: 'luma-hue', calibration: { saturation: 1.3, redGain: 0.9, blackThreshold: 0.03 },
+      mapping: { mode: 'matrix', axis: 'vertical', columns: 16, serpentine: true, reverse: false, flipX: true, flipY: false, sourceRegion: { x: 0, y: 0, width: 1, height: 1 }, sampleRadius: 0.05 } },
+    { ...base, id: 'custom', name: 'Custom', ledCount: 4, samplingMode: 'highlight', gamma: 0.7,
+      mapping: { mode: 'custom', axis: 'horizontal', columns: 8, serpentine: false, reverse: false, flipX: false, flipY: true, sourceRegion: { x: 0, y: 0, width: 1, height: 1 }, sampleRadius: 0.12,
+        points: [{ x: 0.1, y: 0.1 }, { x: 0.9, y: 0.2 }, { x: 0.5, y: 0.5 }, { x: 0.2, y: 0.95 }] } },
+    { ...base, id: 'smooth', name: 'Smoothed', ledCount: 490, samplingMode: 'palette', calibration: { smoothing: 0.6, colorMatrix: [0.9, 0.1, 0, 0.05, 0.9, 0.05, 0, 0.2, 0.8] } },
+    { ...base, id: 'solid', name: 'Test solid', ledCount: 7, testPattern: 'solid', testColor: '#123456', brightness: 0.5 },
+  ] as WLEDController[];
+}
+
+/**
+ * Two editor-path WLED ticks (sender.ts packRGB with no LED FX, no
+ * Timeline) over `image` for every controller, then forced black, as the
+ * DRGB packets wled-packet.cjs builds.
+ */
+function wledEndToEnd(image: ReturnType<typeof picture>) {
+  const controllers = wledControllers();
+  const plan = buildCoreWLEDPlan(controllers, image.width / image.height);
+  const ticks: Array<Record<string, string>> = [[], [], []].map(() => ({}));
+  for (const controller of plan.controllers) {
+    const count = controller.points.length / 2;
+    const points = Array.from({ length: count }, (_, i) => ({ x: controller.points[i * 2], y: controller.points[i * 2 + 1] }));
+    const options = { brightness: controller.brightness, gamma: controller.gamma, calibration: controller.calibration };
+    const source = new Uint8Array(count * 3);
+    const effect = new Uint8Array(count * 3);
+    const rgb = new Uint8Array(count * 3);
+    const previous = new Uint8Array(count * 3);
+    sampleWLEDSourcePixels(image.data, image.width, image.height, points, controller.sampleRadius, source, controller.samplingMode as WLEDColorSamplingMode);
+    for (let tick = 0; tick < 3; tick += 1) {
+      const forceBlack = tick === 2;
+      if (controller.testPattern !== 'off') {
+        fillWLEDTestPattern(controller.testPattern as WLEDTestPattern, controller.testColor, 0, rgb, options, previous);
+      } else {
+        applyWLEDEffects(source, effect, controllers.find(c => c.id === controller.id)!, [], [], undefined, 0, 120);
+        calibrateWLEDPixels(effect, rgb, options, previous);
+      }
+      if (forceBlack) rgb.fill(0);
+      previous.set(rgb);
+      ticks[tick][controller.id] = hex(buildWLEDRealtimePacket(rgb));
+    }
+  }
+  return { plan, ticks };
+}
+
 async function buildVectors() {
   const image = picture();
   return {
@@ -273,6 +326,7 @@ async function buildVectors() {
     calibration: calibrationVectors(),
     patterns: patternVectors(),
     endToEnd: endToEnd(image),
+    wled: wledEndToEnd(image),
     output: await outputScenario(),
   };
 }

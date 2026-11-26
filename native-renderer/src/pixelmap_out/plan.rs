@@ -90,7 +90,7 @@ fn color_order(order: &str) -> Result<Vec<usize>, String> {
     Ok(order.chars().map(|c| "RGBW".find(c).unwrap_or(0)).collect())
 }
 
-fn parse_options(fixture: &Value) -> PixelOptions {
+pub(crate) fn parse_options(fixture: &Value) -> PixelOptions {
     let calibration = fixture.get("calibration").cloned().unwrap_or(Value::Null);
     PixelOptions {
         brightness: num(fixture, "brightness"),

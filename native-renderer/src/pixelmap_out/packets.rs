@@ -28,9 +28,7 @@ const SACN_OPTION_PREVIEW: u8 = 0x80;
 const SACN_OPTION_TERMINATED: u8 = 0x40;
 const SACN_OPTION_FORCE_SYNC: u8 = 0x20;
 
-// WLED still sends from the app (electron/wled-link.cjs); the packet is
-// ported and checked against it here for the core's WLED output.
-#[cfg_attr(not(test), allow(dead_code))]
+/// One DRGB packet carries at most this many LEDs.
 pub(crate) const WLED_MAX_LEDS: usize = 490;
 
 fn dmx_data(data: &[u8]) -> Result<&[u8], String> {
@@ -184,7 +182,6 @@ pub(crate) fn sacn_multicast_address(universe: u32) -> Result<std::net::Ipv4Addr
 }
 
 /// WLED DRGB (protocol 2): protocol byte, timeout seconds, RGB triples.
-#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn build_wled_realtime(pixels: &[u8]) -> Result<Vec<u8>, String> {
     if pixels.len() < 3 || pixels.len() > WLED_MAX_LEDS * 3 || pixels.len() % 3 != 0 {
         return Err("WLED requires 1–490 RGB LEDs per controller".to_string());
