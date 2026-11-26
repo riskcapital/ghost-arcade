@@ -108,7 +108,13 @@ pub struct HapVideoDecoder {
     timescale: f64,
     cursor: usize,
     end: f64,
+    /// Block buffers handed out in frames, reused once every frame holding
+    /// one has been dropped (a 4K HAP Q frame is about 8 MB).
+    slabs: Vec<Arc<Vec<u8>>>,
 }
+/// Buffers a decoder keeps for reuse: the queued frame, the one being shown
+/// and the one being decoded. `frame_budget_bytes` already counts three.
+const RECYCLED_SLABS: usize = 3;
 impl HapVideoDecoder {
     /// Like `open`, but says whether a refusal is about a HAP movie (its
     /// reason is then the one to show) or about a file that is not HAP at
@@ -216,6 +222,7 @@ impl HapVideoDecoder {
                 timescale,
                 cursor: 0,
                 end: duration_seconds,
+                slabs: Vec::new(),
             });
         }
         match unsupported {
@@ -268,16 +275,38 @@ impl HapVideoDecoder {
         self.file
             .read_exact(&mut self.packet)
             .map_err(|e| e.to_string())?;
-        let blocks = decode_packet(&self.packet, self.format, expected)?;
+        let duration = sample.duration;
+        let blocks = self.decode_into_slab(expected)?;
         self.cursor += 1;
         Ok(Some(HapFrame {
             width: self.metadata.width,
             height: self.metadata.height,
             pts_seconds,
-            duration_seconds: sample.duration as f64 / self.timescale,
+            duration_seconds: duration as f64 / self.timescale,
             format: self.format,
-            blocks: Arc::new(blocks),
+            blocks,
         }))
+    }
+    /// Decodes the packet just read into a buffer no frame still holds,
+    /// keeping up to `RECYCLED_SLABS` of them; past that a frame gets a
+    /// buffer of its own, freed with it as before.
+    fn decode_into_slab(&mut self, expected: usize) -> Result<Arc<Vec<u8>>> {
+        let free = self.slabs.iter_mut().position(|slab| Arc::get_mut(slab).is_some());
+        let index = match free {
+            Some(index) => index,
+            None if self.slabs.len() < RECYCLED_SLABS => {
+                self.slabs.push(Arc::new(Vec::new()));
+                self.slabs.len() - 1
+            }
+            None => {
+                let mut blocks = Vec::new();
+                decode_packet_into(&self.packet, self.format, expected, &mut blocks)?;
+                return Ok(Arc::new(blocks));
+            }
+        };
+        let slab = Arc::get_mut(&mut self.slabs[index]).expect("free slab is unshared");
+        decode_packet_into(&self.packet, self.format, expected, slab)?;
+        Ok(self.slabs[index].clone())
     }
     pub fn step_frame(
         &mut self,
@@ -539,39 +568,115 @@ fn section(b: &[u8]) -> Result<(u8, &[u8], usize)> {
     let end = head.checked_add(n).ok_or_else(bad)?;
     Ok((h[3], b.get(head..end).ok_or_else(bad)?, end))
 }
-fn decode_chunk(input: &[u8], compressor: u8, output: &mut Vec<u8>, limit: usize) -> Result<()> {
-    let n = match compressor {
-        0x0a => input.len(),
-        0x0b => snap::raw::decompress_len(input).map_err(|e| e.to_string())?,
-        _ => return Err(bad()),
-    };
-    if n > limit.saturating_sub(output.len()) {
-        return Err("HAP block data exceeds frame dimensions".into());
+/// One second-stage chunk of a frame: compressed bytes, compressor and the
+/// exact number of texture bytes it expands to.
+struct Chunk<'a> {
+    input: &'a [u8],
+    compressor: u8,
+    len: usize,
+}
+fn chunk_len(input: &[u8], compressor: u8) -> Result<usize> {
+    match compressor {
+        0x0a => Ok(input.len()),
+        0x0b => snap::raw::decompress_len(input).map_err(|e| e.to_string()),
+        _ => Err(bad()),
     }
-    let at = output.len();
-    output.resize(at + n, 0);
-    if compressor == 0x0a {
-        output[at..].copy_from_slice(input);
-    } else {
-        snap::raw::Decoder::new()
-            .decompress(input, &mut output[at..])
-            .map_err(|e| e.to_string())?;
+}
+fn expand_chunk(chunk: &Chunk, output: &mut [u8], snappy: &mut snap::raw::Decoder) -> Result<()> {
+    if chunk.compressor == 0x0a {
+        output.copy_from_slice(chunk.input);
+    } else if snappy.decompress(chunk.input, output).map_err(|e| e.to_string())? != output.len() {
+        return Err(bad());
     }
     Ok(())
 }
-pub fn decode_packet(packet: &[u8], format: HapFormat, expected: usize) -> Result<Vec<u8>> {
-    let (kind, body, end) = section(packet)?;
-    let tag = match format {
-        HapFormat::Rgb => 0x0b,
-        HapFormat::Alpha => 0x0e,
-        HapFormat::YCoCg => 0x0f,
-    };
-    if end != packet.len() || kind & 15 != tag || expected > MAX_PACKET_BYTES {
-        return Err(bad());
+/// Below this a frame expands faster on one thread than it takes to wake
+/// others (a 1080p HAP frame is about 1-2 MB).
+const PARALLEL_MIN_BYTES: usize = 512 * 1024;
+/// Worker threads one frame may use, besides the decoding thread itself.
+fn frame_workers() -> usize {
+    static WORKERS: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    *WORKERS.get_or_init(|| {
+        std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(1)
+            .saturating_sub(1)
+            .clamp(0, 7)
+    })
+}
+/// Expands every chunk into `output` (exactly `expected` bytes). Chunks are
+/// independent, so a large frame's chunks expand on several threads, each
+/// writing its own disjoint part of the one output buffer.
+fn expand_chunks(chunks: &[Chunk], output: &mut Vec<u8>, expected: usize) -> Result<()> {
+    let mut total = 0usize;
+    for chunk in chunks {
+        total = total.checked_add(chunk.len).ok_or_else(bad)?;
+        if total > expected {
+            return Err("HAP block data exceeds frame dimensions".into());
+        }
     }
-    let mut output = Vec::with_capacity(expected);
+    if total != expected {
+        return Err("HAP block data does not match frame dimensions".into());
+    }
+    // A recycled buffer already has this length: no clearing, no allocation.
+    output.resize(expected, 0);
+    // Stored (uncompressed) chunks are plain copies, bound by memory
+    // bandwidth: only Snappy expansion is worth spreading over threads.
+    let snappy_bytes: usize = chunks.iter().filter(|c| c.compressor == 0x0b).map(|c| c.len).sum();
+    let workers = frame_workers().min(chunks.len().saturating_sub(1));
+    if workers == 0 || snappy_bytes < PARALLEL_MIN_BYTES {
+        let mut snappy = snap::raw::Decoder::new();
+        let mut rest = output.as_mut_slice();
+        for chunk in chunks {
+            let (out, tail) = rest.split_at_mut(chunk.len);
+            expand_chunk(chunk, out, &mut snappy)?;
+            rest = tail;
+        }
+        return Ok(());
+    }
+    // Split the chunks into `workers + 1` runs of about equal output size.
+    let mut runs: Vec<(&[Chunk], &mut [u8])> = Vec::with_capacity(workers + 1);
+    let share = expected.div_ceil(workers + 1);
+    let mut rest = output.as_mut_slice();
+    let (mut first, mut bytes) = (0usize, 0usize);
+    for (i, chunk) in chunks.iter().enumerate() {
+        bytes += chunk.len;
+        if bytes >= share || i + 1 == chunks.len() {
+            let (out, tail) = rest.split_at_mut(bytes);
+            runs.push((&chunks[first..=i], out));
+            rest = tail;
+            first = i + 1;
+            bytes = 0;
+        }
+    }
+    let expand_run = |(run, mut out): (&[Chunk], &mut [u8])| -> Result<()> {
+        let mut snappy = snap::raw::Decoder::new();
+        for chunk in run {
+            let (part, tail) = out.split_at_mut(chunk.len);
+            expand_chunk(chunk, part, &mut snappy)?;
+            out = tail;
+        }
+        Ok(())
+    };
+    let mut runs = runs.into_iter();
+    let own = runs.next();
+    std::thread::scope(|scope| {
+        let handles: Vec<_> = runs.map(|run| scope.spawn(move || expand_run(run))).collect();
+        let mut result = own.map_or(Ok(()), expand_run);
+        for handle in handles {
+            let joined = handle.join().unwrap_or_else(|_| Err("HAP chunk decode panicked".into()));
+            if result.is_ok() {
+                result = joined;
+            }
+        }
+        result
+    })
+}
+/// The chunks of one texture section: a single simple or Snappy chunk, or a
+/// chunked frame's table (section type 0x0c).
+fn texture_chunks(kind: u8, body: &[u8]) -> Result<Vec<Chunk<'_>>> {
     match kind >> 4 {
-        0x0a | 0x0b => decode_chunk(body, kind >> 4, &mut output, expected)?,
+        c @ (0x0a | 0x0b) => Ok(vec![Chunk { input: body, compressor: c, len: chunk_len(body, c)? }]),
         0x0c => {
             let (ty, instructions, head) = section(body)?;
             if ty != 1 {
@@ -614,6 +719,7 @@ pub fn decode_packet(packet: &[u8], format: HapFormat, expected: usize) -> Resul
             }
             let payload = &body[head..];
             let mut offset = 0usize;
+            let mut chunks = Vec::with_capacity(compressors.len());
             for (i, compressor) in compressors.iter().enumerate() {
                 if let Some(offsets) = offsets {
                     offset = le32(offsets, i * 4)? as usize;
@@ -621,21 +727,33 @@ pub fn decode_packet(packet: &[u8], format: HapFormat, expected: usize) -> Resul
                 let end = offset
                     .checked_add(le32(sizes, i * 4)? as usize)
                     .ok_or_else(bad)?;
-                decode_chunk(
-                    payload.get(offset..end).ok_or_else(bad)?,
-                    *compressor,
-                    &mut output,
-                    expected,
-                )?;
+                let input = payload.get(offset..end).ok_or_else(bad)?;
+                chunks.push(Chunk { input, compressor: *compressor, len: chunk_len(input, *compressor)? });
                 offset = end;
             }
+            Ok(chunks)
         }
-        _ => return Err(bad()),
+        _ => Err(bad()),
     }
-    if output.len() != expected {
-        return Err("HAP block data does not match frame dimensions".into());
-    }
+}
+#[cfg(test)]
+pub fn decode_packet(packet: &[u8], format: HapFormat, expected: usize) -> Result<Vec<u8>> {
+    let mut output = Vec::new();
+    decode_packet_into(packet, format, expected, &mut output)?;
     Ok(output)
+}
+/// Expands a frame's texture blocks into `output`, reusing its memory.
+pub fn decode_packet_into(packet: &[u8], format: HapFormat, expected: usize, output: &mut Vec<u8>) -> Result<()> {
+    let (kind, body, end) = section(packet)?;
+    let tag = match format {
+        HapFormat::Rgb => 0x0b,
+        HapFormat::Alpha => 0x0e,
+        HapFormat::YCoCg => 0x0f,
+    };
+    if end != packet.len() || kind & 15 != tag || expected > MAX_PACKET_BYTES {
+        return Err(bad());
+    }
+    expand_chunks(&texture_chunks(kind, body)?, output, expected)
 }
 
 #[cfg(test)]
@@ -676,6 +794,42 @@ mod tests {
             assert!(decode_packet(&packet(0xcb, &body[..n]), HapFormat::Rgb, 8).is_err());
         }
         assert!(decode_packet(&[0, 0, 0, 0xbb, 255, 255, 255, 255], HapFormat::Rgb, 8).is_err());
+    }
+    /// A chunked frame large enough to expand on several threads, with
+    /// uneven Snappy and stored chunks, comes out byte for byte in order.
+    #[test]
+    fn large_chunked_frames_expand_in_parallel_in_order() {
+        let expected: Vec<u8> = (0..3_000_000u32).map(|i| ((i / 7) ^ (i >> 13)) as u8).collect();
+        let cuts = [0usize, 1, 400_000, 400_016, 1_200_000, 2_000_000, 2_999_999, 3_000_000];
+        let (mut compressors, mut sizes, mut payload) = (Vec::new(), Vec::new(), Vec::new());
+        for (n, pair) in cuts.windows(2).enumerate() {
+            let part = &expected[pair[0]..pair[1]];
+            let bytes = if n % 3 == 1 { part.to_vec() } else { snap::raw::Encoder::new().compress_vec(part).unwrap() };
+            compressors.push(if n % 3 == 1 { 0x0a } else { 0x0b });
+            sizes.extend((bytes.len() as u32).to_le_bytes());
+            payload.extend(bytes);
+        }
+        let long = |kind: u8, body: &[u8]| {
+            let mut p = vec![0, 0, 0, kind];
+            p.extend((body.len() as u32).to_le_bytes());
+            p.extend(body);
+            p
+        };
+        let mut instructions = packet(2, &compressors);
+        instructions.extend(packet(3, &sizes));
+        let mut body = packet(1, &instructions);
+        body.extend(&payload);
+        let frame = long(0xcf, &body);
+        let mut slab = vec![9u8; expected.len()];
+        decode_packet_into(&frame, HapFormat::YCoCg, expected.len(), &mut slab).unwrap();
+        assert!(slab == expected);
+        assert!(decode_packet(&frame, HapFormat::YCoCg, expected.len() - 1).is_err());
+        assert!(decode_packet(&frame, HapFormat::YCoCg, expected.len() + 1).is_err());
+        // A corrupt chunk on a worker thread fails the whole frame.
+        let mut broken = frame.clone();
+        let at = broken.len() - 10;
+        broken[at..].fill(0xff);
+        assert!(decode_packet(&broken, HapFormat::YCoCg, expected.len()).is_err());
     }
     #[test]
     fn hap_shader_validates() {
@@ -820,6 +974,36 @@ mod tests {
         assert!(sniff_hap_codec(&mjpeg).is_none());
         assert!(matches!(HapVideoDecoder::open_checked(&mjpeg), Err(HapOpenError::NotHap)));
         std::fs::remove_dir_all(dir).unwrap();
+    }
+    /// Times frame decode (read + chunk expansion) over GA_HAP_BENCH_FILE.
+    #[test]
+    #[ignore = "Requires GA_HAP_BENCH_FILE pointing at a HAP movie"]
+    fn decode_timing_report() {
+        let path = std::env::var("GA_HAP_BENCH_FILE").expect("Set GA_HAP_BENCH_FILE");
+        let mut decoder = HapVideoDecoder::open(std::path::Path::new(&path)).unwrap();
+        let mut times = Vec::new();
+        let mut held = std::collections::VecDeque::new();
+        for _ in 0..5 {
+            decoder.seek(0.0, None).unwrap();
+            loop {
+                let started = std::time::Instant::now();
+                let Some(frame) = decoder.next_frame().unwrap() else { break };
+                times.push(started.elapsed().as_secs_f64() * 1000.0);
+                // Like playback: one frame queued, one being shown.
+                held.push_back(frame);
+                if held.len() > 2 {
+                    held.pop_front();
+                }
+            }
+        }
+        times.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        let mean = times.iter().sum::<f64>() / times.len() as f64;
+        println!(
+            "HAP decode {path}: {} frames, mean {mean:.2} ms, median {:.2} ms, p95 {:.2} ms",
+            times.len(),
+            times[times.len() / 2],
+            times[times.len() * 95 / 100]
+        );
     }
     /// Opens and decodes every .mov under GA_HAP_SAMPLE_DIR and prints one
     /// line per file: how the native HAP path takes it, or why not.
