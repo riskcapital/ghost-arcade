@@ -85,3 +85,78 @@ describe('Link phase anchor and output trim', () => {
     vi.unstubAllGlobals();
   });
 });
+
+describe('Link start/stop', () => {
+  it('hears a start pushed from the main process at once, with its bar and its time on this clock', async () => {
+    vi.useFakeTimers();
+    let now = 1000;
+    vi.spyOn(performance, 'now').mockImplementation(() => now);
+    let push: ((ev: any) => void) | null = null;
+    vi.stubGlobal('window', { electronAPI: { on: (channel: string, cb: (ev: any) => void) => { if (channel === 'link-event') push = cb; return () => { push = null; }; } } });
+    vi.mocked(invoke).mockImplementation(async (command: string) => {
+      if (command === 'link_enable') return { ok: true } as any;
+      // Link's clock reads 50 s while this one reads 1000 ms (a 2 ms round trip).
+      now += 2;
+      return { enabled: true, peers: 1, beat: 30, phase: 2, quantum: 4, tempo: 120, playing: false, micros: 50_000_000, playingMicros: 40_000_000, playingBeat: 10 } as any;
+    });
+    const heard: any[] = [];
+    const off = abletonLink.onTransport((c) => heard.push(c));
+    expect(await abletonLink.enable()).toBe(true);
+    // Where the session already is is not a change.
+    expect(heard).toEqual([]);
+    expect(push).not.toBeNull();
+    // Live starts on beat 32, 1 s on (Link 51 s), heard 0.4 ms after.
+    now = 2001.4;
+    push!({ type: 'startStop', enabled: true, peers: 1, beat: 32.0008, phase: 0.0008, quantum: 4, tempo: 120, playing: true, micros: 51_000_400, playingMicros: 51_000_000, playingBeat: 32 });
+    expect(heard).toHaveLength(1);
+    expect(heard[0].playing).toBe(true);
+    expect(heard[0].beat).toBe(32);
+    expect(heard[0].atMs).toBeCloseTo(2001, 6);
+    expect(get(abletonLink).playing).toBe(true);
+    // The next poll reads the same start: not told twice.
+    vi.mocked(invoke).mockResolvedValue({ enabled: true, peers: 1, beat: 32.5, phase: 0.5, quantum: 4, tempo: 120, playing: true, micros: 51_250_000, playingMicros: 51_000_000, playingBeat: 32 } as any);
+    await vi.advanceTimersByTimeAsync(250);
+    expect(heard).toHaveLength(1);
+    off();
+    await abletonLink.disable();
+    expect(push).toBeNull();
+    vi.unstubAllGlobals();
+  });
+
+  it('a poll tells a stop when no push came (an older addon)', async () => {
+    vi.useFakeTimers();
+    vi.mocked(invoke).mockImplementation(async (command: string) => {
+      if (command === 'link_enable') return { ok: true } as any;
+      return { enabled: true, peers: 1, beat: 8, phase: 0, quantum: 4, tempo: 120, playing: true } as any;
+    });
+    const heard: any[] = [];
+    const off = abletonLink.onTransport((c) => heard.push(c));
+    await abletonLink.enable();
+    vi.mocked(invoke).mockResolvedValue({ enabled: true, peers: 1, beat: 9, phase: 1, quantum: 4, tempo: 120, playing: false } as any);
+    await vi.advanceTimersByTimeAsync(250);
+    expect(heard).toEqual([{ playing: false, beat: null, atMs: null, peers: 1 }]);
+    off();
+  });
+
+  it('starts the session on a bar, stops it, and remembers the setting', async () => {
+    const kept = new Map<string, string>();
+    vi.stubGlobal('localStorage', { getItem: (k: string) => kept.get(k) ?? null, setItem: (k: string, v: string) => kept.set(k, v) });
+    vi.mocked(invoke).mockImplementation(async (command: string) => {
+      if (command === 'link_enable' || command.startsWith('link_set_playing')) return { ok: true } as any;
+      return { enabled: true, peers: 1, beat: 8, phase: 0, quantum: 4, tempo: 120 } as any;
+    });
+    expect(await abletonLink.setPlaying(true, 16)).toBe(false); // Link off: nothing is sent
+    await abletonLink.enable();
+    vi.mocked(invoke).mockClear();
+    expect(await abletonLink.setPlaying(true, 16)).toBe(true);
+    expect(invoke).toHaveBeenCalledWith('link_set_playing_at_beat', { playing: true, beat: 16, quantum: 4 });
+    expect(await abletonLink.setPlaying(false)).toBe(true);
+    expect(invoke).toHaveBeenCalledWith('link_set_playing', { playing: false });
+    abletonLink.setStartStopSync(true);
+    expect(get(abletonLink).startStopSync).toBe(true);
+    expect(kept.get('ghost-arcade-ableton-link-start-stop-sync')).toBe('1');
+    abletonLink.setStartStopSync(false);
+    expect(kept.get('ghost-arcade-ableton-link-start-stop-sync')).toBe('0');
+    vi.unstubAllGlobals();
+  });
+});

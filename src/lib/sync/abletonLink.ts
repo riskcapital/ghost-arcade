@@ -26,6 +26,7 @@ import { writable, get } from 'svelte/store';
 import { invoke, isElectron } from '$lib/bridge';
 import { audioStore } from '../stores/audio';
 import { midiStore } from '../midi/midiStore';
+import { LinkClockMap } from './linkClock';
 
 export interface AbletonLinkState {
   available: boolean;     // addon built + loadable
@@ -39,7 +40,20 @@ export interface AbletonLinkState {
   /** Output trim (ms) on top of the audio device's own latency: Audio Lab's
    *  loops play this much earlier while Link drives the clock. */
   offsetMs: number;
+  /** Audio Lab's Start/Stop Sync: the session's transport starts and stops
+   *  the studio, and the studio's Play and Stop start and stop the session. */
+  startStopSync: boolean;
   error: string | null;
+}
+
+/** The session's transport started or stopped. */
+export interface LinkTransportChange {
+  playing: boolean;
+  /** The session's beat (quantum 4) where it started or stopped; null from an addon without it. */
+  beat: number | null;
+  /** performance.now() of that moment, or null when the clocks are not mapped yet. */
+  atMs: number | null;
+  peers: number;
 }
 
 const INITIAL: AbletonLinkState = {
@@ -51,11 +65,13 @@ const INITIAL: AbletonLinkState = {
   phase: 0,
   quantum: 4,
   offsetMs: 0,
+  startStopSync: false,
   error: null,
 };
 
 const STORAGE_KEY = 'ghost-arcade-ableton-link-enabled';
 const OFFSET_KEY = 'ghost-arcade-ableton-link-offset-ms';
+const START_STOP_KEY = 'ghost-arcade-ableton-link-start-stop-sync';
 /** The output trim's range, in ms either way. */
 export const LINK_OFFSET_LIMIT_MS = 100;
 
@@ -70,11 +86,66 @@ function savedOffset(): number {
     return 0;
   }
 }
+function savedStartStop(): boolean {
+  try {
+    return localStorage.getItem(START_STOP_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
 const POLL_MS = 250;
 const TEMPO_EPSILON = 0.01;
 
 function createAbletonLinkStore() {
-  const { subscribe, update } = writable<AbletonLinkState>({ ...INITIAL, offsetMs: savedOffset() });
+  const { subscribe, update } = writable<AbletonLinkState>({ ...INITIAL, offsetMs: savedOffset(), startStopSync: savedStartStop() });
+  /** Link's clock against performance.now(), from the polls. */
+  const clock = new LinkClockMap();
+  const transportListeners = new Set<(change: LinkTransportChange) => void>();
+  /** The last transport state passed on: a change is told once, from a push or a poll. */
+  let lastTransport: { playing: boolean } | null = null;
+  let eventsUnsub: (() => void) | null = null;
+
+  function noteTransport(s: any): void {
+    const playing = !!s.playing;
+    const micros = Number.isFinite(s.playingMicros) ? Number(s.playingMicros) : null;
+    const prev = lastTransport;
+    lastTransport = { playing };
+    // The first reading is where the session is, not a change.
+    if (!prev || prev.playing === playing) return;
+    const change: LinkTransportChange = {
+      playing,
+      beat: Number.isFinite(s.playingBeat) ? Number(s.playingBeat) : null,
+      atMs: micros === null ? null : clock.toPerfMs(micros),
+      peers: Number(s.peers) || 0,
+    };
+    for (const fn of [...transportListeners]) {
+      try { fn(change); } catch (err) { console.warn('[Link] transport listener', err); }
+    }
+  }
+
+  /** A start/stop or peer change pushed from the main process: no wait for the next poll. */
+  function onEvent(ev: any): void {
+    if (!ev || !ev.enabled) return;
+    const atMs = Number.isFinite(ev.micros) ? clock.toPerfMs(Number(ev.micros)) : null;
+    if (atMs !== null && Number.isFinite(ev.beat) && ev.tempo > 0) {
+      anchor = { beat: ev.beat, phase: ev.phase, tempo: ev.tempo, quantum: ev.quantum, atMs };
+    }
+    // Told before the store changes, so a listener still sees the old state there.
+    noteTransport(ev);
+    update(st => ({
+      ...st,
+      peers: ev.peers ?? st.peers,
+      tempo: ev.tempo ?? st.tempo,
+      playing: !!ev.playing,
+    }));
+  }
+
+  function listenForEvents(): void {
+    eventsUnsub?.();
+    const on = typeof window !== 'undefined' ? (window as any).electronAPI?.on : null;
+    eventsUnsub = typeof on === 'function' ? on('link-event', onEvent) ?? null : null;
+  }
   let pollTimer: ReturnType<typeof setInterval> | null = null;
   let lastBridgedTempo: number | null = null;
   let audioUnsub: (() => void) | null = null;
@@ -88,8 +159,11 @@ function createAbletonLinkStore() {
       // delay does not push the phase late by a few ms on every poll.
       const sent = performance.now();
       const s: any = await invoke('link_get_state');
-      const atMs = (sent + performance.now()) / 2;
+      const received = performance.now();
+      const atMs = (sent + received) / 2;
       if (!s || !s.enabled) return;
+      if (Number.isFinite(s.micros)) clock.add({ sentMs: sent, receivedMs: received, micros: Number(s.micros) });
+      noteTransport(s);
       anchor = { beat: Number.isFinite(s.beat) ? s.beat : s.phase,
         phase: s.phase, tempo: s.tempo, quantum: s.quantum, atMs };
       update(st => ({
@@ -153,6 +227,33 @@ function createAbletonLinkStore() {
       return (anchor.phase + beats) % anchor.quantum;
     },
 
+    /** Hear the session's transport start and stop (from a push, or the next poll). */
+    onTransport(fn: (change: LinkTransportChange) => void): () => void {
+      transportListeners.add(fn);
+      return () => { transportListeners.delete(fn); };
+    },
+
+    /** performance.now() at Link clock time `micros`, or null before the first poll. */
+    linkTimeToPerfMs(micros: number): number | null {
+      return clock.toPerfMs(micros);
+    },
+
+    /** Turn Audio Lab's Start/Stop Sync on or off; kept for next time. */
+    setStartStopSync(on: boolean): void {
+      update(s => ({ ...s, startStopSync: on }));
+      try { localStorage.setItem(START_STOP_KEY, on ? '1' : '0'); } catch { /* private mode */ }
+    },
+
+    /** Start or stop the session's transport. With `beat` (a bar line on the
+     *  session's beats) it starts when the session gets there. */
+    async setPlaying(playing: boolean, beat?: number): Promise<boolean> {
+      if (!get({ subscribe }).enabled) return false;
+      const res: any = playing && beat !== undefined && Number.isFinite(beat)
+        ? await invoke('link_set_playing_at_beat', { playing: true, beat, quantum: 4 }).catch(() => null)
+        : await invoke('link_set_playing', { playing }).catch(() => null);
+      return !!res?.ok;
+    },
+
     /** Set the output trim (clamped to ±LINK_OFFSET_LIMIT_MS; returns what was kept); kept for next time. */
     setOffsetMs(ms: number): number {
       const offsetMs = clampLinkOffset(ms);
@@ -175,6 +276,7 @@ function createAbletonLinkStore() {
       pollTimer = setInterval(poll, POLL_MS);
       void poll();
       watchAppTempo();
+      listenForEvents();
       try { localStorage.setItem(STORAGE_KEY, '1'); } catch { /* private mode */ }
       return true;
     },
@@ -183,6 +285,10 @@ function createAbletonLinkStore() {
       if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
       audioUnsub?.();
       audioUnsub = null;
+      eventsUnsub?.();
+      eventsUnsub = null;
+      clock.clear();
+      lastTransport = null;
       anchor = null;
       lastBridgedTempo = null;
       update(s => ({ ...s, enabled: false, peers: 0 }));
