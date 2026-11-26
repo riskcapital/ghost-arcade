@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { importPhoneServer, type PhoneServer } from './phoneServerUnderTest';
 import { WebSocket } from 'ws';
 import { createRequire } from 'node:module';
 import { dirInProjector, inProjector } from '../scene3d/roomFixtures';
@@ -22,7 +23,7 @@ const { depthMessageAllowed, depthMessageEnds, HOST_MESSAGES } = require('../../
 const TOKEN = 'ABCD0EFGH1JKMN2P';
 const HOST = 'host-secret-'.repeat(6);
 const ASPECT = 16 / 9;
-let server: typeof import('../../../server/ws-server.js');
+let server: PhoneServer;
 let wsPort = 0;
 let host: WebSocket;
 const toDesktop: any[] = [];
@@ -87,10 +88,10 @@ beforeAll(async () => {
   vi.stubEnv('GA_PAIRING_TOKEN', '');
   quiet.push(vi.spyOn(console, 'log').mockImplementation(() => {}));
   quiet.push(vi.spyOn(console, 'warn').mockImplementation(() => {}));
-  server = await import('../../../server/ws-server.js');
+  server = await importPhoneServer();
   ({ wsPort } = await server.listening);
-  server.setDesktopCredential(HOST);
-  server.setPairingToken(TOKEN);
+  await server.setDesktopCredential(HOST);
+  await server.setPairingToken(TOKEN);
   host = await open();
   host.on('message', (d) => toDesktop.push(JSON.parse(d.toString())));
   host.send(JSON.stringify({ type: 'register_desktop', credential: HOST }));

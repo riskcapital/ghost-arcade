@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { importPhoneServer, type PhoneServer } from './phoneServerUnderTest';
 import { WebSocket } from 'ws';
 
 /**
@@ -12,7 +13,7 @@ const TOKEN = 'ABCD0EFGH1JKMN2P';
 const HOST = 'host-secret-'.repeat(6);
 const NEW_TOKEN = 'QRST3VWXY4Z56789';
 
-let server: typeof import('../../../server/ws-server.js');
+let server: PhoneServer;
 let wsPort = 0;
 let httpPort = 0;
 const quiet: Array<{ mockRestore(): void }> = [];
@@ -25,9 +26,9 @@ beforeAll(async () => {
   vi.stubEnv('GA_PAIRING_TOKEN', '');
   quiet.push(vi.spyOn(console, 'log').mockImplementation(() => {}));
   quiet.push(vi.spyOn(console, 'warn').mockImplementation(() => {}));
-  server = await import('../../../server/ws-server.js');
+  server = await importPhoneServer();
   ({ wsPort, httpPort } = await server.listening);
-  server.setDesktopCredential(HOST);
+  await server.setDesktopCredential(HOST);
 });
 
 afterAll(() => {
