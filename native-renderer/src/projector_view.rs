@@ -832,17 +832,19 @@ impl ProjectorViewRenderer {
         }
 
         let content = request.content.unwrap_or(&self.blank_content_view);
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("Map Sim projector view bind group"),
-            layout: &self.main_layout,
-            entries: &[
+        // Same buffers and views frame after frame: reuse the bind group.
+        let bind_group = crate::gpu_object_cache::bind_group(
+            device,
+            Some("Map Sim projector view bind group"),
+            &self.main_layout,
+            &[
                 wgpu::BindGroupEntry { binding: 0, resource: self.main_uniforms.as_entire_binding() },
                 wgpu::BindGroupEntry { binding: 1, resource: self.objects.as_entire_binding() },
                 wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::TextureView(&self.map_depth_view) },
                 wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::TextureView(content) },
                 wgpu::BindGroupEntry { binding: 4, resource: wgpu::BindingResource::Sampler(&self.content_sampler) },
             ],
-        });
+        );
         let depth_view = &self.main_depth.as_ref().expect("main depth allocated above").1;
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {

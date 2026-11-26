@@ -923,10 +923,13 @@ impl GpuVideoConverter {
                 .Wait(&frame.fence.d3d12, frame.fence_value)
                 .map_err(|e| error("queue GPU wait for converted video", e))?;
         }
-        let bindings = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("Windows Video Frame Bindings"),
-            layout: &self.layout,
-            entries: &[
+        // Output surfaces are pooled and reused frame after frame, so their
+        // bind group is too (one per pool slot) instead of one per frame.
+        let bindings = crate::gpu_object_cache::bind_group(
+            device,
+            Some("Windows Video Frame Bindings"),
+            &self.layout,
+            &[
                 wgpu::BindGroupEntry {
                     binding: 0,
                     resource: wgpu::BindingResource::TextureView(&frame.surface.view),
@@ -936,7 +939,7 @@ impl GpuVideoConverter {
                     resource: wgpu::BindingResource::Sampler(&self.sampler),
                 },
             ],
-        });
+        );
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("Windows Native Video GPU Blit"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {

@@ -24591,7 +24591,7 @@ impl RenderState {
             }
         }
         self.ensure_projector_view_renderer();
-        let content_view = self.composite_frame_textures[self.creative_frame_index].create_view(&Default::default());
+        let content_view = gpu_object_cache::view(&self.composite_frame_textures[self.creative_frame_index], &Default::default());
         #[cfg(not(any(target_os = "macos", target_os = "windows")))]
         let mut presented: Option<wgpu::SurfaceTexture> = None;
         let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {

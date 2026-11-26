@@ -274,6 +274,8 @@ impl GpuVideoConverter {
             .as_ref()
             .map(|texture| texture.create_view(&wgpu::TextureViewDescriptor::default()));
         let uniform = &self.uniforms[conversion_index(layout, frame.color_matrix, frame.full_range)];
+        // Per frame by necessity: it binds the planes imported for this frame.
+        crate::churn_probe::bind_group();
         let bindings = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("Native Video Plane Bindings"),
             layout: &self.bind_group_layout,
