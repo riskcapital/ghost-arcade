@@ -17,6 +17,7 @@ mod core_frame_counter;
 mod churn_probe;
 mod gpu_object_cache;
 mod pass_timing;
+mod frames_in_flight;
 mod effect_specialize;
 mod media_decode;
 mod media_orphans;
@@ -1187,6 +1188,10 @@ struct CoreStatus {
     gpu_frames_submitted: u64,
     gpu_frames_completed: u64,
     gpu_backpressure_skips: u64,
+    /// Frames the CPU may queue ahead of the GPU (frames_in_flight.rs).
+    max_frames_in_flight: u64,
+    /// Start of a frame's CPU work to the end of its GPU work.
+    gpu_frame_latency: frames_in_flight::FrameLatencyReport,
     frames_presented: u64,
     /// GA_CORE_CHURN_PROBE=1 only (churn_probe.rs).
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -5225,7 +5230,9 @@ struct RenderState {
     gpu_frames_submitted: u64,
     gpu_frames_completed: Arc<AtomicU64>,
     gpu_fault: bool,
-    gpu_completion_tx: Sender<wgpu::SubmissionIndex>,
+    gpu_completion_tx: Sender<(wgpu::SubmissionIndex, Instant)>,
+    max_frames_in_flight: u64,
+    gpu_frame_latency: Arc<frames_in_flight::FrameLatency>,
     last_frame_error: Option<String>,
 }
 
@@ -6966,6 +6973,11 @@ impl App {
             gpu_frames_submitted,
             gpu_frames_completed,
             gpu_backpressure_skips: self.stats.gpu_backpressure_skips,
+            max_frames_in_flight: self.renderer.as_ref()
+                .map_or_else(frames_in_flight::from_env, |renderer| renderer.max_frames_in_flight),
+            gpu_frame_latency: self.renderer.as_ref()
+                .map(|renderer| renderer.gpu_frame_latency.report())
+                .unwrap_or_default(),
             frames_presented: gpu_frames_completed,
             gpu_object_churn: churn_probe::counts(),
             gpu_pass_timing: pass_timing::report(),
@@ -14373,7 +14385,7 @@ impl App {
             }
         }
         if render_result.is_ok() {
-            renderer.finish_frame();
+            renderer.finish_frame(started);
             let now = Instant::now();
             if let Some(previous) = self.last_submission_at.replace(now) {
                 self.submitted_intervals_ms.push(now.duration_since(previous).as_secs_f64() * 1000.0);
@@ -14624,8 +14636,9 @@ impl App {
         if self.last_native_graph_step_clock == Some(time) {
             return Ok(());
         }
-        // render() skips a frame while the GPU still has one in flight: wait
-        // it out (an export has all the time it needs, a stall is a fault).
+        // render() skips a frame while the GPU has no room for another
+        // (frames_in_flight.rs): wait for room (an export has all the time it
+        // needs, a stall is a fault).
         let waited = Instant::now();
         while self.renderer.as_ref().is_some_and(RenderState::frame_in_flight) {
             if let Some(renderer) = self.renderer.as_mut() {
@@ -23069,9 +23082,11 @@ impl RenderState {
                 )
             });
         let gpu_frames_completed = Arc::new(AtomicU64::new(0));
-        let (gpu_completion_tx, gpu_completion_rx) = mpsc::channel::<wgpu::SubmissionIndex>();
+        let (gpu_completion_tx, gpu_completion_rx) = mpsc::channel::<(wgpu::SubmissionIndex, Instant)>();
         let completion_device = device.clone();
         let completion_counter = Arc::clone(&gpu_frames_completed);
+        let gpu_frame_latency = Arc::new(frames_in_flight::FrameLatency::default());
+        let completion_latency = Arc::clone(&gpu_frame_latency);
         // Windows: completed frames are also published to the presenters,
         // which skip vblanks that would only re-copy the same frame.
         #[cfg(target_os = "windows")]
@@ -23099,7 +23114,7 @@ impl RenderState {
                 // -- which is a hang, not a heavy frame.
                 const GPU_COMPLETION_WAIT_SLICE: Duration = Duration::from_secs(2);
                 const GPU_COMPLETION_HARD_LIMIT: Duration = Duration::from_secs(60);
-                'completion: while let Ok(submission) = gpu_completion_rx.recv() {
+                'completion: while let Ok((submission, frame_started)) = gpu_completion_rx.recv() {
                     // This thread lives for the whole session and polls the
                     // device every frame: without a pool of its own, what
                     // the poll autoreleases is never released.
@@ -23135,6 +23150,7 @@ impl RenderState {
                             }
                         }
                     }
+                    completion_latency.record(frame_started);
                     let _completed = completion_counter.fetch_add(1, Ordering::Release) + 1;
                     #[cfg(target_os = "windows")]
                     if let Some(counter) = frame_counter.as_ref() {
@@ -23279,6 +23295,8 @@ impl RenderState {
             gpu_frames_completed,
             gpu_fault: false,
             gpu_completion_tx,
+            max_frames_in_flight: frames_in_flight::from_env(),
+            gpu_frame_latency,
             last_frame_error: None,
         })
     }
@@ -24953,20 +24971,22 @@ impl RenderState {
         self.gpu_frames_completed.load(Ordering::Acquire)
     }
 
+    /// No room for another frame: the GPU still has `max_frames_in_flight`
+    /// of ours queued. At 1 this is the old "any frame in flight" gate.
     fn frame_in_flight(&self) -> bool {
-        self.gpu_frames_submitted > self.gpu_frames_completed()
+        frames_in_flight::slots_full(self.gpu_frames_submitted, self.gpu_frames_completed(), self.max_frames_in_flight)
     }
 
     fn submit_frame(&mut self, encoder: wgpu::CommandEncoder) {
         self.queue.submit(Some(encoder.finish()));
     }
 
-    fn finish_frame(&mut self) {
+    fn finish_frame(&mut self, frame_started: Instant) {
         self.frame_uniform_pool.truncate(self.frame_uniform_cursor);
         // Fence after program, confidence monitors and slices, not just program.
         let submission = self.queue.submit(std::iter::empty());
         self.gpu_frames_submitted = self.gpu_frames_submitted.saturating_add(1);
-        let _ = self.gpu_completion_tx.send(submission);
+        let _ = self.gpu_completion_tx.send((submission, frame_started));
     }
 
     fn last_render_gpu_ms(&self) -> Option<f64> {

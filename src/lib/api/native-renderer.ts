@@ -951,6 +951,10 @@ export interface RendererStatus {
   gpu_frames_submitted: number;
   gpu_frames_completed: number;
   gpu_backpressure_skips: number;
+  /** Frames the core may queue ahead of the GPU (GA_CORE_MAX_FRAMES_IN_FLIGHT, default 2). */
+  max_frames_in_flight?: number;
+  /** Start of a frame's CPU work to the end of its GPU work; diff sum_ms/samples for a window. */
+  gpu_frame_latency?: { last_ms: number; max_ms: number; sum_ms: number; samples: number };
   frames_presented?: number;
   swapchain_present_failures: number;
   swapchain_last_present_result: string;
