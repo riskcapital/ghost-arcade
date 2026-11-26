@@ -62,6 +62,11 @@ export interface SpoutSharedTextureInfo {
   /** Windows live capture: the adapter the frames live on (16 hex digits). */
   adapterLuid?: string | null;
   adapterName?: string;
+  /** macOS: a capture the render core runs itself (platform 'core'). The
+   *  editor binds the source to the session instead of sending frames. */
+  coreSessionId?: string;
+  /** Frames the core has imported for the session's sources so far. */
+  coreImports?: number;
 }
 
 interface ReceiverState {

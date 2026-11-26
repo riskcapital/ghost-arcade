@@ -497,6 +497,8 @@ export type RendererCommand =
       frame?: number;
       sender_name?: string;
     }
+  /** A camera or screen capture the core runs itself feeds this source. */
+  | { type: 'bind_live_capture_source'; source_id: string; session_id: string; seq: number }
   | { type: 'remove_layer'; layer_id: string }
   | { type: 'bind_media_source'; layer_id: string; source_id: string; uri: string; source_type: string; effect_input_source_id?: string }
   | {

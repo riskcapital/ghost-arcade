@@ -362,6 +362,11 @@ const RENDERER_COMMANDS = [
   'native_renderer_pixelmap_configure',
   'native_renderer_pixelmap_stop',
   'native_renderer_pixelmap_state',
+  // Cameras and screen captures run by the core itself (main process only).
+  'native_renderer_live_capture_start',
+  'native_renderer_live_capture_stop',
+  'native_renderer_live_capture_state',
+  'native_renderer_live_capture_list_cameras',
   // How a video file will play: hardware, HAP, software (and why), or not at all.
   'native_renderer_probe_video',
   'native_renderer_set_stage3d_scene',
@@ -884,6 +889,14 @@ class NativeRendererBroker {
         return this.sendIfRunning('pixelmap_stop', args, { fallback: null, timeoutMs: 5000 });
       case 'native_renderer_pixelmap_state':
         return this.sendIfRunning('pixelmap_state', args, { fallback: null, timeoutMs: 2500 });
+      case 'native_renderer_live_capture_start':
+        return this.sendIfRunning('live_capture_start', args, { fallback: null, timeoutMs: 5000 });
+      case 'native_renderer_live_capture_stop':
+        return this.sendIfRunning('live_capture_stop', args, { fallback: null, timeoutMs: 5000 });
+      case 'native_renderer_live_capture_state':
+        return this.sendIfRunning('live_capture_state', args, { fallback: null });
+      case 'native_renderer_live_capture_list_cameras':
+        return this.sendIfRunning('live_capture_list_cameras', args, { fallback: null });
       case 'native_renderer_probe_video':
         // Opens a decoder (and on Windows decodes a frame); ffmpeg's check
         // alone may take up to 10 s on a slow disk.
