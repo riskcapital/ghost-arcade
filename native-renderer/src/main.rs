@@ -24346,15 +24346,14 @@ impl RenderState {
             .find(|format| *format == wgpu::TextureFormat::Bgra8Unorm)
             .or_else(|| caps.formats.iter().copied().find(|format| !format.is_srgb()))
             .unwrap_or(caps.formats[0]);
+        let present_mode = linux_slice_present_mode(&caps.present_modes);
         let config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
             format,
             color_space: wgpu::SurfaceColorSpace::Srgb,
             width,
             height,
-            // A Screen is projector output: never tear, and FIFO is the one
-            // mode every surface is required to support.
-            present_mode: wgpu::PresentMode::Fifo,
+            present_mode,
             desired_maximum_frame_latency: 2,
             alpha_mode: caps.alpha_modes[0],
             view_formats: vec![],
@@ -24364,7 +24363,7 @@ impl RenderState {
             .sample_type(wgpu::FilterMode::Linear)
             .build();
         self.linux_slice_windows.insert(id.to_string(), LinuxSliceWindow { window, surface, config, blitter });
-        Ok(json!({ "attached": true, "slice_id": id, "width": width, "height": height, "format": format!("{format:?}") }))
+        Ok(json!({ "attached": true, "slice_id": id, "width": width, "height": height, "format": format!("{format:?}"), "present_mode": present_mode_label(present_mode) }))
     }
 
     /// Linux: follow the Electron Screen window when it resizes or goes
@@ -37083,6 +37082,20 @@ fn choose_present_mode(
         .unwrap_or(wgpu::PresentMode::AutoVsync)
 }
 
+/// Present mode for a Linux Screen (slice) window. Every Screen is acquired
+/// and presented in turn on the main thread, so with FIFO each one waited for
+/// its own vblank and N projectors divided the frame rate by N. Mailbox never
+/// blocks and never tears, so it comes first; then the non-blocking modes the
+/// surface has; FIFO, the one mode every surface must support, last. The
+/// program window keeps its own pacing (`choose_present_mode`).
+#[cfg_attr(any(target_os = "macos", target_os = "windows"), allow(dead_code))]
+fn linux_slice_present_mode(supported: &[wgpu::PresentMode]) -> wgpu::PresentMode {
+    [wgpu::PresentMode::Mailbox, wgpu::PresentMode::Immediate, wgpu::PresentMode::FifoRelaxed]
+        .into_iter()
+        .find(|mode| supported.contains(mode))
+        .unwrap_or(wgpu::PresentMode::Fifo)
+}
+
 fn present_mode_label(mode: wgpu::PresentMode) -> &'static str {
     match mode {
         wgpu::PresentMode::AutoVsync => "auto-vsync",
@@ -37215,10 +37228,21 @@ mod manual_video_frame_tests {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn linux_screens_prefer_a_present_mode_that_does_not_wait_for_vblank() {
+        use super::linux_slice_present_mode;
+        use wgpu::PresentMode::*;
+        assert_eq!(linux_slice_present_mode(&[Fifo, Immediate, Mailbox]), Mailbox);
+        assert_eq!(linux_slice_present_mode(&[Fifo, FifoRelaxed, Immediate]), Immediate);
+        assert_eq!(linux_slice_present_mode(&[Fifo, FifoRelaxed]), FifoRelaxed);
+        assert_eq!(linux_slice_present_mode(&[Fifo]), Fifo);
+        assert_eq!(linux_slice_present_mode(&[]), Fifo);
+    }
 
     #[test]
     fn layer_upload_scratch_follows_the_scene_not_the_layer_limit() {
         use super::{fit_byte_scratch, fit_layer_upload_scratch, LayerGpu, LAYER_UPLOAD_SCRATCH_MIN_SLOTS, MAX_SCENE_LAYERS};
+
         let slot = std::mem::size_of::<LayerGpu>();
         let mut scratch = Vec::new();
         // A new render state holds nothing; a five-layer scene holds five slots.
