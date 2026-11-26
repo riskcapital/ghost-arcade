@@ -351,6 +351,10 @@ const RENDERER_COMMANDS = [
   'native_renderer_start_native_recording',
   'native_renderer_stop_native_recording',
   'native_renderer_native_recording_state',
+  // Syphon / Spout sender published by the core itself (main process only).
+  'native_renderer_texture_share_start',
+  'native_renderer_texture_share_stop',
+  'native_renderer_texture_share_state',
   // How a video file will play: hardware, HAP, software (and why), or not at all.
   'native_renderer_probe_video',
   'native_renderer_set_stage3d_scene',
@@ -855,6 +859,12 @@ class NativeRendererBroker {
         return this.sendIfRunning('detach_slice_window', args, { fallback: null, timeoutMs: 5000 });
       case 'native_renderer_native_recording_state':
         return this.sendIfRunning('native_recording_state', args, { fallback: null });
+      case 'native_renderer_texture_share_start':
+        return this.sendIfRunning('texture_share_start', args, { fallback: null, timeoutMs: 5000 });
+      case 'native_renderer_texture_share_stop':
+        return this.sendIfRunning('texture_share_stop', args, { fallback: null, timeoutMs: 5000 });
+      case 'native_renderer_texture_share_state':
+        return this.sendIfRunning('texture_share_state', args, { fallback: null });
       case 'native_renderer_probe_video':
         // Opens a decoder (and on Windows decodes a frame); ffmpeg's check
         // alone may take up to 10 s on a slow disk.

@@ -272,7 +272,13 @@ const nativeRendererBroker = createNativeRendererBroker({
   sharedTextureHandlePreparer: prepareSharedTextureHandlesForNativeCore,
   canWritePath: target => pathGrants.canWrite(target),
   canReadPath: target => pathGrants.canRead(target),
-  onCoreStarted: coreInstance => reattachLinuxSlicesToCore(coreInstance),
+  onCoreStarted: coreInstance => {
+    reattachLinuxSlicesToCore(coreInstance);
+    // A restarted core starts without the sender; ask it again right away.
+    if (coreTextureShareActive && coreTextureShareName) {
+      void nativeRendererBroker.invoke('native_renderer_texture_share_start', coreTextureShareRequest(coreTextureShareName)).catch(() => null);
+    }
+  },
 });
 
 // Install mode: watchdog, guardian, health log and quit protection for an
@@ -2937,9 +2943,13 @@ function getTextureShareLoadStatus() {
     nativeOutputCapable: getNativeOutputTextureShareSupport(spoutAddon),
     nativeOutputTransport,
     nativeOutputRequiresNamedTexture: isWin,
-    nativeOutputActive: nativeOutputTextureShareActive,
-    nativeOutputWaitingForFrame: nativeOutputTextureShareWaitingForFrame,
-    nativeOutputLastPublishedFrame: nativeOutputTextureShareLastPublishedFrame,
+    nativeOutputActive: nativeOutputTextureShareActive || coreTextureShareActive,
+    nativeOutputWaitingForFrame: coreTextureShareActive ? false : nativeOutputTextureShareWaitingForFrame,
+    nativeOutputLastPublishedFrame: coreTextureShareActive
+      ? Number(coreTextureShareState?.frames_published ?? 0)
+      : nativeOutputTextureShareLastPublishedFrame,
+    // Who publishes the sender: the render core itself, or this process.
+    nativeOutputPublisher: coreTextureShareActive ? 'core' : nativeOutputTextureShareActive ? 'addon' : null,
     nativeOutputFailures: nativeOutputTextureShareFailCount,
     nativeOutputPendingPromotion: nativeOutputTextureSharePromoteTimer !== null,
     nativeOutputPromotionAttempts: nativeOutputTextureSharePromoteAttempts,
@@ -5055,7 +5065,108 @@ function createSpoutSender(name, width, height, { startOsr = true } = {}) {
   }
 }
 
+// ============================================================
+// Syphon / Spout published by the render core
+// ============================================================
+// The core publishes the program straight from its own output texture
+// (native-renderer/src/texture_share.rs): no per-frame RPC poll, no addon
+// call on this thread, no OSR window. The sender keeps the same name,
+// settings and status fields either way.
+// macOS: on whenever the running core says it can; GA_CORE_SYPHON=0 keeps
+// the addon pump below. Windows: opt in with GA_CORE_SPOUT=1 until it has
+// been checked against Spout receivers on a Windows machine.
+const CORE_TEXTURE_SHARE_ALLOWED = isMac
+  ? process.env.GA_CORE_SYPHON !== '0'
+  : isWin && process.env.GA_CORE_SPOUT === '1';
+const CORE_TEXTURE_SHARE_CHECK_MS = 2000;
+let coreTextureShareActive = false;
+let coreTextureShareName = null;
+let coreTextureShareState = null;
+let coreTextureShareWatchdog = null;
+let coreTextureShareCheckInFlight = false;
+
+function coreTextureShareSupported() {
+  if (!CORE_TEXTURE_SHARE_ALLOWED || !nativeRendererBroker?.coreCapabilitiesConfirmed) return false;
+  const methods = nativeRendererBroker.capabilities?.implemented_methods;
+  return Array.isArray(methods) && methods.includes('texture_share_start');
+}
+
+function coreTextureShareRequest(name) {
+  // Clients list a sender as "<app> - <name>"; the core is a helper
+  // executable, so it is told the app's own name.
+  // Spout keeps the host executable's path with the sender.
+  return { name, app_name: app.getName(), host_path: process.execPath };
+}
+
+async function startCoreTextureShare(name) {
+  if (!coreTextureShareSupported()) return false;
+  const state = await nativeRendererBroker.invoke('native_renderer_texture_share_start', coreTextureShareRequest(name))
+    .catch(() => null);
+  if (!state || state.available === false) {
+    console.warn(`[${textureShareLabel} Core] core could not publish; using the addon path${state?.last_error ? `: ${state.last_error}` : ''}`);
+    return false;
+  }
+  coreTextureShareActive = true;
+  coreTextureShareName = name;
+  coreTextureShareState = state;
+  notifyMainWindowOsrStatus(true, isMac ? 'native-iosurface' : 'native-dxgi');
+  startCoreTextureShareWatchdog();
+  console.log(`[${textureShareLabel} Core] render core publishes "${name}"`);
+  return true;
+}
+
+// The core keeps publishing on its own; this only notices a core that was
+// restarted (and asks the new one) or one that could not open its sender
+// (and hands the sender back to the addon path).
+function startCoreTextureShareWatchdog() {
+  if (coreTextureShareWatchdog) return;
+  coreTextureShareWatchdog = setInterval(async () => {
+    if (!coreTextureShareActive || coreTextureShareCheckInFlight) return;
+    coreTextureShareCheckInFlight = true;
+    try {
+      const state = await nativeRendererBroker.invoke('native_renderer_texture_share_state', {}).catch(() => null);
+      if (!coreTextureShareActive) return;
+      coreTextureShareState = state || coreTextureShareState;
+      if (state?.active || state?.wanted === coreTextureShareName) return;
+      if (state && state.last_error) {
+        console.warn(`[${textureShareLabel} Core] core sender failed (${state.last_error}); using the addon path`);
+        fallBackFromCoreTextureShare();
+        return;
+      }
+      // A fresh core (restart) has no sender yet.
+      if (coreTextureShareSupported()) {
+        await nativeRendererBroker.invoke('native_renderer_texture_share_start', coreTextureShareRequest(coreTextureShareName)).catch(() => null);
+      }
+    } finally {
+      coreTextureShareCheckInFlight = false;
+    }
+  }, CORE_TEXTURE_SHARE_CHECK_MS);
+}
+
+function stopCoreTextureShare(reason = 'stopped') {
+  const wasActive = coreTextureShareActive;
+  coreTextureShareActive = false;
+  coreTextureShareState = null;
+  if (coreTextureShareWatchdog) {
+    clearInterval(coreTextureShareWatchdog);
+    coreTextureShareWatchdog = null;
+  }
+  if (!wasActive) return;
+  void nativeRendererBroker.invoke('native_renderer_texture_share_stop', {}).catch(() => null);
+  notifyMainWindowOsrStatus(false, reason);
+}
+
+function fallBackFromCoreTextureShare() {
+  const name = coreTextureShareName || spoutSendName || 'ghostArcade';
+  stopCoreTextureShare('core-sender-failed');
+  if (!spoutSendActive) return;
+  spoutSendActive = false;
+  const ok = createSpoutSender(name, spoutSendW, spoutSendH, { startOsr: false });
+  if (ok) startNativeOutputTextureSharePromotion('core-sender-failed');
+}
+
 function stopSpoutSender() {
+  stopCoreTextureShare();
   spoutSendActive = false;
   cancelNativeOutputSendRetry();
   stopNativeOutputTextureSharePromotion();
@@ -5588,6 +5699,21 @@ function startNativeOutputTextureSharePromotion(reason = 'waiting-for-native-out
     nativeOutputTextureSharePromoteAttempts++;
 
     try {
+      // The core came up after the sender started (or restarted): let it
+      // publish, and drop the OSR window and the addon sender.
+      if (reason !== 'core-sender-failed' && coreTextureShareSupported()) {
+        const name = spoutSendName;
+        if (await startCoreTextureShare(name)) {
+          stopNativeOutputTextureSharePromotion();
+          destroySpoutOsrWindow();
+          if (spoutOutput) {
+            try { spoutOutput.release(); } catch {}
+            spoutOutput = null;
+          }
+          console.log(`[${textureShareLabel} Core] promoted sender to the render core after ${nativeOutputTextureSharePromoteAttempts} check(s)`);
+          return;
+        }
+      }
       const texture = await getNativeOutputSharedTextureMetadata();
       if (!isNativeOutputTextureHandleReady(texture)) {
         if (nativeOutputTextureSharePromoteAttempts === 1 || nativeOutputTextureSharePromoteAttempts % 10 === 0) {
@@ -5811,6 +5937,7 @@ function startNativeOutputTextureSharePump(initialTexture = null) {
 }
 
 function getTextureShareSenderMode() {
+  if (coreTextureShareActive) return isMac ? 'native-iosurface' : 'native-dxgi';
   if (nativeOutputTextureShareActive) return isMac ? 'native-iosurface' : 'native-dxgi';
   if (osrActive) return 'zero-copy';
   if (ALLOW_CPU_TEXTURE_SHARE_FALLBACK) return 'cpu-sendimage';
@@ -7127,7 +7254,7 @@ function registerIpcHandlers() {
     const requestedName = name || 'ghostArcade';
 
     // If sender is already active or being created, return existing state
-    if ((spoutSendActive && spoutOutput) || spoutSendCreating) {
+    if ((spoutSendActive && (spoutOutput || coreTextureShareActive)) || spoutSendCreating) {
       console.log('[IPC] spout_start_sender: already active/creating, skipping');
       return {
         success: true,
@@ -7143,6 +7270,23 @@ function registerIpcHandlers() {
     spoutSendCreating = true;
     const targetWidth = width || 1920;
     const targetHeight = height || 1080;
+    if (await startCoreTextureShare(requestedName)) {
+      spoutSendActive = true;
+      spoutSendName = requestedName;
+      spoutSendW = targetWidth;
+      spoutSendH = targetHeight;
+      spoutSendCreating = false;
+      const result = {
+        success: true,
+        name: requestedName,
+        width: targetWidth,
+        height: targetHeight,
+        mode: getTextureShareSenderMode(),
+        cpuFallbackAllowed: ALLOW_CPU_TEXTURE_SHARE_FALLBACK,
+      };
+      console.log('[IPC] spout_start_sender result:', JSON.stringify(result));
+      return result;
+    }
     const nativeOutputShare = await canPublishNativeOutputTextureShare();
     const ok = createSpoutSender(requestedName, targetWidth, targetHeight, {
       startOsr: !nativeOutputShare.ok,
@@ -7192,6 +7336,7 @@ function registerIpcHandlers() {
       spoutSendCallCount++;
     }
 
+    if (coreTextureShareActive) return true;
     if (!spoutSendActive || !spoutOutput) return false;
 
     // When OSR zero-copy is active, reject CPU readPixels frames —
@@ -7347,7 +7492,8 @@ function registerIpcHandlers() {
       sender_mode: getTextureShareSenderMode(),
       osr_active: osrActive,
       osr_failure_reason: osrFailureReason,
-      native_output_active: nativeOutputTextureShareActive,
+      native_output_active: nativeOutputTextureShareActive || coreTextureShareActive,
+      native_output_publisher: coreTextureShareActive ? 'core' : nativeOutputTextureShareActive ? 'addon' : null,
       native_output_waiting_for_frame: nativeOutputTextureShareWaitingForFrame,
       native_output_last_published_frame: nativeOutputTextureShareLastPublishedFrame,
       native_output_pending_promotion: nativeOutputTextureSharePromoteTimer !== null,
