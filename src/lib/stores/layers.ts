@@ -3284,6 +3284,19 @@ void main() {
       }));
     },
 
+    /** Corners of several layers in one update (a multi-layer drag): one
+     *  store change per pointer move instead of one per layer and corner. */
+    setCornersBatch(updates: ReadonlyMap<string, WarpCorners>) {
+      if (updates.size === 0) return;
+      update((project) => ({
+        ...project,
+        layers: project.layers.map((l) => {
+          const corners = updates.get(l.id);
+          return corners ? { ...l, corners } : l;
+        }),
+      }));
+    },
+
     resetCorners(id: string) {
       update((project) => ({
         ...project,

@@ -65,4 +65,24 @@ describe('project selection and batch corners', () => {
     expect(get(project).selectedLayerId).toBe(a);
   });
 
+  it('moves several layers in one store update', () => {
+    const { project } = layersModule;
+    project.addLayer('x');
+    const x = get(project).selectedLayerId!;
+    project.addLayer('y');
+    const y = get(project).selectedLayerId!;
+    const quad = (dx: number) => ({
+      topLeft: { x: dx, y: 1 }, topRight: { x: dx + 0.5, y: 1 },
+      bottomLeft: { x: dx, y: 0.5 }, bottomRight: { x: dx + 0.5, y: 0.5 },
+    });
+    let updates = 0;
+    const unsubscribe = project.subscribe(() => { updates += 1; });
+    updates = 0;
+    project.setCornersBatch(new Map([[x, quad(0.1)], [y, quad(0.2)]]));
+    unsubscribe();
+    expect(updates).toBe(1);
+    const layers = get(project).layers;
+    expect(layers.find(l => l.id === x)!.corners.topLeft.x).toBeCloseTo(0.1);
+    expect(layers.find(l => l.id === y)!.corners.topLeft.x).toBeCloseTo(0.2);
+  });
 });

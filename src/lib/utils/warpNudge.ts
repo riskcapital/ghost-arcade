@@ -29,3 +29,27 @@ export function normalizedWarpNudge(
 export function warpDragStepPixels(granularity: WarpGranularity | undefined): number | null {
   return granularity === 'free' ? null : warpNudgeStepPixels(granularity);
 }
+
+/** Screen-direction arrows of the touch fine-tune pad. */
+export type FineTuneArrow = 'up' | 'down' | 'left' | 'right';
+
+/**
+ * Where a corner goes for one tap on the fine-tune pad. The pad's arrows
+ * are screen directions; corners are stored with y up (1 = top), so "up"
+ * raises y. One tap moves one nudge step in project pixels.
+ */
+export function fineTuneNudgedPoint(
+  point: { x: number; y: number },
+  arrow: FineTuneArrow,
+  projectWidth: number,
+  projectHeight: number,
+  granularity: WarpGranularity | undefined,
+): { x: number; y: number } {
+  const step = normalizedWarpNudge(projectWidth, projectHeight, granularity);
+  switch (arrow) {
+    case 'up': return { x: point.x, y: point.y + step.y };
+    case 'down': return { x: point.x, y: point.y - step.y };
+    case 'left': return { x: point.x - step.x, y: point.y };
+    case 'right': return { x: point.x + step.x, y: point.y };
+  }
+}
