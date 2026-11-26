@@ -11,6 +11,7 @@ Thumbs.db
 
 # Native renderer build artifacts
 native-renderer/target/
+phone-server/target/
 
 # Electron native addon build artifacts (no trailing slash: these can be symlinks)
 electron/native/build
