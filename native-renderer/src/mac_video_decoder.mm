@@ -194,16 +194,27 @@ CMSampleBufferRef sample_with_format(CMSampleBufferRef sample, CMFormatDescripti
     return result;
 }
 
-std::string unsupported_format(CMFormatDescriptionRef format) {
+// A track whose pictures carry transparency: ProRes 4444 with its alpha
+// plane, HEVC with an alpha layer, or any format that says so.
+bool format_has_alpha(CMFormatDescriptionRef format) {
     const FourCharCode codec = CMFormatDescriptionGetMediaSubType(format);
     CFTypeRef alpha = CMFormatDescriptionGetExtension(format,
         kCMFormatDescriptionExtension_ContainsAlphaChannel);
-    if (codec == kCMVideoCodecType_HEVCWithAlpha || codec == kCMVideoCodecType_AppleProRes4444 ||
-        codec == kCMVideoCodecType_AppleProRes4444XQ ||
-        (alpha && CFEqual(alpha, kCFBooleanTrue)) ||
-        CMFormatDescriptionGetExtension(format, kCMFormatDescriptionExtension_AlphaChannelMode)) {
-        return "Video with an alpha channel requires the compatibility decoder to preserve transparency";
-    }
+    if (codec == kCMVideoCodecType_HEVCWithAlpha || (alpha && CFEqual(alpha, kCFBooleanTrue)) ||
+        CMFormatDescriptionGetExtension(format, kCMFormatDescriptionExtension_AlphaChannelMode))
+        return true;
+    // ProRes 4444 writers mark an alpha plane with a 32-bit depth.
+    return (codec == kCMVideoCodecType_AppleProRes4444 || codec == kCMVideoCodecType_AppleProRes4444XQ) &&
+        number_value(CMFormatDescriptionGetExtension(format, kCMFormatDescriptionExtension_Depth), 0.0) == 32.0;
+}
+
+// HEVC with alpha is usually coded premultiplied; ProRes 4444's alpha is straight.
+bool format_premultiplied(CMFormatDescriptionRef format) {
+    CFTypeRef mode = CMFormatDescriptionGetExtension(format, kCMFormatDescriptionExtension_AlphaChannelMode);
+    return mode && CFEqual(mode, kCMFormatDescriptionAlphaChannelMode_PremultipliedAlpha);
+}
+
+std::string unsupported_format(CMFormatDescriptionRef format) {
     const CMVideoDimensions size = CMVideoFormatDescriptionGetDimensions(format);
     const CGRect clean = CMVideoFormatDescriptionGetCleanAperture(format, true);
     if (std::abs(clean.origin.x) > 1e-6 || std::abs(clean.origin.y) > 1e-6 ||
@@ -224,7 +235,9 @@ std::string unsupported_format(CMFormatDescriptionRef format) {
         if (!(horizontal > 0.0 && vertical > 0.0) || horizontal != vertical)
             return "Video with non-square pixels requires the compatibility decoder to preserve geometry";
     }
-    if (source_bit_depth(format) > 10)
+    // Video with alpha decodes to BGRA (or ProRes's 16-bit ARGB), at least
+    // the precision of the compatibility decoder's 8-bit RGBA frames.
+    if (!format_has_alpha(format) && source_bit_depth(format) > 10)
         return "Video above 10 bits per component requires the compatibility decoder to preserve precision";
     return {};
 }
@@ -282,6 +295,11 @@ struct GhostMacVideoDecoder {
     bool reader_ended = false;
     bool range_ended = false;
     bool require_p010 = false;
+    // Video with alpha decodes to 32BGRA (straight or premultiplied colour),
+    // or ProRes 4444 to 16-bit ARGB on VideoToolbox's software decoder.
+    bool alpha = false;
+    bool premultiplied = false;
+    OSType alpha_format = kCVPixelFormatType_32BGRA;
     // An 'hev1'/'avc3' track decoded under its standard tag: the track's own
     // format and the retagged one the session was made with (both +1).
     CMFormatDescriptionRef tagged_format = nullptr;
@@ -359,7 +377,12 @@ struct GhostMacVideoDecoder {
 
         CVPixelBufferRef pixel = static_cast<CVPixelBufferRef>(image);
         const OSType format = CVPixelBufferGetPixelFormatType(pixel);
-        if (format != kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange &&
+        if (self->alpha) {
+            if (format != self->alpha_format) {
+                self->failure = "Hardware decoder did not produce an alpha-capable surface for video with alpha";
+                return;
+            }
+        } else if (format != kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange &&
             format != kCVPixelFormatType_420YpCbCr8BiPlanarFullRange &&
             format != kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange &&
             format != kCVPixelFormatType_420YpCbCr10BiPlanarFullRange) {
@@ -372,8 +395,9 @@ struct GhostMacVideoDecoder {
             return;
         }
         IOSurfaceRef surface = CVPixelBufferGetIOSurface(pixel);
-        if (!surface || CVPixelBufferGetPlaneCount(pixel) != 2) {
-            self->failure = "Hardware decoder did not produce a two-plane IOSurface";
+        if (!surface || CVPixelBufferGetPlaneCount(pixel) != (self->alpha ? 0u : 2u)) {
+            self->failure = self->alpha ? "Hardware decoder did not produce a packed RGB and alpha IOSurface"
+                                        : "Hardware decoder did not produce a two-plane IOSurface";
             return;
         }
         if (self->pending.size() >= self->queue_capacity) {
@@ -394,6 +418,7 @@ struct GhostMacVideoDecoder {
         frame->info.color_matrix = matrix ? color_matrix(matrix, self->metadata.height) : self->default_matrix;
         frame->info.full_range = format == kCVPixelFormatType_420YpCbCr8BiPlanarFullRange ||
                                  format == kCVPixelFormatType_420YpCbCr10BiPlanarFullRange;
+        frame->info.premultiplied_alpha = self->alpha && self->premultiplied;
         frame->info.pts_seconds = CMTimeGetSeconds(pts);
         frame->info.duration_seconds = finite_time(duration) && CMTimeGetSeconds(duration) > 0.0
             ? CMTimeGetSeconds(duration) : 1.0 / self->metadata.fps;
@@ -417,10 +442,7 @@ struct GhostMacVideoDecoder {
             options:@{ AVURLAssetPreferPreciseDurationAndTimingKey: @YES }];
         track = [[asset tracksWithMediaType:AVMediaTypeVideo] firstObject];
         if (!track) { failure = "The asset has no readable video track"; return false; }
-        if ([track hasMediaCharacteristic:AVMediaCharacteristicContainsAlphaChannel]) {
-            failure = "Video with an alpha channel requires the compatibility decoder to preserve transparency";
-            return false;
-        }
+        alpha = [track hasMediaCharacteristic:AVMediaCharacteristicContainsAlphaChannel];
         if (!track.canProvideSampleCursors) {
             failure = "The asset cannot provide precise video presentation ordering";
             return false;
@@ -459,7 +481,12 @@ struct GhostMacVideoDecoder {
             standard_format = standard;
             format = static_cast<CMFormatDescriptionRef>(CFRetain(standard));
         }
-        require_p010 = source_bit_depth(format) > 8;
+        alpha = alpha || format_has_alpha(format);
+        premultiplied = alpha && format_premultiplied(format);
+        const FourCharCode codec = CMFormatDescriptionGetMediaSubType(format);
+        const bool prores_alpha = alpha &&
+            (codec == kCMVideoCodecType_AppleProRes4444 || codec == kCMVideoCodecType_AppleProRes4444XQ);
+        require_p010 = !alpha && source_bit_depth(format) > 8;
         const CMVideoDimensions dimensions = CMVideoFormatDescriptionGetDimensions(format);
         metadata.width = static_cast<uint32_t>(std::max(0, dimensions.width));
         metadata.height = static_cast<uint32_t>(std::max(0, dimensions.height));
@@ -488,11 +515,12 @@ struct GhostMacVideoDecoder {
                                       : kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange;
         const OSType p010 = full_range ? kCVPixelFormatType_420YpCbCr10BiPlanarFullRange
                                       : kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange;
-        NSDictionary *decoder_specification = @{
+        NSMutableDictionary *decoder_specification = [@{
             (__bridge NSString *)kVTVideoDecoderSpecification_RequireHardwareAcceleratedVideoDecoder: @YES,
-        };
+        } mutableCopy];
         NSMutableDictionary *pixel_attributes = [@{
-            (__bridge NSString *)kCVPixelBufferPixelFormatTypeKey: require_p010 ? @[@(p010)] : @[@(nv12), @(p010)],
+            (__bridge NSString *)kCVPixelBufferPixelFormatTypeKey: alpha ? @[@(alpha_format)]
+                : require_p010 ? @[@(p010)] : @[@(nv12), @(p010)],
             (__bridge NSString *)kCVPixelBufferIOSurfacePropertiesKey: @{},
             (__bridge NSString *)kCVPixelBufferMetalCompatibilityKey: @YES,
         } mutableCopy];
@@ -510,26 +538,72 @@ struct GhostMacVideoDecoder {
             pixel_attributes[(__bridge NSString *)kCVPixelBufferHeightKey] = @(even(metadata.height));
         }
         VTDecompressionOutputCallbackRecord callback = { decoded, this };
-        const OSStatus status = VTDecompressionSessionCreate(kCFAllocatorDefault, format,
+        OSStatus status = VTDecompressionSessionCreate(kCFAllocatorDefault, format,
             (__bridge CFDictionaryRef)decoder_specification, (__bridge CFDictionaryRef)pixel_attributes,
             &callback, &session);
-        CFRelease(format);
         if (status != noErr || !session) {
             failure = vt_error("A hardware video decoder is unavailable for this clip", status);
-            return false;
+        } else {
+            CFTypeRef using_hardware = nullptr;
+            const OSStatus property_status = VTSessionCopyProperty(session,
+                kVTDecompressionPropertyKey_UsingHardwareAcceleratedVideoDecoder,
+                kCFAllocatorDefault, &using_hardware);
+            metadata.hardware = property_status == noErr && using_hardware &&
+                                CFEqual(using_hardware, kCFBooleanTrue);
+            if (using_hardware) CFRelease(using_hardware);
+            if (!metadata.hardware) failure = "VideoToolbox could not verify hardware-accelerated decoding";
         }
-        CFTypeRef using_hardware = nullptr;
-        const OSStatus property_status = VTSessionCopyProperty(session,
-            kVTDecompressionPropertyKey_UsingHardwareAcceleratedVideoDecoder,
-            kCFAllocatorDefault, &using_hardware);
-        metadata.hardware = property_status == noErr && using_hardware &&
-                            CFEqual(using_hardware, kCFBooleanTrue);
-        if (using_hardware) CFRelease(using_hardware);
-        if (!metadata.hardware) {
-            failure = "VideoToolbox could not verify hardware-accelerated decoding";
-            return false;
+        if (prores_alpha && (!failure.empty() || !first_picture_keeps_alpha())) {
+            // The hardware ProRes decoder drops the alpha of files from some
+            // writers (FFmpeg's prores_ks among them), marking the pictures
+            // opaque, and takes no very small frames. VideoToolbox's own
+            // ProRes software decoder keeps the alpha in its native 16-bit
+            // ARGB, still decoded into IOSurfaces the GPU reads directly; it
+            // is several times faster than the compatibility decoder's CPU
+            // decode, pipe and upload. It counts as the native path.
+            close_session();
+            failure.clear();
+            alpha_format = kCVPixelFormatType_64ARGB;
+            pixel_attributes[(__bridge NSString *)kCVPixelBufferPixelFormatTypeKey] = @[@(alpha_format)];
+            decoder_specification = [@{
+                (__bridge NSString *)kVTVideoDecoderSpecification_EnableHardwareAcceleratedVideoDecoder: @NO,
+            } mutableCopy];
+            status = VTDecompressionSessionCreate(kCFAllocatorDefault, format,
+                (__bridge CFDictionaryRef)decoder_specification, (__bridge CFDictionaryRef)pixel_attributes,
+                &callback, &session);
+            metadata.hardware = status == noErr && session;
+            if (!metadata.hardware || !first_picture_keeps_alpha())
+                failure = "Video with an alpha channel requires the compatibility decoder to preserve transparency";
         }
+        CFRelease(format);
+        if (!failure.empty()) return false;
         return seek(0.0, std::numeric_limits<double>::infinity());
+    }
+
+    // Decodes the first picture once and says whether its alpha survived:
+    // VideoToolbox marks a picture whose alpha it dropped as opaque.
+    bool first_picture_keeps_alpha() {
+        if (!seek(0.0, std::numeric_limits<double>::infinity())) return false;
+        GhostGpuVideoFrame first = {};
+        if (next(&first) != 1) return false;
+        CVPixelBufferRef pixel = static_cast<CVPixelBufferRef>(first.pixel_buffer);
+        CFTypeRef opaque = CVBufferGetAttachment(pixel, CFSTR("AlphaChannelIsOpaque"), nullptr);
+        const bool dropped = opaque && CFEqual(opaque, kCFBooleanTrue);
+        CVPixelBufferRelease(pixel);
+        return !dropped;
+    }
+
+    void close_session() {
+        if (!session) return;
+        VTDecompressionSessionWaitForAsynchronousFrames(session);
+        [reader cancelReading];
+        reader = nil;
+        output = nil;
+        pending.clear();
+        failure.clear();
+        VTDecompressionSessionInvalidate(session);
+        CFRelease(session);
+        session = nullptr;
     }
 
     bool seek(double start, double end, AVSampleCursor *selected = nil) {
@@ -669,8 +743,10 @@ struct GhostMacVideoDecoder {
                 (frame_size.width != static_cast<int32_t>(metadata.width) ||
                  frame_size.height != static_cast<int32_t>(metadata.height)))
                 format_failure = "Video resolution changes require the compatibility decoder and a new frame budget";
-            if (format_failure.empty() && !require_p010 && source_bit_depth(format) > 8)
+            if (format_failure.empty() && !alpha && !require_p010 && source_bit_depth(format) > 8)
                 format_failure = "Video bit-depth changes require the compatibility decoder to preserve precision";
+            if (format_failure.empty() && format_has_alpha(format) && !alpha)
+                format_failure = "Video alpha changes require the compatibility decoder to preserve transparency";
             if (!format_failure.empty()) {
                 CFRelease(sample);
                 std::lock_guard<std::mutex> lock(callback_mutex);

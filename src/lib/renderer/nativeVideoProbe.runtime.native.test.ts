@@ -64,9 +64,12 @@ probeDescribe(`${platform.label} video probe`, () => {
   beforeAll(async () => {
     directory = mkdtempSync(join(tmpdir(), 'ghost-video-probe-'));
     ffmpeg(['-f', 'lavfi', '-i', 'testsrc2=s=320x180:r=30:d=1', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', file('h264.mp4')]);
-    // Transparency: the hardware path refuses it, ffmpeg keeps the alpha.
+    // Transparency: VideoToolbox keeps ProRes 4444's alpha; Windows' hardware
+    // decoder takes no ProRes, so ffmpeg keeps it there.
     ffmpeg(['-f', 'lavfi', '-i', 'color=c=red@0.4:s=64x64:r=10:d=1,format=rgba',
       '-c:v', 'prores_ks', '-profile:v', '4', '-pix_fmt', 'yuva444p10le', file('alpha.mov')]);
+    // MPEG-4 Part 2: no hardware decoder takes it.
+    ffmpeg(['-f', 'lavfi', '-i', 'testsrc2=s=64x64:r=10:d=1', '-c:v', 'mpeg4', file('mpeg4.mp4')]);
     writeFileSync(file('not-a-video.mp4'), 'this is text, not video');
     rpc = core();
     const status = await rpc.send('start', { config: { backend: platform.rendererBackend, width: 128, height: 72, target_fps: 30 } });
@@ -87,15 +90,26 @@ probeDescribe(`${platform.label} video probe`, () => {
     expect(probe.duration_seconds).toBeCloseTo(1, 1);
   });
 
-  it('reports software decoding, with the reason, for video the hardware decoder refuses', async () => {
+  it('reports how ProRes 4444 with alpha decodes', async () => {
     const probe = await rpc.send('probe_video', { uri: file('alpha.mov') });
+    expect([probe.width, probe.height]).toEqual([64, 64]);
+    if (!platform.windows) {
+      expect(probe).toMatchObject({ backend: 'videotoolbox', hardware: true, reverse_supported: true });
+      return;
+    }
+    // Windows' hardware decoder takes no ProRes at all: the codec is the reason.
+    expect(probe).toMatchObject({ backend: 'ffmpeg', hardware: false, reverse_supported: false });
+    expect(probe.reason).toMatch(/compatibility decoder|alpha|transparen/i);
+    expect(probe.codec).toMatch(/^prores/);
+  });
+
+  it('reports software decoding, with the reason, for video the hardware decoder refuses', async () => {
+    const probe = await rpc.send('probe_video', { uri: file('mpeg4.mp4') });
     expect(probe.backend).toBe('ffmpeg');
     expect(probe.hardware).toBe(false);
     expect(probe.reverse_supported).toBe(false);
-    // macOS's decoder takes ProRes but not its alpha; Windows' hardware
-    // decoder takes no ProRes at all, so the codec is the reason there.
-    expect(probe.reason).toMatch(platform.windows ? /compatibility decoder|alpha|transparen/i : /alpha|transparen/i);
-    expect(probe.codec).toMatch(/^prores/);
+    expect(probe.reason).not.toBe('');
+    expect(probe.codec).toMatch(/^mpeg4/);
     expect([probe.width, probe.height]).toEqual([64, 64]);
   });
 

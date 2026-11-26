@@ -44,6 +44,8 @@ pub struct GpuVideoFrame {
     /// 1 = BT.601, 2 = BT.709, 3 = BT.2020.
     pub color_matrix: u32,
     pub full_range: bool,
+    /// A BGRA frame (video with alpha) whose colour is premultiplied.
+    pub premultiplied_alpha: bool,
     pub pts_seconds: f64,
     pub duration_seconds: f64,
 }
@@ -68,6 +70,7 @@ struct RawFrame {
     pixel_format: u32,
     color_matrix: u32,
     full_range: u8,
+    premultiplied_alpha: u8,
     pts_seconds: f64,
     duration_seconds: f64,
 }
@@ -274,6 +277,7 @@ impl MacVideoDecoder {
                     pixel_format: raw.pixel_format,
                     color_matrix: raw.color_matrix,
                     full_range: raw.full_range != 0,
+                    premultiplied_alpha: raw.premultiplied_alpha != 0,
                     pts_seconds: raw.pts_seconds,
                     duration_seconds: raw.duration_seconds,
                 }))
@@ -521,18 +525,17 @@ mod tests {
 
     #[test]
     #[ignore = "requires GHOST_TEST_ALPHA_PATH and GHOST_TEST_NONSQUARE_PATH fixtures"]
-    fn alpha_and_non_square_pixels_require_preserving_compatibility_path() {
-        for (variable, expected_reason) in [
-            ("GHOST_TEST_ALPHA_PATH", "preserve transparency"),
-            ("GHOST_TEST_NONSQUARE_PATH", "preserve geometry"),
-        ] {
-            let path = std::env::var_os(variable)
-                .unwrap_or_else(|| panic!("Set {variable} to its metadata test fixture"));
-            let error = match MacVideoDecoder::open(Path::new(&path)) {
-                Ok(_) => panic!("{variable} should require the compatibility decoder"),
-                Err(error) => error,
-            };
-            assert!(error.contains(expected_reason), "{error}");
-        }
+    fn alpha_decodes_natively_and_non_square_pixels_require_compatibility_path() {
+        // Video with alpha (ProRes 4444 or HEVC with alpha) decodes to a
+        // pixel format that keeps it: BGRA, or ProRes's own 16-bit ARGB.
+        let path = std::env::var_os("GHOST_TEST_ALPHA_PATH").expect("Set GHOST_TEST_ALPHA_PATH");
+        let frame = MacVideoDecoder::open(Path::new(&path)).unwrap().next_frame().unwrap().unwrap();
+        assert!([*b"BGRA", *b"b64a"].map(u32::from_be_bytes).contains(&frame.pixel_format));
+        let path = std::env::var_os("GHOST_TEST_NONSQUARE_PATH").expect("Set GHOST_TEST_NONSQUARE_PATH");
+        let error = match MacVideoDecoder::open(Path::new(&path)) {
+            Ok(_) => panic!("non-square pixels should require the compatibility decoder"),
+            Err(error) => error,
+        };
+        assert!(error.contains("preserve geometry"), "{error}");
     }
 }

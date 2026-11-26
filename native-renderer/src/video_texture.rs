@@ -20,12 +20,18 @@ const NV12_FULL: u32 = u32::from_be_bytes(*b"420f");
 const P010_VIDEO: u32 = u32::from_be_bytes(*b"x420");
 const P010_FULL: u32 = u32::from_be_bytes(*b"xf20");
 const BGRA: u32 = u32::from_be_bytes(*b"BGRA");
+/// kCVPixelFormatType_64ARGB: 16-bit big-endian A, R, G, B (ProRes 4444 alpha).
+const ARGB64: u32 = u32::from_be_bytes(*b"b64a");
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum PixelLayout {
     Nv12,
     P010,
     Bgra,
+    /// BGRA whose colour is premultiplied by its alpha (HEVC with alpha).
+    BgraPremultiplied,
+    /// 16-bit big-endian ARGB, straight alpha (ProRes 4444 with alpha).
+    Argb64,
 }
 
 impl PixelLayout {
@@ -34,6 +40,7 @@ impl PixelLayout {
             NV12_VIDEO | NV12_FULL => Ok(Self::Nv12),
             P010_VIDEO | P010_FULL => Ok(Self::P010),
             BGRA => Ok(Self::Bgra),
+            ARGB64 => Ok(Self::Argb64),
             _ => Err(format!("unsupported GPU video pixel format 0x{format:08x}")),
         }
     }
@@ -44,8 +51,21 @@ impl PixelLayout {
             (Self::Nv12, _) => (wgpu::TextureFormat::Rg8Unorm, MTLPixelFormat::RG8Unorm),
             (Self::P010, 0) => (wgpu::TextureFormat::R16Unorm, MTLPixelFormat::R16Unorm),
             (Self::P010, _) => (wgpu::TextureFormat::Rg16Unorm, MTLPixelFormat::RG16Unorm),
-            (Self::Bgra, _) => (wgpu::TextureFormat::Bgra8Unorm, MTLPixelFormat::BGRA8Unorm),
+            (Self::Bgra | Self::BgraPremultiplied, _) => {
+                (wgpu::TextureFormat::Bgra8Unorm, MTLPixelFormat::BGRA8Unorm)
+            }
+            // Read as integers: the shader swaps each sample's bytes.
+            (Self::Argb64, _) => (wgpu::TextureFormat::Rgba16Uint, MTLPixelFormat::RGBA16Uint),
         }
+    }
+
+    /// One packed plane rather than separate luma and chroma planes.
+    fn packed(self) -> bool {
+        matches!(self, Self::Bgra | Self::BgraPremultiplied | Self::Argb64)
+    }
+
+    fn bytes_per_pixel(self) -> usize {
+        if self == Self::Argb64 { 8 } else { 4 }
     }
 }
 
@@ -60,7 +80,8 @@ struct ColorConversion {
 
 /// Matrices `ColorConversion` distinguishes, in uniform-table order.
 const MATRICES: [u32; 3] = [1, 3, 2];
-const LAYOUTS: [PixelLayout; 3] = [PixelLayout::Nv12, PixelLayout::P010, PixelLayout::Bgra];
+const LAYOUTS: [PixelLayout; 4] =
+    [PixelLayout::Nv12, PixelLayout::P010, PixelLayout::Bgra, PixelLayout::BgraPremultiplied];
 
 /// Position of a conversion in the converter's uniform table. Matrix codes
 /// other than BT.601 and BT.2020 decode as BT.709, so they share its entry.
@@ -110,7 +131,12 @@ impl ColorConversion {
             red: row(0.0, 2.0 * (1.0 - kr)),
             green: row(-2.0 * kb * (1.0 - kb) / kg, -2.0 * kr * (1.0 - kr) / kg),
             blue: row(2.0 * (1.0 - kb), 0.0),
-            flags: [u32::from(layout == PixelLayout::Bgra), 0, 0, 0],
+            flags: [
+                u32::from(layout.packed()),
+                u32::from(layout == PixelLayout::BgraPremultiplied),
+                0,
+                0,
+            ],
         }
     }
 }
@@ -119,6 +145,9 @@ impl ColorConversion {
 pub struct GpuVideoConverter {
     pipeline: wgpu::RenderPipeline,
     bind_group_layout: wgpu::BindGroupLayout,
+    /// 16-bit big-endian ARGB frames: one integer texture, filtered in the shader.
+    argb64_pipeline: wgpu::RenderPipeline,
+    argb64_layout: wgpu::BindGroupLayout,
     sampler: wgpu::Sampler,
     /// One read-only uniform per layout/matrix/range, made once: a frame
     /// picks its entry instead of allocating a buffer per decoded frame, and
@@ -181,31 +210,56 @@ impl GpuVideoConverter {
             bind_group_layouts: &[Some(&bind_group_layout)],
             immediate_size: 0,
         });
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("Native Video Conversion Pipeline"),
-            layout: Some(&pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: Some("vs_main"),
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-                buffers: &[],
-            },
-            primitive: wgpu::PrimitiveState::default(),
-            depth_stencil: None,
-            multisample: wgpu::MultisampleState::default(),
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: Some("fs_main"),
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: target_format,
-                    blend: None,
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-            }),
-            multiview_mask: None,
-            cache: crate::pipeline_cache::for_device(device).as_ref(),
+        let make_pipeline = |label, layout: &wgpu::PipelineLayout, entry_point| {
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some(label),
+                layout: Some(layout),
+                vertex: wgpu::VertexState {
+                    module: &shader,
+                    entry_point: Some("vs_main"),
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    buffers: &[],
+                },
+                primitive: wgpu::PrimitiveState::default(),
+                depth_stencil: None,
+                multisample: wgpu::MultisampleState::default(),
+                fragment: Some(wgpu::FragmentState {
+                    module: &shader,
+                    entry_point: Some(entry_point),
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: target_format,
+                        blend: None,
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                }),
+                multiview_mask: None,
+                cache: crate::pipeline_cache::for_device(device).as_ref(),
+            })
+        };
+        let pipeline = make_pipeline("Native Video Conversion Pipeline", &pipeline_layout, "fs_main");
+        let argb64_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("Native Video ARGB64 Layout"),
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 4,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Uint,
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            }],
         });
+        let argb64_pipeline = make_pipeline(
+            "Native Video ARGB64 Pipeline",
+            &device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("Native Video ARGB64 Pipeline Layout"),
+                bind_group_layouts: &[Some(&argb64_layout)],
+                immediate_size: 0,
+            }),
+            "fs_argb64",
+        );
         let mut uniforms = Vec::with_capacity(LAYOUTS.len() * MATRICES.len() * 2);
         for layout in LAYOUTS {
             for matrix in MATRICES {
@@ -222,6 +276,8 @@ impl GpuVideoConverter {
         Self {
             pipeline,
             bind_group_layout,
+            argb64_pipeline,
+            argb64_layout,
             sampler,
             uniforms,
         }
@@ -246,7 +302,11 @@ impl GpuVideoConverter {
         {
             return Err("GPU video viewport must have finite non-negative coordinates and positive dimensions".into());
         }
-        let layout = PixelLayout::from_fourcc(frame.pixel_format)?;
+        let layout = match PixelLayout::from_fourcc(frame.pixel_format)? {
+            // The compositor works in straight alpha; the shader divides.
+            PixelLayout::Bgra if frame.premultiplied_alpha => PixelLayout::BgraPremultiplied,
+            layout => layout,
+        };
         if layout == PixelLayout::P010
             && !device
                 .features()
@@ -265,7 +325,7 @@ impl GpuVideoConverter {
         validate_surface(&surface, frame, layout)?;
         let luma = import_plane(device, &surface, layout, 0)?;
         let luma_view = luma.create_view(&wgpu::TextureViewDescriptor::default());
-        let chroma = if layout == PixelLayout::Bgra {
+        let chroma = if layout.packed() {
             None
         } else {
             Some(import_plane(device, &surface, layout, 1)?)
@@ -273,10 +333,20 @@ impl GpuVideoConverter {
         let chroma_view = chroma
             .as_ref()
             .map(|texture| texture.create_view(&wgpu::TextureViewDescriptor::default()));
-        let uniform = &self.uniforms[conversion_index(layout, frame.color_matrix, frame.full_range)];
         // Per frame by necessity: it binds the planes imported for this frame.
         crate::churn_probe::bind_group();
-        let bindings = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        let bindings = if layout == PixelLayout::Argb64 {
+            device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("Native Video ARGB64 Bindings"),
+                layout: &self.argb64_layout,
+                entries: &[wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: wgpu::BindingResource::TextureView(&luma_view),
+                }],
+            })
+        } else {
+        let uniform = &self.uniforms[conversion_index(layout, frame.color_matrix, frame.full_range)];
+        device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("Native Video Plane Bindings"),
             layout: &self.bind_group_layout,
             entries: &[
@@ -299,7 +369,8 @@ impl GpuVideoConverter {
                     resource: uniform.as_entire_binding(),
                 },
             ],
-        });
+        })
+        };
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("Native Video GPU Conversion"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -316,7 +387,7 @@ impl GpuVideoConverter {
             occlusion_query_set: None,
             multiview_mask: None,
         });
-        pass.set_pipeline(&self.pipeline);
+        pass.set_pipeline(if layout == PixelLayout::Argb64 { &self.argb64_pipeline } else { &self.pipeline });
         pass.set_bind_group(0, &bindings, &[]);
         pass.set_viewport(viewport[0], viewport[1], viewport[2], viewport[3], 0.0, 1.0);
         pass.draw(0..3, 0..1);
@@ -349,9 +420,9 @@ fn validate_surface(
             surface.pixel_format()
         ));
     }
-    if layout == PixelLayout::Bgra {
-        if surface.plane_count() != 0 || surface.bytes_per_element() != 4 {
-            return Err("BGRA video IOSurface must be a packed four-byte surface".into());
+    if layout.packed() {
+        if surface.plane_count() != 0 || surface.bytes_per_element() != layout.bytes_per_pixel() {
+            return Err("packed video IOSurface has an unexpected plane count or pixel size".into());
         }
         return Ok(());
     }
@@ -390,7 +461,7 @@ fn import_plane(
     layout: PixelLayout,
     plane: usize,
 ) -> Result<wgpu::Texture, String> {
-    let (width, height) = if layout == PixelLayout::Bgra {
+    let (width, height) = if layout.packed() {
         (surface.width() as u32, surface.height() as u32)
     } else {
         (
@@ -581,5 +652,93 @@ mod tests {
         )
         .validate(&shader)
         .expect("video shader must validate");
+    }
+
+    /// ProRes 4444 (straight alpha, 16-bit ARGB) and HEVC with alpha
+    /// (premultiplied BGRA) decode through VideoToolbox and convert on the GPU to the
+    /// same straight-alpha picture the clip was made from.
+    #[test]
+    #[ignore = "Requires GA_TEST_FFMPEG (with hevc_videotoolbox) and Mac hardware decoders"]
+    fn alpha_video_decodes_to_straight_alpha_on_the_gpu() {
+        use crate::mac_video_decoder::MacVideoDecoder;
+        let ffmpeg = std::env::var("GA_TEST_FFMPEG").expect("Set GA_TEST_FFMPEG");
+        let (w, h) = (320u32, 180u32);
+        let dir = std::env::temp_dir().join(format!("ghost-alpha-video-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let source = format!(
+            "color=black:s={w}x{h}:r=30:d=1,format=rgba,geq=r='X*255/W':g='Y*255/H':b='128+64*sin(X/20)':a='(X+Y)*255/(W+H)'"
+        );
+        let run = |args: &[&str]| {
+            let out = std::process::Command::new(&ffmpeg).args(["-v", "error", "-y"]).args(args).output().unwrap();
+            assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+            out.stdout
+        };
+        let reference = run(&["-f", "lavfi", "-i", &source, "-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "rgba", "-"]);
+        let prores = dir.join("prores4444.mov");
+        let hevc = dir.join("hevc-alpha.mov");
+        run(&["-f", "lavfi", "-i", &source, "-c:v", "prores_ks", "-profile:v", "4444", "-pix_fmt", "yuva444p10le", prores.to_str().unwrap()]);
+        // VideoToolbox labels HEVC alpha premultiplied and expects its input
+        // so (FFmpeg passes pixels through as they are): premultiply first.
+        run(&["-f", "lavfi", "-i", &format!("{source},premultiply=inplace=1,format=bgra"), "-c:v", "hevc_videotoolbox", "-alpha_quality", "1",
+            "-b:v", "20M", "-tag:v", "hvc1", "-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709",
+            hevc.to_str().unwrap()]);
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
+        let adapter = pollster::block_on(instance.request_adapter(&Default::default())).unwrap();
+        let (device, queue) = pollster::block_on(adapter.request_device(&Default::default())).unwrap();
+        let converter = GpuVideoConverter::new(&device, wgpu::TextureFormat::Rgba8Unorm);
+        for (path, premultiplied, colour_limit, alpha_limit) in [(&prores, false, 3.0, 2.0), (&hevc, true, 6.0, 4.0)] {
+            let mut decoder = MacVideoDecoder::open(path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+            let frame = decoder.next_frame().unwrap().unwrap();
+            assert_eq!(frame.pixel_format, if premultiplied { BGRA } else { ARGB64 }, "{}", path.display());
+            assert_eq!(frame.premultiplied_alpha, premultiplied, "{}", path.display());
+            let target = device.create_texture(&wgpu::TextureDescriptor {
+                label: None,
+                size: wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::Rgba8Unorm,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+                view_formats: &[],
+            });
+            let pitch = (w * 4).div_ceil(256) * 256;
+            let readback = device.create_buffer(&wgpu::BufferDescriptor {
+                label: None,
+                size: (pitch * h) as u64,
+                usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+                mapped_at_creation: false,
+            });
+            let mut encoder = device.create_command_encoder(&Default::default());
+            converter
+                .encode(&device, &mut encoder, &frame, &target.create_view(&Default::default()), [0.0, 0.0, w as f32, h as f32])
+                .unwrap();
+            encoder.copy_texture_to_buffer(
+                target.as_image_copy(),
+                wgpu::TexelCopyBufferInfo {
+                    buffer: &readback,
+                    layout: wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(pitch), rows_per_image: Some(h) },
+                },
+                wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+            );
+            queue.submit([encoder.finish()]);
+            readback.slice(..).map_async(wgpu::MapMode::Read, |r| r.unwrap());
+            device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
+            let mapped = readback.slice(..).get_mapped_range().unwrap();
+            let drawn: Vec<u8> = mapped.chunks(pitch as usize).flat_map(|row| row[..(w * 4) as usize].to_vec()).collect();
+            // Mean differences: colour where alpha is high enough to carry
+            // it (dividing out a small alpha magnifies coding error).
+            let (mut colour, mut colour_n, mut alpha) = (0.0, 0.0, 0.0);
+            for (d, r) in drawn.chunks(4).zip(reference.chunks(4)) {
+                alpha += d[3].abs_diff(r[3]) as f64;
+                if r[3] >= 96 {
+                    colour += (0..3).map(|c| d[c].abs_diff(r[c]) as f64).sum::<f64>() / 3.0;
+                    colour_n += 1.0;
+                }
+            }
+            let (colour, alpha) = (colour / colour_n, alpha / (w * h) as f64);
+            println!("{}: mean colour error {colour:.2}, mean alpha error {alpha:.2} (8-bit levels)", path.display());
+            assert!(colour <= colour_limit && alpha <= alpha_limit, "{}", path.display());
+        }
+        std::fs::remove_dir_all(dir).unwrap();
     }
 }

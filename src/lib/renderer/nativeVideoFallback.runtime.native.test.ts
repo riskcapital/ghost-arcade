@@ -1,5 +1,7 @@
-// Run with a rebuilt native core on macOS or Windows. Alpha video must use the explicit
-// compatibility decoder in auto mode and fail visibly in hardware-only mode.
+// Run with a rebuilt native core on macOS or Windows. ProRes 4444 with alpha plays
+// through VideoToolbox on macOS. Windows' decoder takes no ProRes, so there it must
+// use the explicit compatibility decoder in auto mode and fail visibly in
+// hardware-only mode. Either way the alpha must survive.
 import { execFileSync, spawn } from 'node:child_process';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -84,7 +86,7 @@ function sample(rgba: Uint8Array, width: number, height: number, third: number):
   return Array.from(rgba.slice((y * width + x) * 4, (y * width + x) * 4 + 4));
 }
 
-nativeDescribe('Native video compatibility fallback preserves transparency', () => {
+nativeDescribe('Native video with alpha preserves transparency', () => {
   let directory: string;
   let uri: string;
   let reference: Buffer;
@@ -138,53 +140,69 @@ nativeDescribe('Native video compatibility fallback preserves transparency', () 
     native_quality_policy: 'fixed',
   } });
 
-  it('reports one FFmpeg fallback and composites transparent, half-alpha and opaque pixels correctly', async () => {
-    const rpc = core('auto');
-    try {
-      await start(rpc);
-      await rpc.send('prefetch_media', playback('library:alpha'));
-      await until<Status>(() => rpc.send('status'), status => status.native_video_sessions.some(
-        (session: Status) => session.source_id === 'library:alpha' && session.state === 'prerolled'), 'alpha preroll');
-      await rpc.send('submit_commands', { commands: scene(true) });
-      const status = await until<Status>(() => rpc.send('status'), next => next.native_video_software_frames > 0, 'alpha compatibility presentation');
-      const session = status.native_video_sessions.find((entry: Status) => entry.source_id === 'alpha');
+  const presentsAlpha = async (rpc: ReturnType<typeof core>) => {
+    await start(rpc);
+    await rpc.send('prefetch_media', playback('library:alpha'));
+    await until<Status>(() => rpc.send('status'), status => status.native_video_sessions.some(
+      (session: Status) => session.source_id === 'library:alpha' && session.state === 'prerolled'), 'alpha preroll');
+    await rpc.send('submit_commands', { commands: scene(true) });
+    const status = await until<Status>(() => rpc.send('status'), next =>
+      (platform.windows ? next.native_video_software_frames : next.native_video_hardware_frames) > 0, 'alpha presentation');
+    const session = status.native_video_sessions.find((entry: Status) => entry.source_id === 'alpha');
+    expect(session?.frames_presented).toBeGreaterThan(0);
+    if (platform.windows) {
       expect(session?.backend).toBe('ffmpeg');
       expect(session?.fallback_reason).toMatch(compatibilityReason);
-      expect(session?.frames_presented).toBeGreaterThan(0);
       expect(status.native_video_hardware_fallbacks).toBe(1);
       expect(status.native_video_hardware_frames).toBe(0);
-      const picture = await until(async () => {
-        const snapshot = await rpc.send('output_shared_texture_snapshot', { include_pixels: true });
-        expect(snapshot.includes_pixels).toBe(true);
-        const rgba = Buffer.from(snapshot.rgba_b64, 'base64');
-        expect(rgba.length).toBe(snapshot.width * snapshot.height * 4);
-        if (snapshot.format.toLowerCase().startsWith('bgra')) {
-          for (let offset = 0; offset < rgba.length; offset += 4) {
-            [rgba[offset], rgba[offset + 2]] = [rgba[offset + 2], rgba[offset]];
-          }
-        }
-        return { rgba, width: snapshot.width, height: snapshot.height };
-      }, frame => sample(frame.rgba, frame.width, frame.height, 2)[0] > 150, 'alpha output snapshot');
-      // Read the backdrop from the fully transparent region. Plain color
-      // layers have their own fill strength; the alpha test should use the
-      // actual presented background, without depending on that UI setting.
-      const backdrop = sample(picture.rgba, picture.width, picture.height, 0).slice(0, 3);
-      expect(backdrop[0]).toBeLessThan(4);
-      expect(backdrop[1]).toBeGreaterThan(120);
-      expect(backdrop[2]).toBeLessThan(4);
-      for (let third = 0; third < 3; third++) {
-        const decoded = sample(reference, WIDTH, HEIGHT, third);
-        const alpha = decoded[3] / 255;
-        const expected = decoded.slice(0, 3).map((value, channel) => value * alpha + backdrop[channel] * (1 - alpha));
-        const actual = sample(picture.rgba, picture.width, picture.height, third);
-        for (let channel = 0; channel < 3; channel++) {
-          expect(Math.abs(actual[channel] - expected[channel]), `alpha region ${third}, channel ${channel}`).toBeLessThan(8);
+    } else {
+      expect(session?.backend).toBe(platform.decoderBackend);
+      expect(status.native_video_hardware_fallbacks).toBe(0);
+      expect(status.native_video_software_frames).toBe(0);
+    }
+    const picture = await until(async () => {
+      const snapshot = await rpc.send('output_shared_texture_snapshot', { include_pixels: true });
+      expect(snapshot.includes_pixels).toBe(true);
+      const rgba = Buffer.from(snapshot.rgba_b64, 'base64');
+      expect(rgba.length).toBe(snapshot.width * snapshot.height * 4);
+      if (snapshot.format.toLowerCase().startsWith('bgra')) {
+        for (let offset = 0; offset < rgba.length; offset += 4) {
+          [rgba[offset], rgba[offset + 2]] = [rgba[offset + 2], rgba[offset]];
         }
       }
-    } finally { await rpc.close(); }
+      return { rgba, width: snapshot.width, height: snapshot.height };
+    }, frame => sample(frame.rgba, frame.width, frame.height, 2)[0] > 150, 'alpha output snapshot');
+    // Read the backdrop from the fully transparent region. Plain color
+    // layers have their own fill strength; the alpha test should use the
+    // actual presented background, without depending on that UI setting.
+    const backdrop = sample(picture.rgba, picture.width, picture.height, 0).slice(0, 3);
+    expect(backdrop[0]).toBeLessThan(4);
+    expect(backdrop[1]).toBeGreaterThan(120);
+    expect(backdrop[2]).toBeLessThan(4);
+    for (let third = 0; third < 3; third++) {
+      const decoded = sample(reference, WIDTH, HEIGHT, third);
+      const alpha = decoded[3] / 255;
+      const expected = decoded.slice(0, 3).map((value, channel) => value * alpha + backdrop[channel] * (1 - alpha));
+      const actual = sample(picture.rgba, picture.width, picture.height, third);
+      for (let channel = 0; channel < 3; channel++) {
+        expect(Math.abs(actual[channel] - expected[channel]), `alpha region ${third}, channel ${channel}`).toBeLessThan(8);
+      }
+    }
+  };
+
+  it(platform.windows
+    ? 'reports one FFmpeg fallback and composites transparent, half-alpha and opaque pixels correctly'
+    : 'plays natively and composites transparent, half-alpha and opaque pixels correctly', async () => {
+    const rpc = core('auto');
+    try { await presentsAlpha(rpc); } finally { await rpc.close(); }
   }, 25000);
 
-  it('rejects alpha video in hardware-only mode with a clear error and zero software frames', async () => {
+  (platform.windows ? it.skip : it)('plays natively in hardware-only mode too', async () => {
+    const rpc = core('hardware');
+    try { await presentsAlpha(rpc); } finally { await rpc.close(); }
+  }, 25000);
+
+  (platform.windows ? it : it.skip)('rejects alpha video in hardware-only mode with a clear error and zero software frames', async () => {
     const rpc = core('hardware');
     try {
       const baseline = await start(rpc);

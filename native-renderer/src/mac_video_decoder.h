@@ -27,6 +27,8 @@ typedef struct {
     uint32_t pixel_format;
     uint32_t color_matrix;
     uint8_t full_range;
+    // A 32BGRA frame of a video with alpha whose colour is premultiplied.
+    uint8_t premultiplied_alpha;
     double pts_seconds;
     double duration_seconds;
 } GhostGpuVideoFrame;
