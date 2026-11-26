@@ -220,6 +220,23 @@ describe('Lines Light Up and draw head on the native core', () => {
       };
       expect(thickness(tapered, headX - 10)).toBeLessThan(thickness(tapered, headX - 110));
       expect(thickness(hard, headX - 10)).toBe(thickness(hard, headX - 110));
+
+      // Dashed: Dash / Gap are tenths of the line's length (the panel's and
+      // the WebGL path's units). 0.3 + 0.2 = half a tenth: 20 dashes.
+      const dashed = horizontalLine();
+      dashed.drawAnimation = { ...dashed.drawAnimation, enabled: false };
+      dashed.stroke = { type: 'dashed', color: [1, 1, 1, 1], width: 6, dashLength: 0.3, gapLength: 0.2, animated: false, animationSpeed: 1 };
+      const dpx = await render(base([dashed]), 1);
+      const row = Math.round(H * 0.5);
+      let runs = 0;
+      let on = false;
+      for (let x = 0; x < W; x++) {
+        const lit = dpx[(row * W + x) * 4 + 3] > 128;
+        if (lit && !on) runs++;
+        on = lit;
+      }
+      expect(runs, 'dash count along the line').toBeGreaterThanOrEqual(19);
+      expect(runs).toBeLessThanOrEqual(21);
     } finally {
       await rpc.close();
     }
