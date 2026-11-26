@@ -7,7 +7,7 @@
  */
 
 import { get } from 'svelte/store';
-import { invoke } from '$lib/bridge';
+import { invoke, getRawElectronApi } from '$lib/bridge';
 import { licenseStatus } from '$lib/stores/license';
 import { directorStore } from '$lib/stores/director';
 import type { DirectorChatRequest, DirectorToolCall, DirectorToolResult } from './types';
@@ -67,7 +67,7 @@ export async function sendDirectorMessage(
     let currentToolInput = '';
 
     // Listen for stream chunks
-    const api = (window as any).electronAPI;
+    const api = getRawElectronApi();
     if (!api?.on) {
       directorStore.setError('Streaming not available (missing electronAPI.on)');
       return;

@@ -6,6 +6,7 @@
  * the show plays, and measures how far the stage view runs behind the
  * editor so recordings and the audio delay can line up with it.
  */
+import { getRawElectronApi } from '$lib/bridge';
 import { derived, get, writable } from 'svelte/store';
 import { compositeMirrorCanvas, compositeMirrorFrameInfo } from '../../sync/nativeCompositeMirror';
 import { stage3DRendererControls } from '../../stage3d/store';
@@ -385,8 +386,7 @@ export function installStageRehearsal(): () => void {
   };
   globalThis.addEventListener?.('pagehide', onUnload);
   // Minimised / restored (main process).
-  const offVisibility = (globalThis as unknown as { electronAPI?: { on?: (channel: string, cb: (p: { visible?: boolean }) => void) => () => void } })
-    .electronAPI?.on?.('stage3d-visibility-changed', (payload) => {
+  const offVisibility = getRawElectronApi()?.on?.('stage3d-visibility-changed', (payload: { visible?: boolean }) => {
       const visible = payload?.visible !== false;
       if (visible && !get(stageWindowVisible)) visibleSince = epochNow();
       stageWindowVisible.set(visible);

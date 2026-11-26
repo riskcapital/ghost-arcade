@@ -23,7 +23,7 @@
  */
 
 import { writable, get } from 'svelte/store';
-import { invoke, isElectron } from '$lib/bridge';
+import { invoke, isElectron, getRawElectronApi } from '$lib/bridge';
 import { audioStore } from '../stores/audio';
 import { midiStore } from '../midi/midiStore';
 import { LinkClockMap } from './linkClock';
@@ -143,7 +143,7 @@ function createAbletonLinkStore() {
 
   function listenForEvents(): void {
     eventsUnsub?.();
-    const on = typeof window !== 'undefined' ? (window as any).electronAPI?.on : null;
+    const on = typeof window !== 'undefined' ? getRawElectronApi()?.on : null;
     eventsUnsub = typeof on === 'function' ? on('link-event', onEvent) ?? null : null;
   }
   let pollTimer: ReturnType<typeof setInterval> | null = null;

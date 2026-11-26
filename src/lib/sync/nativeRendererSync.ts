@@ -58,6 +58,7 @@ import {
   nativeFailedRouteLayers,
 } from '$lib/stores/nativeRenderer';
 import { invoke, isElectron, isMac, isWindows } from '$lib/bridge';
+import { getNdiBridge } from '$lib/bridge';
 import { nativeCoreLossReason } from './nativeCoreSupervisor';
 import { noteVideoSessionBackends, videoDecodeHealth } from '$lib/video/videoDecodeHealth';
 import { getVisualAudioSnapshot, visualAudio, type VisualAudioState } from '$lib/audio/visualAudio';
@@ -12364,7 +12365,7 @@ export class NativeRendererSync {
             ...(sinceFrame > 0 ? { sinceFrame } : {}),
           })
           : liveSourceType === 'ndi'
-            ? await (window as any).ghostNDI?.receiveTextureInfo?.(identity)
+            ? await getNdiBridge()?.receiveTextureInfo?.(identity)
             : await receiveSpoutTextureInfo();
         if ((info as any)?.unchanged) return;
         if (!info?.available || !info.handle || !info.width || !info.height) return;

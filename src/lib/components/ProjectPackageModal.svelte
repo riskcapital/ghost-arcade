@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { getRawElectronApi } from '$lib/bridge';
   /**
    * Export Package: the show and all its media in one .zip. Asks where to
    * save, shows progress while the media is packed (it can be cancelled),
@@ -16,7 +17,7 @@
   let result: Result | null = null;
   let error = '';
   let cancelling = false;
-  const api = (window as any).electronAPI;
+  const api = getRawElectronApi();
   let stopProgress: (() => void) | null = null;
 
   const size = (bytes: number) => {

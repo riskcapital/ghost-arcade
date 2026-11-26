@@ -25,7 +25,7 @@
   import { displayFingerprint, resolveStoredDisplay } from '../output/displayAssignment';
   import { screenActions, selectedScreenMaskId, screenMaskPlacing } from '../stores/screens';
   import { recordDiscreteAction, scheduleHistorySnapshot } from '../stores/historyHooks';
-  import { isDesktopApp, getTextureShareLabel } from '$lib/bridge';
+  import { isDesktopApp, getTextureShareLabel, getNdiBridge } from '$lib/bridge';
   import { MirrorMeshError, parseMirrorMesh } from '../output/mirrorMesh';
   import { DEFAULT_DOME_PROJECTOR, domeProjectorOf, type DomeProjector } from '../output/domeMath';
   import { settings } from '../stores/settings';
@@ -38,7 +38,7 @@
   let ndiReason = $state('Checking NDI output support…');
   onMount(async () => {
     try {
-      const r = await (window as any).ghostNDI?.outputStatus?.();
+      const r = await getNdiBridge()?.outputStatus?.();
       ndiAvailable = !!r?.available;
       ndiReason = r?.reason || 'NDI output requires the desktop app and optional NDI runtime.';
     } catch { ndiAvailable = false; ndiReason = 'Could not check NDI output support. See Settings → Output → NDI Output.'; }

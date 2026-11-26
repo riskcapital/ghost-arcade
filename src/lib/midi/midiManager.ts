@@ -1,3 +1,4 @@
+import { getRawElectronApi } from '$lib/bridge';
 import { emitProgramChange } from './programChange';
 // MIDI Manager - Web MIDI API wrapper with device detection and hot-plug
 import { runMidiTaps } from './midiTaps';
@@ -256,7 +257,7 @@ export class MidiManager {
   private startControllerLights() {
     if (this.lightsSubscriptions.length || (typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('mode'))) return;
     if (typeof window !== 'undefined') window.addEventListener('beforeunload', this.onWindowClose);
-    if (typeof window !== 'undefined') this.quitSubscription = (window as any).electronAPI?.on?.('app-before-quit', this.onWindowClose);
+    if (typeof window !== 'undefined') this.quitSubscription = getRawElectronApi()?.on?.('app-before-quit', this.onWindowClose);
     this.lightsSubscriptions = [midiStore.subscribe(this.scheduleControllerLights),
       vjClipLauncher.subscribe(this.scheduleControllerLights), controllerLightsStore.subscribe(this.scheduleControllerLights)];
   }

@@ -1,3 +1,4 @@
+import { getRawElectronApi } from '$lib/bridge';
 export interface ScreenCaptureSource {
   id: string;
   name: string;
@@ -31,7 +32,7 @@ const FAST_PREVIEW_OPTIONS: ScreenSourcesIpcOptions = {
 };
 
 export function screenCaptureSourcePickerAvailable(): boolean {
-  return typeof window !== 'undefined' && !!(window as any).electronAPI?.invoke;
+  return typeof window !== 'undefined' && !!getRawElectronApi()?.invoke;
 }
 
 function normalizeScreenCaptureSource(source: any): ScreenCaptureSource | null {
@@ -69,7 +70,7 @@ async function invokeScreenSourceList(
   ipcOptions: ScreenSourcesIpcOptions,
   rendererTimeoutMs: number,
 ): Promise<ScreenCaptureSource[]> {
-  const api = (window as any).electronAPI;
+  const api = getRawElectronApi();
   if (!api?.invoke) throw new Error('Electron capture source picker is unavailable');
   const list = await withTimeout(
     api.invoke('screen_sources_list', ipcOptions),

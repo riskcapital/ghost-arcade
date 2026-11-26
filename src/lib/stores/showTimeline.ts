@@ -58,6 +58,7 @@
  * show takes back over at its next clip boundary.
  */
 
+import { getRawElectronApi } from '$lib/bridge';
 import { writable, derived, get } from 'svelte/store';
 import type {
   KeyframeEasing,
@@ -3049,7 +3050,7 @@ export const showTimeline = {
     // the bundled ffmpeg (desktop); the track then plays from the copy.
     const sourcePath = track.assetRef?.originalPath;
     const alreadyConverted = /[\\/]converted-audio[\\/]/.test(sourcePath ?? '');
-    if (sourcePath && !alreadyConverted && typeof window !== 'undefined' && (window as any).electronAPI?.invoke) {
+    if (sourcePath && !alreadyConverted && typeof window !== 'undefined' && getRawElectronApi()?.invoke) {
       const converted = await convertShowAudioPath(sourcePath, track.name);
       if (!('error' in converted) && get(store).audioTracks.some((t) => t.id === trackId)) {
         forgetShowAudioDecode(track.url);

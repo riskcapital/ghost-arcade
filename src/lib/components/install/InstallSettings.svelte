@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { getRawElectronApi } from '$lib/bridge';
   /**
    * Settings > Show control > Installation. Machine-level, not saved with the
    * project: stored by the main process (electron/show-startup.cjs) and run by
@@ -10,7 +11,7 @@
   import { installPaused } from '../../install/installSession';
 
   type Invoke = (c: string, a?: unknown) => Promise<any>;
-  const api = typeof window !== 'undefined' ? (window as unknown as { electronAPI?: { invoke: Invoke } }).electronAPI : undefined;
+  const api = typeof window !== 'undefined' ? getRawElectronApi() : undefined;
   const desktop = !!api;
 
   interface InstallStatus {

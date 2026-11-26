@@ -214,7 +214,7 @@
   let ndiStatusHint = 'Open an NDI® sender in another app on this machine or network';
 
   // Check if running in desktop app (Electron)
-  import { invoke as bridgeInvoke, isDesktopApp, getTextureShareLabel } from '$lib/bridge';
+  import { invoke as bridgeInvoke, isDesktopApp, getTextureShareLabel, getNdiBridge } from '$lib/bridge';
   import { forgetLiveCaptureSession, liveCaptureImportStates, liveCaptureStatusLabel } from '$lib/renderer/liveCaptureImportState';
   const tsLabel = getTextureShareLabel();
   import { spoutSenders, textureShareInfo, scanSpoutSenders } from '$lib/stores/spout';
@@ -339,7 +339,7 @@
     }
     if (source.type === 'ndi') {
       const senderName = source.ndiSourceName || source.name.replace('NDI: ', '');
-      (window as any).ghostNDI?.destroyReceiver?.(senderName).catch((err: any) => console.warn('Failed to stop NDI receiver:', err));
+      getNdiBridge()?.destroyReceiver?.(senderName).catch((err: any) => console.warn('Failed to stop NDI receiver:', err));
     }
     if ((source.type === 'webcam' || source.type === 'capture') && source.nativeSessionId && isDesktop) {
       bridgeInvoke('native_live_capture_stop', { sessionId: source.nativeSessionId })
@@ -840,10 +840,6 @@
         s.id === source.id ? { ...s, status: 'disconnected' as const } : s
       );
     }
-  }
-
-  function getNdiBridge() {
-    return typeof window !== 'undefined' ? (window as any).ghostNDI : null;
   }
 
   async function scanNdiSources() {

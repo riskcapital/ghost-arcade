@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { getRawElectronApi } from '$lib/bridge';
   import { mobileConnectionUrl, mobileControlAppLink, IPHONE_APP_STORE_URL } from './lib/remote/mobileConnectionUrl';
   import { onMount, onDestroy } from 'svelte';
   import { get } from 'svelte/store';
@@ -753,7 +754,7 @@
   // here, by a double-click, a snap or the OS.
   onMount(() => {
     if (!isDesktopApp || isMac) return;
-    const api = (window as any).electronAPI;
+    const api = getRawElectronApi();
     void invoke<boolean>('win_is_maximized').then((value) => { winMaximized = !!value; }).catch(() => {});
     const stop = api?.on?.('win-maximized-changed', (value: unknown) => { winMaximized = !!value; });
     return () => { if (typeof stop === 'function') stop(); };
@@ -1422,7 +1423,7 @@
   async function openProjectPackage(zipPath?: string) {
     fileMenuOpen = false;
     try {
-      const unpacked = await (window as any).electronAPI.invoke('open_project_package', zipPath ? { zipPath } : {});
+      const unpacked = await getRawElectronApi().invoke('open_project_package', zipPath ? { zipPath } : {});
       if (unpacked?.canceled || !unpacked?.projectPath) return;
       if (!(await openProjectAtPath(unpacked.projectPath))) {
         alert('The package unpacked, but its project could not be opened.');
@@ -1711,7 +1712,7 @@
         currentProjectPath = savedPath;
       }
       let media: { moved?: string[]; missing?: string[] } | null = null;
-      const api = (window as any).electronAPI;
+      const api = getRawElectronApi();
       if (isDesktopApp && api?.invoke) {
         try {
           const prepared = await api.invoke('prepare_project_media', { json: savedData, projectPath: savedPath || undefined });
@@ -2152,7 +2153,7 @@
     void loadPhoneScanLibrary();
     // Sim windows report where they settle so the assignment follows a drag.
     void refreshDisplays();
-    const offSimMoved = (window as any).electronAPI?.on?.('sim-window-moved', handleSimWindowMoved);
+    const offSimMoved = getRawElectronApi()?.on?.('sim-window-moved', handleSimWindowMoved);
     // Debug/automation hook: expose the live store singletons on window so
     // CDP-driven tests and DevTools reach the SAME instances the render
     // loop uses (a dynamic `import('/src/...')` over CDP can resolve to a
@@ -2373,7 +2374,7 @@
       showCloseModal = true;
     };
     window.addEventListener('beforeunload', onBeforeUnload);
-    const stopQuitRequests = (window as any).electronAPI?.on?.('app-quit-requested', handleQuitRequest);
+    const stopQuitRequests = getRawElectronApi()?.on?.('app-quit-requested', handleQuitRequest);
 
     // Background update check — first run shows cached result if any,
     // then re-fetches if it's been > 24 h since last check. Manual
@@ -2603,7 +2604,7 @@
     // --- A project double-clicked in the Finder / Explorer ---
     // The main process holds the file until the editor is ready for it;
     // later ones arrive while the app is running.
-    const desktopApi = (window as any).electronAPI;
+    const desktopApi = getRawElectronApi();
     if (isDesktopApp && desktopApi?.invoke && !isShowModeLaunch()) {
       const openPendingProject = async () => {
         try {
@@ -6304,7 +6305,7 @@
       // Electron path: re-save to the previously-chosen filesystem path,
       // re-materializing any new blob assets to the same project dir.
       if (isDesktopApp && currentProjectPath) {
-        const api = (window as any).electronAPI;
+        const api = getRawElectronApi();
         if (api?.invoke) {
           try {
             const sep = currentProjectPath.includes('\\') ? '\\' : '/';
@@ -6400,7 +6401,7 @@
     // user dragged in saves as a session-only blob URL that can't be reopened
     // on another machine (or even the same machine after restart).
     if (isDesktopApp) {
-      const api = (window as any).electronAPI;
+      const api = getRawElectronApi();
       if (api?.invoke) {
         try {
           const dialogResult = await api.invoke('save_project_dialog', {
@@ -6510,8 +6511,7 @@
     // Electron 32+ removed the non-standard `File.path` extension;
     // `webUtils.getPathForFile` is the official replacement. Returns
     // null in the web build or when the file came from a remote drop.
-    const w = window as any;
-    const electronPath: string | null = w.electronAPI?.getPathForFile?.(file) || null;
+    const electronPath: string | null = getRawElectronApi()?.getPathForFile?.(file) || null;
     let projectDir: string | undefined;
     if (electronPath) {
       const sep = electronPath.includes('\\') ? '\\' : '/';

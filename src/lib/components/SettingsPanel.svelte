@@ -2,7 +2,7 @@
   import { addonAccess } from '../addons/addonAccess';
   import NdiOutputSettings from './NdiOutputSettings.svelte';
   import { uiLanguage, UI_LANGUAGES } from '../i18n';
-  import { isMac } from '$lib/bridge';
+  import { isMac, getRawElectronApi } from '$lib/bridge';
   import { INTERFACE_SIZES, interfaceScale } from '../stores/interfaceScale';
   import { onMount, onDestroy } from 'svelte';
   import { tooltipsEnabled } from '../help/preferences';
@@ -59,7 +59,7 @@
   import { checkForUpdate, getCachedVersionResult, type VersionCheckResult } from '../utils/versionCheck';
   import { codeUpdate, refreshCodeUpdate, revertCodeUpdate } from '../stores/codeUpdate';
   import { getNativeRendererStatus } from '../api/native-renderer';
-  import { openExternalUrl, invoke as bridgeInvoke, isElectron as bridgeIsElectron } from '../bridge';
+  import { openExternalUrl, invoke as bridgeInvoke, isElectron as bridgeIsElectron, getNdiBridge } from '../bridge';
   import { mergeRecordingCodecAvailability, recordingCodecOption, type RecordingCodecId, type RecordingCodecOption } from '../recording/recordingSources';
 
   // Version-check state for the Settings → Updates section.
@@ -231,7 +231,7 @@
       // Electron path — preferred. Goes through the whitelisted
       // app_relaunch IPC handler which calls app.relaunch() + exit(0)
       // so the new process boots cleanly with the new flags.
-      const api = (window as any).electronAPI;
+      const api = getRawElectronApi();
       if (api?.invoke) {
         await api.invoke('app_relaunch');
         return;
@@ -538,7 +538,7 @@
       try { history.replaceState(null, '', window.location.pathname + window.location.search); } catch { /* */ }
     }
     try {
-      const ndi = (window as any).ghostNDI;
+      const ndi = getNdiBridge();
       if (ndi) {
         const r = await ndi.available();
         ndiAvailable = !!r?.available;

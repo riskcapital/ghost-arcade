@@ -11,6 +11,7 @@
 // pairing code does not change between sessions. A received file also costs
 // disk space (up to 64 MB each). "Always accept" is one checkbox away for a
 // performer who scans and sends often.
+import { getRawElectronApi } from '$lib/bridge';
 import { get, writable } from 'svelte/store';
 import {
   ScanReceiver, scanTransferCapability,
@@ -47,7 +48,7 @@ export function setPhoneScanAutoAccept(on: boolean) {
 }
 
 type Invoke = (channel: string, args?: unknown) => Promise<any>;
-const invoker = (): Invoke | null => (globalThis as { electronAPI?: { invoke?: Invoke } }).electronAPI?.invoke ?? null;
+const invoker = (): Invoke | null => getRawElectronApi()?.invoke ?? null;
 async function call(channel: string, args?: unknown) {
   const invoke = invoker();
   if (!invoke) throw new Error('Scans can be received in the desktop app only.');

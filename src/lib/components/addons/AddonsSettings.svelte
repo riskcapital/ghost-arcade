@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { getRawElectronApi } from '$lib/bridge';
   /**
    * Settings → App → Add-ons: what is unlocked on this computer, the licence
    * key, this computer's seat. Machine-level, never saved with a project.
@@ -13,7 +14,7 @@
   import AddonErrorText from './AddonErrorText.svelte';
   import LicenceKeyForm from './LicenceKeyForm.svelte';
 
-  const desktop = typeof window !== 'undefined' && !!(window as unknown as { electronAPI?: unknown }).electronAPI;
+  const desktop = typeof window !== 'undefined' && !!getRawElectronApi();
   const status = $derived($addonsStatus);
   const licence = $derived(status.licence);
   let busy = $state(false);

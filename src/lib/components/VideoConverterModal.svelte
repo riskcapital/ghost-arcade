@@ -1,5 +1,6 @@
 <script lang="ts">
   import { pathToFileUrl } from '../storage/assetRegistry';
+  import { getPathForFile } from '../bridge';
   import {
     cancelActiveVideoConversion,
     convertImageSequenceToMp4,
@@ -149,7 +150,7 @@
 
   function chooseDroppedFile(file: File | null | undefined) {
     if (!file || isConverting) return;
-    const filePath = window.electronAPI?.getPathForFile?.(file) || '';
+    const filePath = getPathForFile(file);
     if (!filePath) {
       errorMessage = 'Drag a file from disk, or use Choose Video so Ghost can access the source path.';
       return;

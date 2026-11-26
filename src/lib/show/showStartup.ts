@@ -13,6 +13,7 @@
  * alert() / confirm() become log lines (confirm answers "no").
  */
 
+import { getRawElectronApi } from '$lib/bridge';
 import { writable } from 'svelte/store';
 
 import type { InstallSchedule } from '../install/installSchedule';
@@ -81,7 +82,7 @@ export const showStartupInfo = writable<ShowStartupInfo | null>(launchInfo);
 type Invoke = (command: string, args?: unknown) => Promise<unknown>;
 function invoker(): Invoke | null {
   if (typeof window === 'undefined') return null;
-  const api = (window as unknown as { electronAPI?: { invoke?: Invoke } }).electronAPI;
+  const api = getRawElectronApi();
   return api?.invoke ?? null;
 }
 

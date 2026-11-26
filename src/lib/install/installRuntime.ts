@@ -18,7 +18,7 @@
  */
 
 import { get } from 'svelte/store';
-import { invoke, isDesktopApp } from '../bridge';
+import { invoke, isDesktopApp, getRawElectronApi } from '../bridge';
 import { InstallRunner } from './installRunner';
 import { installScheduleState, normalizeInstallSchedule, type InstallSchedule } from './installSchedule';
 import { chooseAnchor, nextPlaylistIndex, periodKeyFor, resumePlaylistIndex, resumePosition, type InstallAnchor } from './installResume';
@@ -315,7 +315,7 @@ export function startInstallRuntime(initial: ShowStartupConfig, deps: InstallApp
   if (isDesktopApp) {
     heartbeat();
     timers.push(setInterval(() => { void heartbeat(); }, 2000));
-    const api = (window as unknown as { electronAPI?: { on?: (ch: string, cb: (...a: unknown[]) => void) => (() => void) | void } }).electronAPI;
+    const api = getRawElectronApi();
     const offPause = api?.on?.('install-mode-paused', () => {
       stop();
       installPaused.set(true);

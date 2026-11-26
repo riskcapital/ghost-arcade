@@ -25,6 +25,7 @@
 
 import { derived, get, writable } from 'svelte/store';
 import { showToast } from './errorToast';
+import { getNdiBridge } from '../bridge';
 import {
   settings,
   createDefaultSlice,
@@ -584,12 +585,7 @@ let ndiOutputChange = 0;
 let ndiOutputQueue: Promise<void> = Promise.resolve();
 if (typeof window !== 'undefined') {
   screens.subscribe((slices) => {
-    const bridge = (window as unknown as {
-      ghostNDI?: {
-        outputStart?: (o: { name: string }) => Promise<unknown>;
-        outputStop?: () => Promise<unknown>;
-      };
-    }).ghostNDI;
+    const bridge = getNdiBridge();
     if (!bridge?.outputStart) return;
     const ndiSlice = (slices ?? []).find(
       (s) => (s.targetType ?? 'sender') === 'sender' && s.outputType === 'ndi'

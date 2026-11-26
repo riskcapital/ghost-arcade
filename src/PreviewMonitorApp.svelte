@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { getRawElectronApi } from '$lib/bridge';
   /**
    * The Preview monitor: the operator's own display beside the projector.
    * The pictures (the program, and with the crossfader on, Deck A and Deck
@@ -23,7 +24,7 @@
     live?: boolean;
   }
 
-  const api = (window as any).electronAPI as {
+  const api = getRawElectronApi() as {
     invoke: (command: string, args?: unknown) => Promise<any>;
     on: (channel: string, callback: (...args: any[]) => void) => () => void;
   } | undefined;

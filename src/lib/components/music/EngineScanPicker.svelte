@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { getRawElectronApi } from '$lib/bridge';
   /**
    * A cloud engine voice's scan: pick a .ply (the main process grants the
    * picked file; nothing else widens) or go back to the bundled default.
@@ -15,7 +16,7 @@
   } = $props();
 
   type Api = { invoke: (c: string, a?: unknown) => Promise<{ canceled: boolean; filePath: string | null }> };
-  const api = (): Api | null => (typeof window !== 'undefined' ? ((window as unknown as { electronAPI?: Api }).electronAPI ?? null) : null);
+  const api = (): Api | null => (typeof window !== 'undefined' ? (getRawElectronApi() ?? null) : null);
 
   const load = $derived(
     Object.entries($nativeCloudLoadStates).find(([id]) => id.endsWith(layerSuffix))?.[1],

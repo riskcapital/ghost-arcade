@@ -35,6 +35,7 @@
   import { acquireNativeCompositeMirror, type CompositeMirrorHandle } from '../sync/nativeCompositeMirror';
   import { startNativeDeckMonitorMirror, type DeckMonitorMirrorHandle } from '../sync/nativeDeckMonitorMirror';
   import { getNativeRendererCapabilities } from '$lib/api/native-renderer';
+  import { getNdiBridge } from '$lib/bridge';
   import { get } from 'svelte/store';
   import { prepareVideoImport } from '../video/videoImport';
   import { AUDIO_FILE_HINT, mediaFileKind, VIDEO_FILE_ACCEPT } from '../media/mediaFileKind';
@@ -1929,7 +1930,7 @@
   let vjNdiScanning = false;
   let vjNdiStatusHint = 'Open an NDI® sender in another app on this machine or network';
   async function vjStartNdiScan() {
-    const api = (window as any).ghostNDI;
+    const api = getNdiBridge();
     if (!api) {
       vjNdiChecked = true;
       vjNdiAvailable = false;

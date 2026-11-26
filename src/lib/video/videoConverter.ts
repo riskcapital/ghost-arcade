@@ -1,4 +1,4 @@
-import { invoke, isDesktopApp } from '../bridge';
+import { invoke, isDesktopApp, onElectronEvent } from '../bridge';
 import formats from '../../../electron/video-converter-formats.json';
 export type VideoConversionFormat = 'h264' | 'playback' | 'hap' | 'hap_alpha' | 'hap_q' | 'prores' | 'prores_alpha';
 
@@ -69,15 +69,14 @@ function makeJobId(): string {
 }
 
 function listenForJobProgress(jobId: string, onProgress?: (progress: VideoConversionProgress) => void): (() => void) | null {
-  const api = window.electronAPI;
-  if (!api?.on || !onProgress) return null;
-  return api.on('video-converter-progress', (progress: VideoConversionProgress) => {
+  if (!onProgress) return null;
+  return onElectronEvent('video-converter-progress', (progress: VideoConversionProgress) => {
     if (progress?.jobId && progress.jobId !== jobId) return;
     onProgress({
       ...progress,
       progress: Math.max(0, Math.min(1, Number.isFinite(progress.progress) ? progress.progress : 0)),
     });
-  });
+  }) ?? null;
 }
 
 export async function pickWebMVideo(): Promise<PickedVideoFile | null> {

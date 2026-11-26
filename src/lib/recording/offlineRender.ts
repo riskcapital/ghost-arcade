@@ -76,7 +76,7 @@ import { mediaLibrary } from '../stores/media';
 import { generateUUID } from '../utils/uuid';
 import { createAssetRefFromGeneratedBlob, pathToFileUrl, type AssetRef } from '../storage/assetRegistry';
 import type { RenderEngine } from '../renderer/engine';
-import { invoke, isElectron } from '../bridge';
+import { invoke, isElectron, getElectronApi } from '../bridge';
 import { recordingCodecOption, type RecordingCodecId } from './recordingSources';
 import { renderFrameProblem, VideoMotionWatch } from './renderFrameHealth';
 import {
@@ -297,7 +297,7 @@ export function describeFrameTarget(target: FrameSequenceTarget): string {
 }
 
 export async function chooseFrameSequenceTarget(): Promise<FrameSequenceTarget | null> {
-  if (isElectron && window.electronAPI) {
+  if (getElectronApi()) {
     const picked = await invoke<{ path: string; name: string } | null>('pick_directory');
     if (!picked?.path) return null;
     return { kind: 'electron', path: picked.path, name: picked.name || picked.path };

@@ -1,3 +1,4 @@
+import { getRawElectronApi } from '$lib/bridge';
 import type { AssetRef } from '../storage/assetRegistry';
 export type VideoImportInfo = { durationSeconds?: number; videoWidth?: number; videoHeight?: number; thumbnail: string };
 export async function prepareVideoImport(video: HTMLVideoElement, ref?: AssetRef): Promise<VideoImportInfo> {
@@ -16,8 +17,8 @@ export async function prepareVideoImport(video: HTMLVideoElement, ref?: AssetRef
       if (ctx) { ctx.drawImage(video, 0, 0, canvas.width, canvas.height); return { durationSeconds, videoWidth: video.videoWidth, videoHeight: video.videoHeight, thumbnail: canvas.toDataURL('image/jpeg', .7) }; }
     } catch { /* Native-only codecs use the bounded import probe below. */ }
   }
-  if (ref?.originalPath && typeof window !== 'undefined' && (window as any).electronAPI?.invoke) {
-    return (window as any).electronAPI.invoke('inspect_video_import', { inputPath: ref.originalPath });
+  if (ref?.originalPath && typeof window !== 'undefined' && getRawElectronApi()?.invoke) {
+    return getRawElectronApi().invoke('inspect_video_import', { inputPath: ref.originalPath });
   }
   return { durationSeconds, thumbnail: '' };
 }

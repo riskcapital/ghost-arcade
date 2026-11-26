@@ -3,7 +3,7 @@
   // while it is open.
   import { onMount as onMountWindowButtons } from 'svelte';
   onMountWindowButtons(() => {
-    const api = (globalThis as any).electronAPI;
+    const api = getRawElectronApi();
     void api?.invoke?.('set_window_buttons_visible', { visible: false })?.catch?.(() => {});
     return () => { void api?.invoke?.('set_window_buttons_visible', { visible: true })?.catch?.(() => {}); };
   });
@@ -30,7 +30,7 @@
   import { windowCaption, wheelScrollsSideways } from '../utils/windowCaption';
   import { nativePreviewClaim, nativePreviewHostEl } from '../stores/nativePreviewHost';
   import { NATIVE_ENGINE_ONLY } from '../stores/settings';
-  import { isDesktopApp } from '$lib/bridge';
+  import { isDesktopApp, getRawElectronApi } from '$lib/bridge';
   import { getNativeRendererCapabilities } from '$lib/api/native-renderer';
   import { project } from '../stores/layers';
   import { liveCable, sourceKind, synthCables } from '../videosynth/cables';

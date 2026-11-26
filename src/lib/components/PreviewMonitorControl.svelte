@@ -7,7 +7,7 @@
    */
   import { onMount } from 'svelte';
   import { get } from 'svelte/store';
-  import { invoke, isDesktopApp } from '../bridge';
+  import { invoke, isDesktopApp, onElectronEvent } from '../bridge';
   import { audioStore } from '../stores/audio';
   import { vjClipLauncher, vjCrossfader } from '../stores/vjClipLauncher';
   import type { PreviewMonitorLayout } from '../output/previewMonitorLayout';
@@ -133,7 +133,7 @@
     };
     void invoke('preview_monitor_get_state').then(apply).catch(() => {});
     layout = remembered().layout === 'program' ? 'program' : 'multiview';
-    const off = window.electronAPI?.on?.('preview-monitor-state', apply);
+    const off = onElectronEvent('preview-monitor-state', apply);
     const outside = (e: PointerEvent) => { if (menuOpen && root && !root.contains(e.target as Node)) menuOpen = false; };
     window.addEventListener('pointerdown', outside, true);
     return () => {

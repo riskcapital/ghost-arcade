@@ -62,6 +62,7 @@
   import { settings, outputFrozen, SHADER_QUALITY_MULTIPLIERS, masterWarpIsActive } from '../stores/settings';
   import { showToast } from '../stores/errorToast';
   import { getTextureShareLabel, invoke, isDesktopApp, isOsrMode, isOutputMode } from '$lib/bridge';
+  import { getNdiBridge, getRawElectronApi } from '$lib/bridge';
   import { drawTestPattern, type TestPatternType } from '../utils/testPatterns';
   import { NativeLayerInteractionTracker, coalesceToMicrotask } from './nativeSceneSync';
   import { applyEdgeBlending } from '../output/outputPostProcess';
@@ -583,7 +584,7 @@
     try { receiver.texture.dispose(); } catch {}
     ndiReceivers.delete(cacheKey);
     textureCache.delete(cacheKey);
-    void (window as any).ghostNDI?.destroyReceiver(receiver.sourceName).catch(() => {});
+    void getNdiBridge()?.destroyReceiver(receiver.sourceName).catch(() => {});
   }
 
   // ── MAP sub-mode layer cache ──────────────────────────────────────
@@ -3124,8 +3125,8 @@
     // Atlas fan-out status from main (started / stopped / renderer-gone).
     // Source of truth for skipping per-slice CPU sends: if the atlas dies,
     // main says so and the CPU path resumes next frame.
-    if (isElectron && !isOsrMode && !isOutputMode && (window as any).electronAPI?.on) {
-      const offAtlas = (window as any).electronAPI.on('texshare-atlas-status', (status: any) => {
+    if (isElectron && !isOsrMode && !isOutputMode && getRawElectronApi()?.on) {
+      const offAtlas = getRawElectronApi().on('texshare-atlas-status', (status: any) => {
         atlasFanoutActive = !!status?.active;
         coreSliceSendersActive.set(!!status?.active && status?.publisher === 'core');
         console.log(`[Canvas] Atlas fan-out ${atlasFanoutActive ? 'active' : `inactive (${status?.reason ?? 'unknown'})`}`);
@@ -5597,7 +5598,7 @@
         let ndiRecv = ndiReceivers.get(cacheKey);
         if (!ndiRecv) {
           try {
-            const api = (window as any).ghostNDI;
+            const api = getNdiBridge();
             if (api) {
               await api.createReceiver(ndiName);
               const initW = source.ndiSource.width || 1920;
