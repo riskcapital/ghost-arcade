@@ -6853,7 +6853,20 @@ function registerIpcHandlers() {
       const bpm = Number(args?.bpm) || 120;
       if (!linkSession) {
         linkSession = new addon.LinkSession(bpm);
+        // Start/stop sync stays on while the session exists: it is what lets
+        // Ghost Arcade read the session's transport at all (the show's Link
+        // chase follows it), and Link only maps the session's playing state
+        // into ours on the next change, so turning it on later would read a
+        // stale state. Nothing here starts or stops the session unless the
+        // renderer asks (Audio Lab's Start/Stop Sync).
         linkSession.enableStartStopSync(true);
+        // An addon built before the push events: the renderer keeps polling.
+        if (typeof linkSession.setEventHandler === 'function') {
+          linkSession.setEventHandler((ev) => {
+            if (!mainWindow || mainWindow.isDestroyed()) return;
+            mainWindow.webContents.send('link-event', ev);
+          });
+        }
       }
       linkSession.enable(true);
       console.log(`[Link] Enabled (initial ${bpm} BPM)`);
@@ -6876,6 +6889,51 @@ function registerIpcHandlers() {
     if (!Number.isFinite(bpm)) return { ok: false, error: 'bad bpm' };
     try {
       return { ok: !!linkSession.setTempo(bpm) };
+    } catch (err) {
+      return { ok: false, error: err?.message || String(err) };
+    }
+  });
+
+  // Start/stop: Ghost Arcade's own Play and Stop, when Audio Lab's Start/Stop
+  // Sync is on. The session's starts and stops come back as 'link-event'.
+  ipcMain.handle('link_set_playing', (_, args) => {
+    if (!linkSession) return { ok: false, error: 'Link not enabled' };
+    try {
+      linkSession.setIsPlaying(!!args?.playing);
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, error: err?.message || String(err) };
+    }
+  });
+
+  // Play from `beat` (a bar line on the session's beats against `quantum`):
+  // the transport starts when the session reaches it, so peers start there.
+  ipcMain.handle('link_set_playing_at_beat', (_, args) => {
+    if (!linkSession) return { ok: false, error: 'Link not enabled' };
+    const beat = Number(args?.beat);
+    const quantum = Number(args?.quantum) || 4;
+    if (!Number.isFinite(beat) || typeof linkSession.setIsPlayingAndRequestBeatAtTime !== 'function') {
+      return { ok: false, error: 'bad beat' };
+    }
+    try {
+      const at = linkSession.timeAtBeat(beat, quantum);
+      linkSession.setIsPlayingAndRequestBeatAtTime(args?.playing !== false, at, beat, quantum);
+      return { ok: true, atMicros: at, nowMicros: linkSession.clockMicros() };
+    } catch (err) {
+      return { ok: false, error: err?.message || String(err) };
+    }
+  });
+
+  ipcMain.handle('link_request_beat_at_start', (_, args) => {
+    if (!linkSession) return { ok: false, error: 'Link not enabled' };
+    const beat = Number(args?.beat);
+    const quantum = Number(args?.quantum) || 4;
+    if (!Number.isFinite(beat) || typeof linkSession.requestBeatAtStartPlayingTime !== 'function') {
+      return { ok: false, error: 'bad beat' };
+    }
+    try {
+      linkSession.requestBeatAtStartPlayingTime(beat, quantum);
+      return { ok: true };
     } catch (err) {
       return { ok: false, error: err?.message || String(err) };
     }

@@ -206,6 +206,8 @@ const ALLOWED_IPC_COMMANDS = new Set([
   // Ableton Link — LAN tempo/beat sync (session lives in main; the
   // renderer polls state and bridges tempo into the master BPM).
   'link_enable', 'link_disable', 'link_set_tempo', 'link_get_state',
+  // Start/stop sync: Ghost Arcade's Play and Stop start and stop the session.
+  'link_set_playing', 'link_set_playing_at_beat', 'link_request_beat_at_start',
   // Window controls for the frameless editor. The transparent BrowserWindow
   // that the native preview underlay requires has no OS title bar on
   // Windows/Linux, so the toolbar drives min/maximize/close over IPC.
@@ -233,7 +235,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
    * Returns a cleanup function that removes the listener.
    */
   on: (channel, callback) => {
-    const allowed = ['app-before-quit', 'app-quit-requested', 'director-stream-chunk', 'director-stream-end', 'demo-download-progress', 'spout-osr-status', 'texshare-atlas-status', 'stage3d-fullscreen-changed', 'stage3d-visibility-changed', 'projection-sim-fullscreen-changed', 'sim-window-moved', 'video-converter-progress', 'video-loop-progress', 'open-project-file', 'project-package-progress', 'win-maximized-changed', 'preview-monitor-state', 'preview-monitor-status', 'install-mode-paused', 'install-mode-quit-refused', 'code-update-progress'];
+    const allowed = ['app-before-quit', 'app-quit-requested', 'director-stream-chunk', 'director-stream-end', 'demo-download-progress', 'spout-osr-status', 'texshare-atlas-status', 'stage3d-fullscreen-changed', 'stage3d-visibility-changed', 'projection-sim-fullscreen-changed', 'sim-window-moved', 'video-converter-progress', 'video-loop-progress', 'open-project-file', 'project-package-progress', 'win-maximized-changed', 'preview-monitor-state', 'preview-monitor-status', 'install-mode-paused', 'install-mode-quit-refused', 'code-update-progress', 'link-event'];
     if (!allowed.includes(channel)) return () => {};
     const handler = (_event, ...args) => callback(...args);
     ipcRenderer.on(channel, handler);
