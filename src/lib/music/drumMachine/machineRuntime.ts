@@ -17,7 +17,7 @@ import { registerStudioControl } from '../studioControls';
 import { beatPattern, loopById } from '../loops';
 import type { DrumPattern } from '../drumPattern';
 import { CLIP_PART_PREFIX, RANDOM_PART_PREFIX, partFromPattern, randomPart, type RandomStyle } from './machineImport';
-import { auditionMachineSound, musicNow, sendMachineHit, setMachineHooks, setMachineSound, stopSequencer } from '../musicRuntime';
+import { auditionMachineSound, musicLead, musicNow, sendMachineHit, setMachineHooks, setMachineSound, stopSequencer } from '../musicRuntime';
 import { normalizeMacroFx, type MacroFxInstance } from '../macroFx';
 import type { NoteSource } from '../noteEvents';
 import type { DrumKit, DrumSound, DrumTweak } from '../tone/toneTypes';
@@ -311,8 +311,10 @@ function tick(): void {
   const { beat, beatMs } = launchClockPosition();
   // A clock jump (a resync, a new tempo detected) skips ahead rather than firing every step between.
   if (beat - scheduled > 1 || scheduled - beat > 2) scheduled = beat;
-  const horizon = beat + (LOOKAHEAD_SECONDS * 1000) / beatMs;
-  const timeAt = (b: number) => Math.max(now, now + ((b - beat) * beatMs) / 1000);
+  // Under Link, early by the output latency so the hits are heard on the session's beats.
+  const lead = musicLead();
+  const horizon = beat + ((LOOKAHEAD_SECONDS + Math.max(0, lead)) * 1000) / beatMs;
+  const timeAt = (b: number) => Math.max(now, now + ((b - beat) * beatMs) / 1000 - lead);
   const send = (from: number, to: number, part: Part | null, partOrigin: number) => {
     const hits = part ? partHitsBetween(part, partOrigin, from, to, t.solo) : songHitsBetween(beatState, origin, from, to);
     for (const h of hits) {

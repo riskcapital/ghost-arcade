@@ -6,7 +6,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { get } from 'svelte/store';
 
-vi.mock('../musicRuntime', () => ({ auditionMachineSound: () => {}, musicNow: () => 0, sendMachineHit: () => {}, setMachineHooks: () => {}, setMachineSound: () => {} }));
+vi.mock('../musicRuntime', () => ({ auditionMachineSound: () => {}, musicLead: () => 0, musicNow: () => 0, sendMachineHit: () => {}, setMachineHooks: () => {}, setMachineSound: () => {} }));
 const { MAX_SAVED_BEATS, MAX_SAVED_KITS, saveBeatAs, saveKitAs, savedBeats, savedKits, withSaved } = await import('./machineRuntime');
 
 describe('withSaved', () => {

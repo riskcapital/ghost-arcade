@@ -99,6 +99,10 @@ export interface StationHost {
   played(): readonly PlayedNote[];
   /** Something else keeps the clock going (a beat, a loop, a take): recordings start on the bar without a count-in. */
   clockBusy(): boolean;
+  /** An outside clock keeps the beat (Ableton Link with peers, a playing Live): the looper plays no clicks over it. */
+  clockExternal?(): boolean;
+  /** Seconds to schedule loops early so they are heard on an outside clock's beats (output latency under Link); 0 when absent. */
+  lead?(): number;
   /** Keep the scheduler and the frame loop running. */
   wake(): void;
   /** The audio loop tracks, created on first use; null where audio cannot record. */
@@ -1326,6 +1330,12 @@ function cutPending(i: number, at: number): void {
   rt.xySounding = false;
 }
 
+/** Seconds the loops are scheduled early (see StationHost.lead). */
+function leadSeconds(): number {
+  const lead = host?.lead?.() ?? 0;
+  return Number.isFinite(lead) ? lead : 0;
+}
+
 const withTone = (event: NoteEvent, tone?: string): NoteEvent => (tone ? { ...event, tone } : event);
 
 /** A pending state showed on the last tick: one more publish clears it once its bar has passed. */
@@ -1336,15 +1346,17 @@ export function scheduleStation(lookaheadSeconds: number): void {
   if (!host) return;
   const now = host.now();
   const { beat, beatMs } = clockNow();
-  const horizon = beat + (lookaheadSeconds * 1000) / beatMs;
-  const timeAt = (b: number) => Math.max(now, now + ((b - beat) * beatMs) / 1000);
+  const lead = leadSeconds();
+  // Scheduled `lead` early, so the window reaches that much further ahead too.
+  const horizon = beat + ((lookaheadSeconds + Math.max(0, lead)) * 1000) / beatMs;
+  const timeAt = (b: number) => Math.max(now, now + ((b - beat) * beatMs) / 1000 - lead);
   let changed = false;
   for (let i = 0; i < LOOP_TRACK_COUNT; i++) {
     if (isAudio(i)) {
       changed = syncAudioPhase(i, beat) || changed;
       continue;
     }
-    changed = stepMidi(i, beat, horizon, timeAt) || changed;
+    changed = stepMidi(i, beat, horizon, timeAt, (Math.max(0, lead) * 1000) / beatMs) || changed;
   }
   scheduleClicks(beat, horizon, timeAt);
   stepSections(beat);
@@ -1354,7 +1366,7 @@ export function scheduleStation(lookaheadSeconds: number): void {
   hadPending = pending;
 }
 
-function stepMidi(i: number, beat: number, horizon: number, timeAt: (b: number) => number): boolean {
+function stepMidi(i: number, beat: number, horizon: number, timeAt: (b: number) => number, leadBeats = 0): boolean {
   const rt = rts[i];
   let changed = false;
   if (rt.phase === 'armed' && rt.wait) {
@@ -1368,7 +1380,8 @@ function stepMidi(i: number, beat: number, horizon: number, timeAt: (b: number) 
     rt.phase = 'record';
     changed = true;
   }
-  if (rt.phase === 'record' && rt.recEnd !== null && beat >= rt.recEnd - 0.02) {
+  // Closed the lead early too, so the loop's first pass goes out on time.
+  if (rt.phase === 'record' && rt.recEnd !== null && beat >= rt.recEnd - 0.02 - leadBeats) {
     const beats = rt.recEnd - rt.recStart;
     // The loop starts where the take did (the first note's bar), never with the wait before it. A
     // take closed a beat late keeps the notes since, wrapped onto its start.
@@ -1420,7 +1433,8 @@ function catchUp(i: number, layer: Layer, from: number): void {
   if (rt.scheduledBeat <= from || track(i).muted) return;
   const { beat, beatMs } = clockNow();
   const now = host!.now();
-  const timeAt = (b: number) => Math.max(now, now + ((b - beat) * beatMs) / 1000);
+  const lead = leadSeconds();
+  const timeAt = (b: number) => Math.max(now, now + ((b - beat) * beatMs) / 1000 - lead);
   playWindow(i, layer.notes, layer.xy, from, rt.scheduledBeat, timeAt);
 }
 
@@ -1517,11 +1531,13 @@ function sendNote(i: number, n: RecordedNote, at: number, timeAt: (b: number) =>
 
 /** Count-in clicks, and a click while recording when nothing else keeps time. */
 function scheduleClicks(beat: number, horizon: number, timeAt: (b: number) => number): void {
+  // Over a set already playing (Link, Live) the band keeps time: no clicks at all.
+  const silent = host!.clockExternal?.() ?? false;
   const quiet = !host!.clockBusy() && !rts.some((r) => r.phase === 'play' || r.phase === 'overdub');
   for (const rt of rts) {
     if (rt.phase !== 'armed' && !(rt.phase === 'record' && rt.freeSince === null)) continue;
     for (let b = Math.max(rt.clickBeat, Math.ceil(beat - 1e-6)); b < horizon; b++) {
-      if (b < rt.recStart || quiet) host!.click(timeAt(b), b % BEATS_PER_BAR === 0);
+      if (!silent && (b < rt.recStart || quiet)) host!.click(timeAt(b), b % BEATS_PER_BAR === 0);
       rt.clickBeat = b + 1;
     }
   }

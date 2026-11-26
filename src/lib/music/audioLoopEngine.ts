@@ -24,7 +24,8 @@ import { get } from 'svelte/store';
 import type { MusicAudioEngine } from './audioEngine';
 import type { AudioLoopTracks, AudioTrackInfo, AudioTrackState } from './audioLoopTracks';
 import { holdAt } from './sounds/kit';
-import { FOLLOW_START, followStep, loopOffset, loopPosition, phaseError, startRate, type FollowState } from './looperMath';
+import { FOLLOW_LIMIT, FOLLOW_START, followStep, loopOffset, loopPosition, phaseError, startRate, type FollowState } from './looperMath';
+import { linkLeadSeconds, loopFollowRange } from './linkSync';
 import {
   LOOP_TRACK_COUNT,
   MAX_AUDIO_LOOP_SECONDS,
@@ -44,6 +45,7 @@ import { musicStudio } from './musicStudioStore';
 import { encodeWav } from './wav';
 import { launchClockPosition, resyncLaunchClock } from '../stores/launchClock';
 import { audioStore } from '../stores/audio';
+import { abletonLink } from '../sync/abletonLink';
 
 const HEAD_SECONDS = 0.5;
 const FOLLOW_MS = 100;
@@ -65,6 +67,8 @@ interface Voice extends Faded {
   anchorTime: number;
   rate: number;
   follow: FollowState;
+  /** The tempo ratio at the last check: a jump from it is a tempo change, not drift. */
+  ratio: number;
 }
 
 interface Track {
@@ -118,6 +122,7 @@ export class AudioLoopEngine implements AudioLoopTracks {
   private serial = 0;
   private ticker: ReturnType<typeof setInterval> | null = null;
   private failed = false;
+  private unsubLink: (() => void) | null = null;
   /** Told when a track's layers change (to keep them with the project). */
   onLayersChanged: ((i: number) => void) | null = null;
 
@@ -138,10 +143,26 @@ export class AudioLoopEngine implements AudioLoopTracks {
       return { meter, state: 'empty', level, layers: [], redo: [], cleared: null, mix: null, buffer: null, bars: 0, originBeat: 0, beatMs: 500, voice: null, dubbing: false };
     });
     void this.ensureCapture();
+    // A Link tempo change is followed at once, not on the next check.
+    let tempo: number | null = null;
+    this.unsubLink = abletonLink.subscribe((link) => {
+      const changed = tempo !== null && link.tempo !== tempo;
+      tempo = link.tempo;
+      if (changed && this.ticker) this.tick();
+    });
   }
 
+  /**
+   * The launch clock as the audio clock reads it: the beat being scheduled
+   * at the audio clock's now. Following Link that is the session's beat the
+   * output latency (and the user's trim) ahead, since Link's beats are when
+   * they leave the speakers; otherwise it is the launch clock itself. Loops
+   * play, and recordings line up, on this grid.
+   */
   private clock() {
-    return launchClockPosition();
+    const c = launchClockPosition();
+    const lead = linkLeadSeconds(this.ctx);
+    return lead && c.beatMs > 0 ? { beat: c.beat + (lead * 1000) / c.beatMs, beatMs: c.beatMs } : c;
   }
 
   private timeOfBeat(beat: number): number {
@@ -365,6 +386,13 @@ export class AudioLoopEngine implements AudioLoopTracks {
     t.buffer = null;
     t.state = 'empty';
     this.onLayersChanged?.(i);
+  }
+
+  /** The studio closed: stop and let go of the Link watch. */
+  dispose(): void {
+    this.kill();
+    this.unsubLink?.();
+    this.unsubLink = null;
   }
 
   kill(): void {
@@ -702,7 +730,7 @@ export class AudioLoopEngine implements AudioLoopTracks {
     const ctx = this.ctx;
     const c = this.clock();
     const ratio = c.beatMs > 0 ? t.beatMs / c.beatMs : 1;
-    const r = rate ?? startRate(ratio);
+    const r = rate ?? startRate(ratio, loopFollowRange());
     const src = ctx.createBufferSource();
     src.buffer = t.buffer;
     src.loop = true;
@@ -714,7 +742,7 @@ export class AudioLoopEngine implements AudioLoopTracks {
     src.connect(env).connect(t.level);
     src.onended = () => { try { env.disconnect(); } catch { /* gone */ } };
     src.start(at, offset);
-    t.voice = { src, env, startAt: at, rise: Math.max(0.001, fadeIn), anchorPos: offset, anchorTime: at, rate: r, follow: FOLLOW_START };
+    t.voice = { src, env, startAt: at, rise: Math.max(0.001, fadeIn), anchorPos: offset, anchorTime: at, rate: r, follow: FOLLOW_START, ratio };
   }
 
   private stopFaded(f: Faded | null, fade: number, at = this.ctx.currentTime): void {
@@ -771,7 +799,12 @@ export class AudioLoopEngine implements AudioLoopTracks {
       const duration = t.buffer.duration;
       const expected = loopOffset(c.beat, t.originBeat, t.bars * BEATS_PER_BAR, duration);
       const actual = loopPosition(v.anchorPos, v.anchorTime, v.rate, now, duration);
-      const step = followStep(v.follow, t.beatMs / c.beatMs, phaseError(expected, actual, duration));
+      const ratio = t.beatMs / c.beatMs;
+      // A tempo jump under Link (a peer changing tempo): one far reading is enough to put the loop back in phase.
+      const range = loopFollowRange();
+      const jumped = range.min !== undefined && Math.abs(ratio / v.ratio - 1) > FOLLOW_LIMIT;
+      v.ratio = ratio;
+      const step = followStep(v.follow, ratio, phaseError(expected, actual, duration), jumped ? { ...range, checks: 1 } : range);
       v.follow = step.state;
       if (step.resync) {
         const at = now + 0.02;
@@ -862,7 +895,7 @@ export function audioLoopTracksFor(audio: MusicAudioEngine): AudioLoopEngine | n
   let engine = engines.get(audio);
   // The studio closed and opened again: a new audio context, new tracks.
   if (engine && engine.ctx !== audio.loopGraph().ctx) {
-    engine.kill();
+    engine.dispose();
     engine = undefined;
   }
   if (!engine) {

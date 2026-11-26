@@ -3,6 +3,7 @@ import {
   DEADBAND_SECONDS,
   FOLLOW_LIMIT,
   FOLLOW_START,
+  LINK_FOLLOW_RANGE,
   MAX_CORRECTION,
   RESYNC_CHECKS,
   RESYNC_SECONDS,
@@ -13,6 +14,7 @@ import {
   loopOffset,
   loopPosition,
   nextBarBeat,
+  outputLeadSeconds,
   phaseError,
   recordProgress,
   recordWindow,
@@ -202,6 +204,71 @@ describe('following the clock', () => {
     // The launch clock runs 100 ppm fast against the audio clock: 6 ms a minute.
     const { worst } = simulate({ beatMs: 500, clockRate: 1.0001, seconds: 300 });
     expect(worst).toBeLessThan(0.006);
+  });
+});
+
+describe('following Ableton Link', () => {
+  it('repitches through a tempo jump past 3% instead of keeping its own length', () => {
+    // Live's tempo jumps 25% (a looper there setting the song tempo).
+    expect(followStep(FOLLOW_START, 1.25, 0)).toMatchObject({ rate: 1, ownLength: true });
+    expect(followStep(FOLLOW_START, 1.25, 0, LINK_FOLLOW_RANGE)).toMatchObject({ rate: 1.25, ownLength: false, resync: false });
+    expect(followStep(FOLLOW_START, 0.5, 0, LINK_FOLLOW_RANGE).ownLength).toBe(false);
+    expect(followStep(FOLLOW_START, 2, 0, LINK_FOLLOW_RANGE).ownLength).toBe(false);
+    // Past half or double speed it still keeps its own length.
+    expect(followStep(FOLLOW_START, 2.1, 0, LINK_FOLLOW_RANGE)).toMatchObject({ rate: 1, ownLength: true });
+    expect(startRate(1.25)).toBe(1);
+    expect(startRate(1.25, LINK_FOLLOW_RANGE)).toBe(1.25);
+  });
+
+  it('after a jump, one far reading puts it back in phase', () => {
+    expect(followStep(FOLLOW_START, 1.25, RESYNC_SECONDS * 2, LINK_FOLLOW_RANGE).resync).toBe(false);
+    expect(followStep(FOLLOW_START, 1.25, RESYNC_SECONDS * 2, { ...LINK_FOLLOW_RANGE, checks: 1 }).resync).toBe(true);
+  });
+
+  /** A loop recorded at 120 BPM against a Link session that jumps to `jumpBeatMs` at 5 s, checked every 100 ms. */
+  function jump(jumpBeatMs: number, link: boolean) {
+    const duration = 4; // two bars at 120
+    const recordedBeatMs = 500;
+    const beatAt = (t: number) => (t <= 5 ? (t * 1000) / 500 : 10 + ((t - 5) * 1000) / jumpBeatMs);
+    let anchorPos = 0;
+    let anchorTime = 0;
+    let rate = 1;
+    let ratio = 1;
+    let state: FollowState = FOLLOW_START;
+    let worst = 0;
+    for (let k = 1; k <= 300; k++) {
+      const t = k / 10;
+      const beatMs = t <= 5 ? 500 : jumpBeatMs;
+      const expected = loopOffset(beatAt(t), 0, 8, duration);
+      const actual = loopPosition(anchorPos, anchorTime, rate, t, duration);
+      if (t > 15) worst = Math.max(worst, Math.abs(phaseError(expected, actual, duration)));
+      const r = recordedBeatMs / beatMs;
+      const jumped = link && Math.abs(r / ratio - 1) > FOLLOW_LIMIT;
+      ratio = r;
+      const range = link ? (jumped ? { ...LINK_FOLLOW_RANGE, checks: 1 } : LINK_FOLLOW_RANGE) : undefined;
+      const step = followStep(state, r, phaseError(expected, actual, duration), range);
+      state = step.state;
+      if (step.resync) {
+        anchorPos = expected;
+      } else {
+        anchorPos = actual;
+      }
+      anchorTime = t;
+      rate = step.rate;
+    }
+    return worst;
+  }
+
+  it('stays in time through a 25% Link tempo jump (and drifts off it without Link, as before)', () => {
+    expect(jump(400, true)).toBeLessThan(0.006);
+    expect(jump(400, false)).toBeGreaterThan(0.1);
+  });
+
+  it('schedules early by the base and output latency plus the trim', () => {
+    expect(outputLeadSeconds({ baseLatency: 0.005, outputLatency: 0.02 }, 0)).toBeCloseTo(0.025, 12);
+    expect(outputLeadSeconds({ baseLatency: 0.005, outputLatency: 0.02 }, 10)).toBeCloseTo(0.035, 12);
+    expect(outputLeadSeconds({ baseLatency: 0.005 }, -15)).toBeCloseTo(-0.01, 12);
+    expect(outputLeadSeconds({ baseLatency: Number.NaN, outputLatency: -1 }, Number.NaN)).toBe(0);
   });
 });
 

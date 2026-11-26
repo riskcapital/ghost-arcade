@@ -583,3 +583,60 @@ describe('editing a recorded MIDI loop', () => {
     expect(clips).toContain('Night riff');
   });
 });
+
+describe('against an outside clock (Ableton Link)', () => {
+  function attachWith(opts: { lead?: number; external?: boolean; clicks?: number[] }) {
+    attachLoopStation({
+      send: (e) => sent.push(e),
+      now: () => (clock.beat * clock.beatMs) / 1000,
+      click: (time) => opts.clicks?.push(time),
+      played: () => notes,
+      clockBusy: () => busy || !!opts.external,
+      clockExternal: () => !!opts.external,
+      lead: () => opts.lead ?? 0,
+      wake: () => {},
+      audioTracks: () => null,
+    });
+  }
+
+  it('plays a loop early by the output lead, so it is heard on the session beat', () => {
+    attachWith({ lead: 0.025 });
+    musicStudio.updateLoopStation((d) => ({ ...d, startMode: 'bar' }));
+    pressLoopTrack(0);
+    runTo(4);
+    play(4);
+    // A tick lands 25 ms (0.05 beat) before the loop ends: it closes then, the lead early.
+    runTo(19.95);
+    expect(_trackRuntime(0).phase).toBe('play');
+    runTo(20);
+    const ons = sent.filter((e) => e.type === 'on');
+    // Beat 20 is at 10 s: the note goes out 25 ms before it.
+    expect(ons[0].time).toBeCloseTo(10 - 0.025, 6);
+    // The recorded notes keep the beats they were heard on.
+    expect(track0().layers[0].map((n) => n.beat)).toEqual([0]);
+  });
+
+  it('plays no count-in or record clicks over a set that is already playing', () => {
+    const clicks: number[] = [];
+    busy = false;
+    attachWith({ external: true, clicks });
+    musicStudio.updateLoopStation((d) => ({ ...d, startMode: 'bar', length: 0 }));
+    pressLoopTrack(0);
+    // Busy: no count-in, it waits for the next bar and never sets the tempo itself.
+    expect(_trackRuntime(0).recStart).toBe(4);
+    expect(_trackRuntime(0).freeSince).toBeNull();
+    runTo(12);
+    expect(clicks).toEqual([]);
+  });
+
+  it('without an outside clock, still counts in as before', () => {
+    const clicks: number[] = [];
+    busy = false;
+    attachWith({ clicks });
+    musicStudio.updateLoopStation((d) => ({ ...d, startMode: 'bar' }));
+    pressLoopTrack(0);
+    expect(_trackRuntime(0).recStart).toBe(8);
+    runTo(8);
+    expect(clicks.length).toBeGreaterThan(0);
+  });
+});

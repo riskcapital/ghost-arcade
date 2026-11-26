@@ -24,7 +24,8 @@ import { hostWatch, studioHosted } from './studioHostWatch';
 import { watchStudioCells } from './studioCells';
 import { vjClipLauncher, type VJDeck } from '../stores/vjClipLauncher';
 import { LiveFrameWriter } from '../audio/liveParams';
-import { launchClockPosition, launchClockTempo, nextLaunchBoundary } from '../stores/launchClock';
+import { launchClockFollowsLink, launchClockPosition, launchClockTempo, nextLaunchBoundary } from '../stores/launchClock';
+import { externalClockBusy, linkLeadSeconds } from './linkSync';
 import { parseISF } from '../isf/parser';
 import { generateUUID } from '../utils/uuid';
 import { MusicAudioEngine } from './audioEngine';
@@ -341,6 +342,11 @@ function loopPadHit(pad: number, velocity: number, time: number, track: number):
 export function musicNow(): number {
   ensureMusicRuntime();
   return audio.now();
+}
+
+/** Seconds the studio schedules its beats early under Ableton Link (output latency plus trim); 0 otherwise. */
+export function musicLead(): number {
+  return linkLeadSeconds(audio.context());
 }
 
 /** Hear a drum sound on the machine's spare slot. */
@@ -766,9 +772,10 @@ function scheduleSequencer(): void {
   // A clock jump (resync, a newly detected beat) skips ahead rather than
   // firing every step in between.
   if (beat - sequencer.scheduledBeat > 1 || sequencer.scheduledBeat - beat > 2) sequencer.scheduledBeat = beat;
-  const horizon = beat + (LOOKAHEAD_SECONDS * 1000) / beatMs;
+  const lead = linkLeadSeconds(audio.context());
+  const horizon = beat + ((LOOKAHEAD_SECONDS + Math.max(0, lead)) * 1000) / beatMs;
   if (horizon <= sequencer.scheduledBeat) return;
-  const timeAt = (b: number) => Math.max(now, now + ((b - beat) * beatMs) / 1000);
+  const timeAt = (b: number) => Math.max(now, now + ((b - beat) * beatMs) / 1000 - lead);
   // One beat: while the drum machine plays, the step pattern's drums stay out (the acid line still plays).
   const machineBeat = machineHooks?.playing?.() ?? false;
   for (const step of machineBeat ? [] : stepsBetween(s.pattern, sequencer.scheduledBeat, horizon)) {
@@ -1477,8 +1484,10 @@ function scheduleLoopWindow(): void {
   if (!loopSlots.size && !endingSlots.length) return;
   const now = audio.now();
   const { beat, beatMs } = launchClockPosition();
-  const horizon = beat + (LOOKAHEAD_SECONDS * 1000) / beatMs;
-  scheduleLoops(beat, horizon, (b) => Math.max(now, now + ((b - beat) * beatMs) / 1000));
+  // Under Link, scheduled early by the output latency so it is heard on the session's beats.
+  const lead = linkLeadSeconds(audio.context());
+  const horizon = beat + ((LOOKAHEAD_SECONDS + Math.max(0, lead)) * 1000) / beatMs;
+  scheduleLoops(beat, horizon, (b) => Math.max(now, now + ((b - beat) * beatMs) / 1000 - lead));
 }
 
 // ── Loop recorder ───────────────────────────────────────────────────────
@@ -1668,7 +1677,7 @@ function scheduleLoopRecorder(): void {
     return;
   }
   // Clicks count in, and keep time while recording when nothing else plays.
-  const quiet = !sequencer && !loopSlots.size && !replay;
+  const quiet = !sequencer && !loopSlots.size && !replay && !externalClock();
   const horizon = beat + (LOOKAHEAD_SECONDS * 1000) / beatMs;
   for (let b = Math.max(loopRec.clickBeat, Math.ceil(beat - 1e-6)); b < horizon; b++) {
     if (b < loopRec.startBeat || quiet) audio.click(Math.max(now, now + ((b - beat) * beatMs) / 1000), b % BEATS_PER_BAR === 0);
@@ -1784,12 +1793,13 @@ function scheduleRepeats(): void {
   if (!repeats.size) return;
   const now = audio.now();
   const { beat, beatMs } = launchClockPosition();
-  const horizon = beat + (LOOKAHEAD_SECONDS * 1000) / beatMs;
+  const lead = linkLeadSeconds(audio.context());
+  const horizon = beat + ((LOOKAHEAD_SECONDS + Math.max(0, lead)) * 1000) / beatMs;
   for (const hold of repeats.values()) {
     // After a clock jump, pick up from the next grid line rather than catching up.
     if (beat - hold.nextBeat > hold.rate) hold.nextBeat = (Math.floor(beat / hold.rate) + 1) * hold.rate;
     for (; hold.nextBeat < horizon; hold.nextBeat += hold.rate) {
-      firePad(hold.sound, hold.velocity, Math.max(now, now + ((hold.nextBeat - beat) * beatMs) / 1000));
+      firePad(hold.sound, hold.velocity, Math.max(now, now + ((hold.nextBeat - beat) * beatMs) / 1000 - lead));
     }
   }
 }
@@ -2997,6 +3007,12 @@ function audioContextForInput(): AudioContext {
   return ctx;
 }
 
+/** Link with peers, or Live playing while the studio follows it: an outside clock already keeps the beat. */
+function externalClock(): boolean {
+  const bridge = get(abletonBridge);
+  return externalClockBusy({ linkFollowed: launchClockFollowsLink(), liveFollowed: get(musicStudio).liveControl && bridge.connected, livePlaying: bridge.playing });
+}
+
 let wasOpen = false;
 let wasLiveControl = false;
 let macroSubscribed = false;
@@ -3025,7 +3041,9 @@ export function ensureMusicRuntime(): void {
     now: () => audio.now(),
     click: (time, accent) => audio.click(time, accent),
     played: () => played.all(),
-    clockBusy: () => !!sequencer || !!replay || loopSlots.size > 0,
+    clockBusy: () => !!sequencer || !!replay || loopSlots.size > 0 || externalClock(),
+    clockExternal: externalClock,
+    lead: () => linkLeadSeconds(audio.context()),
     wake: () => {
       ensureScheduler();
       ensureFrameLoop();

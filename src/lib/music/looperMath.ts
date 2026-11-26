@@ -152,6 +152,31 @@ export function phaseError(expected: number, actual: number, duration: number): 
  * keeps its own length instead.
  */
 export const FOLLOW_LIMIT = 0.03;
+/**
+ * While Ableton Link drives the clock, its tempo is the band's: a loop
+ * follows any move within half to double speed (it repitches), rather than
+ * drifting off the session for good on a jump past 3%.
+ */
+export const LINK_FOLLOW_RANGE = { min: 0.5, max: 2 } as const;
+/**
+ * How far a loop's speed may go from its recorded speed (`min`..`max`; without
+ * them, FOLLOW_LIMIT either way), and how many far readings in a row put it
+ * back in phase.
+ */
+export interface FollowRange {
+  min?: number;
+  max?: number;
+  /** Far readings in a row before a resync (RESYNC_CHECKS when absent). */
+  checks?: number;
+}
+/** The range away from Link: FOLLOW_LIMIT either way. */
+export const OWN_FOLLOW_RANGE: FollowRange = {};
+
+function followable(ratio: number, range: FollowRange): boolean {
+  if (!Number.isFinite(ratio) || !(ratio > 0)) return false;
+  if (range.min === undefined || range.max === undefined) return Math.abs(ratio - 1) <= FOLLOW_LIMIT;
+  return ratio >= range.min && ratio <= range.max;
+}
 /** The most the speed is bent to close a phase error (about 9 cents). */
 export const MAX_CORRECTION = 0.005;
 /** A phase error is closed over about this long. */
@@ -187,13 +212,13 @@ export interface FollowStep {
  * over the tempo it was recorded at; `rawError` the phase error measured
  * now. The rate is the ratio, bent a little to close the smoothed error.
  */
-export function followStep(prev: FollowState, ratio: number, rawError: number): FollowStep {
-  if (!Number.isFinite(ratio) || !(ratio > 0) || Math.abs(ratio - 1) > FOLLOW_LIMIT) {
+export function followStep(prev: FollowState, ratio: number, rawError: number, range: FollowRange = OWN_FOLLOW_RANGE): FollowStep {
+  if (!followable(ratio, range)) {
     return { state: FOLLOW_START, rate: 1, ownLength: true, resync: false };
   }
   const isFar = Math.abs(rawError) > RESYNC_SECONDS;
   const far = isFar ? prev.far + 1 : 0;
-  if (far >= RESYNC_CHECKS) return { state: FOLLOW_START, rate: ratio, ownLength: false, resync: true };
+  if (far >= Math.max(1, range.checks ?? RESYNC_CHECKS)) return { state: FOLLOW_START, rate: ratio, ownLength: false, resync: true };
   // A single far reading is not trusted until it repeats.
   const error = isFar ? prev.error : prev.error + (rawError - prev.error) * SMOOTHING;
   const correction = Math.abs(error) < DEADBAND_SECONDS ? 0 : clamp(error / CORRECT_SECONDS, -MAX_CORRECTION, MAX_CORRECTION);
@@ -201,8 +226,19 @@ export function followStep(prev: FollowState, ratio: number, rawError: number): 
 }
 
 /** The speed a loop starts at: the tempo ratio while it is small enough to follow, else its own. */
-export function startRate(ratio: number): number {
-  return Number.isFinite(ratio) && ratio > 0 && Math.abs(ratio - 1) <= FOLLOW_LIMIT ? ratio : 1;
+export function startRate(ratio: number, range: FollowRange = OWN_FOLLOW_RANGE): number {
+  return followable(ratio, range) ? ratio : 1;
+}
+
+/**
+ * How much earlier to schedule audio so it is heard on the beat: Ableton
+ * Link's beat times are when a beat leaves the speakers, and what is
+ * scheduled now on the audio clock comes out after the device's base and
+ * output latency. `offsetMs` is the user's trim on top (positive: earlier).
+ */
+export function outputLeadSeconds(reported: { baseLatency?: number; outputLatency?: number }, offsetMs: number): number {
+  const part = (x: number | undefined) => (Number.isFinite(x) && (x as number) > 0 ? (x as number) : 0);
+  return part(reported.baseLatency) + part(reported.outputLatency) + (Number.isFinite(offsetMs) ? offsetMs : 0) / 1000;
 }
 
 // ── Chops ───────────────────────────────────────────────────────────────

@@ -3,7 +3,7 @@ import { get } from 'svelte/store';
 
 const clock = vi.hoisted(() => ({ beat: 0, beatMs: 500 }));
 vi.mock('../../stores/launchClock', () => ({ launchClockPosition: () => ({ ...clock }) }));
-vi.mock('../musicRuntime', () => ({ auditionMachineSound: () => {}, musicNow: () => 0, sendMachineHit: () => {}, setMachineHooks: () => {}, setMachineSound: () => {} }));
+vi.mock('../musicRuntime', () => ({ auditionMachineSound: () => {}, musicLead: () => 0, musicNow: () => 0, sendMachineHit: () => {}, setMachineHooks: () => {}, setMachineSound: () => {} }));
 const { musicStudio, normalizeProjectState, sceneSound } = await import('../musicStudioStore');
 const { emptyPart, starterBeat } = await import('./machineBeat');
 const { loadBeat, machineTransport, playPad, setMachineMode, startMachine, stopMachine } = await import('./machineRuntime');
