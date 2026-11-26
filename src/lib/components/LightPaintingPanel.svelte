@@ -7,6 +7,14 @@
 
 <script lang="ts">
   import { onDestroy } from 'svelte';
+  import {
+    normToOverlayPx as normToOverlayPxFor,
+    overlayPxToNorm,
+    streamLineStep,
+    streamLineCatchUp,
+    isViewportPanGesture,
+    pathEditLayoutKey,
+  } from '$lib/lightpainting/overlayGeometry';
   import { project, selectedLightPaintingLayer, selectedLightPaintingContent, selectedLayerId, scheduleHistorySnapshot, recordDiscreteAction } from '../stores/layers';
   import { NATIVE_ENGINE_ONLY, settings } from '../stores/settings';
   import { isNativeLightPaintingBrush } from '$lib/renderer/lightPaintingNative';
@@ -36,6 +44,12 @@
   export let canvasWidth = 800;
   export let canvasHeight = 600;
   export let drawingEnabled = true;
+  /** Space is held in the viewport — left-drag pans instead of painting. */
+  export let spacePanActive = false;
+  // The draw overlay element. All pointer → canvas conversion goes through
+  // its rect, never e.currentTarget (which is a moving handle circle while
+  // a handle is dragged, and null for coalesced events).
+  let overlayEl: HTMLElement | null = null;
 
   // currentBrush is synced via module-level sharedBrush store (see <script context="module">)
   let currentBrush: LightPaintingBrush = createDefaultLightPaintingBrush();
@@ -47,6 +61,8 @@
   let strokeStartTime = 0;
   let livePreviewPoints: { x: number; y: number }[] = [];
   let lastSmoothedPoint: { x: number; y: number } | null = null;
+  // Latest raw (unsmoothed) pointer sample — the stroke catches up to it on lift.
+  let lastRawStrokePoint: LightPaintingStrokePoint | null = null;
   const LIVE_PREVIEW_SYNC_INTERVAL_MS = 50;
   const LIVE_PREVIEW_MAX_POINTS = 300;
   let livePreviewRafId: number | null = null;
@@ -191,20 +207,26 @@
     return { path: d, dots, handles };
   }
 
+  $: overlayView = { canvasOffsetX, canvasOffsetY, canvasWidth, canvasHeight, viewportZoom, viewportPanX, viewportPanY };
+
+  function overlayRect(e: PointerEvent | MouseEvent): DOMRect | null {
+    // Always measure the overlay itself — viewportEl may include the
+    // toolbar area (Y offset), and e.currentTarget is a moving handle
+    // circle during a path-edit drag.
+    const el = overlayEl ?? (e.currentTarget as HTMLElement | null) ?? viewportEl;
+    return el ? el.getBoundingClientRect() : null;
+  }
+
   function getCanvasCoords(e: PointerEvent | MouseEvent) {
-    // Always use the overlay element (currentTarget) for coordinate conversion —
-    // viewportEl may include toolbar area causing a Y offset mismatch
-    const el = (e.currentTarget as HTMLElement) ?? viewportEl;
-    if (!el) return { x: 0, y: 0 };
-    const rect = el.getBoundingClientRect();
-    // Convert screen coords → viewport-local → subtract pan → un-zoom → subtract canvas offset → normalize to 0-1
-    const vx = (e.clientX - rect.left - viewportPanX) / viewportZoom - canvasOffsetX;
-    const vy = (e.clientY - rect.top - viewportPanY) / viewportZoom - canvasOffsetY;
-    return { x: vx / canvasWidth, y: vy / canvasHeight };
+    const rect = overlayRect(e);
+    if (!rect) return { x: 0, y: 0 };
+    // screen → overlay-local → subtract pan → un-zoom → subtract canvas offset → normalize to 0-1
+    return overlayPxToNorm(e.clientX - rect.left, e.clientY - rect.top, overlayView);
   }
 
   function getOverlayPixelCoords(e: PointerEvent | MouseEvent) {
-    const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    const r = overlayRect(e);
+    if (!r) return { x: 0, y: 0 };
     return { x: e.clientX - r.left, y: e.clientY - r.top };
   }
 
@@ -316,6 +338,7 @@
     isDrawing = true; strokeStartTime = performance.now();
     currentStrokePoints = [{ x: coords.x, y: coords.y, pressure: (e as any).pressure ?? 0.5, timestamp: 0 }];
     lastSmoothedPoint = { x: coords.x, y: coords.y };
+    lastRawStrokePoint = null;
     livePreviewPoints = [pixel];
     cancelLivePreviewSync();
     lastLivePreviewSyncTime = 0;
@@ -326,40 +349,55 @@
   function continueStroke(e: PointerEvent) {
     if (drawMode === 'pen') { penPreviewPoint = getOverlayPixelCoords(e); return; }
     if (!isDrawing) return;
-    const coords = getCanvasCoords(e);
-    const smoothing = currentBrush.smoothing ?? 0.5;
-
-    // Exponential moving average smoothing (Procreate StreamLine)
-    let sx: number, sy: number;
-    if (smoothing > 0 && lastSmoothedPoint) {
-      const alpha = 1 - smoothing * 0.85; // never fully zero
-      sx = lastSmoothedPoint.x + (coords.x - lastSmoothedPoint.x) * alpha;
-      sy = lastSmoothedPoint.y + (coords.y - lastSmoothedPoint.y) * alpha;
-    } else {
-      sx = coords.x;
-      sy = coords.y;
+    // Fast strokes deliver several pen samples per frame as coalesced
+    // events; using only the dispatched one turns curves into kinks.
+    const coalesced = typeof e.getCoalescedEvents === 'function' ? e.getCoalescedEvents() : [];
+    const samples = coalesced.length > 0 ? coalesced : [e];
+    let added = false;
+    for (const sample of samples) {
+      if (addStrokeSample(sample)) added = true;
     }
-    lastSmoothedPoint = { x: sx, y: sy };
-
-    // Minimum distance filter: skip points too close together (prevents clustering at slow speeds)
-    const minDist = 0.002; // ~2px at 1000px canvas
-    const lastPt = currentStrokePoints[currentStrokePoints.length - 1];
-    const dx = sx - lastPt.x, dy = sy - lastPt.y;
-    if (dx * dx + dy * dy < minDist * minDist) return;
-
-    currentStrokePoints.push({ x: sx, y: sy, pressure: (e as any).pressure ?? 0.5, timestamp: performance.now() - strokeStartTime });
-    // Use overlay pixel coords for live SVG preview (matches getOverlayPixelCoords space)
-    const overlayPixel = getOverlayPixelCoords(e);
-    livePreviewPoints = [...livePreviewPoints, overlayPixel];
+    if (!added) return;
+    livePreviewPoints = livePreviewPoints;
 
     // Batch in-progress stroke sync so the output window gets responsive
     // previews without cloning a growing point array on every pointer burst.
     scheduleLivePreviewSync();
   }
 
+  // Minimum distance filter: skip points too close together (prevents clustering at slow speeds)
+  const STROKE_MIN_DIST = 0.002; // ~2px at 1000px canvas
+
+  function addStrokeSample(sample: PointerEvent): boolean {
+    const coords = getCanvasCoords(sample);
+    const pressure = (sample as any).pressure ?? 0.5;
+    const timestamp = performance.now() - strokeStartTime;
+    lastRawStrokePoint = { x: coords.x, y: coords.y, pressure, timestamp };
+    // Exponential moving average smoothing (StreamLine)
+    const smoothed = streamLineStep(lastSmoothedPoint, coords, currentBrush.smoothing ?? 0.5);
+    lastSmoothedPoint = smoothed;
+
+    const lastPt = currentStrokePoints[currentStrokePoints.length - 1];
+    const dx = smoothed.x - lastPt.x, dy = smoothed.y - lastPt.y;
+    if (dx * dx + dy * dy < STROKE_MIN_DIST * STROKE_MIN_DIST) return false;
+
+    currentStrokePoints.push({ x: smoothed.x, y: smoothed.y, pressure, timestamp });
+    // Preview the smoothed point (not the raw pointer) so the live line
+    // matches the stroke that gets committed.
+    livePreviewPoints.push(normToOverlayPx(smoothed.x, smoothed.y));
+    return true;
+  }
+
   function endStroke() {
     if (drawMode === 'pen') return;
     cancelLivePreviewSync();
+    // StreamLine lags behind the pen; finish at the point where the pen
+    // was lifted instead of stopping short of it.
+    if (isDrawing) {
+      const catchUp = streamLineCatchUp(currentStrokePoints[currentStrokePoints.length - 1], lastRawStrokePoint, STROKE_MIN_DIST);
+      if (catchUp) currentStrokePoints.push(catchUp);
+    }
+    lastRawStrokePoint = null;
     if (!isDrawing || !layerId || currentStrokePoints.length < 2) {
       if (layerId) project.updateLightPaintingContent(layerId, { isRecording: false, livePreviewStroke: null });
       isDrawing = false; currentStrokePoints = []; livePreviewPoints = []; lastSmoothedPoint = null; return;
@@ -552,7 +590,17 @@
   // Wipe selection when the handle layout changes — indices wouldn't be
   // valid against the new layout, and the user expectation when toggling
   // Show-all or switching strokes is "clean slate".
-  $: { editHandles; pathEditShowAllRawPoints; selectedStrokeId; pathSelectedHandles = new Set(); }
+  // Keyed on the layout identity, not on editHandles itself — editHandles
+  // is rebuilt on every point move, so wiping on it emptied the selection
+  // on the first frame of dragging a selected group.
+  let lastPathEditLayoutKey = '';
+  $: {
+    const key = pathEditLayoutKey(selectedStrokeId, pathEditShowAllRawPoints, editHandles ? editHandles.length : null);
+    if (key !== lastPathEditLayoutKey) {
+      lastPathEditLayoutKey = key;
+      pathSelectedHandles = new Set();
+    }
+  }
 
   // Delete the raw point bound to a handle. For freehand strokes this
   // splices out `selectedStroke.points[h.pointIndex]`; for pen strokes
@@ -730,16 +778,11 @@
     };
   }
 
-  // Convert a normalized 0..1 stroke point to overlay-SVG pixel coords.
-  // The overlay's bounding rect aligns with the same transform basis
-  // getCanvasCoords() reverses, so just multiply by canvas dims and add
-  // the offset. (viewportZoom + pan are applied to the OVERLAY element
-  // by its parent, so SVG-local coords don't need to compensate.)
+  // Convert a normalized 0..1 stroke point to overlay-SVG pixel coords —
+  // the exact inverse of getCanvasCoords(). The overlay itself is NOT
+  // zoomed/panned (it covers the viewport), so zoom + pan apply here.
   function normToOverlayPx(nx: number, ny: number): { x: number; y: number } {
-    return {
-      x: canvasOffsetX + nx * canvasWidth,
-      y: canvasOffsetY + ny * canvasHeight,
-    };
+    return normToOverlayPxFor(nx, ny, overlayView);
   }
 
   // Handle pointerdown — routes by active tool. Move tool starts a drag
@@ -961,6 +1004,10 @@
   }
 
   function handleDrawingOverlayPointerDown(e: PointerEvent) {
+    // Middle-click, Alt+drag and Space+drag pan the viewport — let the
+    // press reach it instead of starting a stroke.
+    if (isViewportPanGesture(e, spacePanActive)) return;
+    if (e.button !== 0 && e.pointerType === 'mouse') return;
     e.stopPropagation();
     const p = getOverlayPixelCoords(e);
     cursorX = p.x;
@@ -1007,6 +1054,7 @@
   }
 
   function handleDrawingOverlayMouseDown(e: MouseEvent) {
+    if (isViewportPanGesture(e, spacePanActive)) return;
     e.stopPropagation();
   }
 </script>
@@ -1017,6 +1065,7 @@
   <!-- ============ OVERLAY MODE (inside viewport) ============ -->
   {#if overlayOnly}
     <div data-help-page="layers"
+      bind:this={overlayEl}
       class="lp-draw-overlay"
       data-editor-pointer-owner="light-painting"
       class:recording={isDrawing}

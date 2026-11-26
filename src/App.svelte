@@ -9081,6 +9081,7 @@
             {canvasWidth}
             {canvasHeight}
             drawingEnabled={lpDrawingEnabled}
+            spacePanActive={isSpacePressed}
             bind:isPathEditMode={lpIsPathEditMode}
             bind:pathEditTool={lpPathEditTool}
             bind:pathEditShowAllRawPoints={lpPathEditShowAllRawPoints}
