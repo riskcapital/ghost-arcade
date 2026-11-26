@@ -61,19 +61,38 @@ fn atom<'a>(b: &'a [u8], kind: &[u8; 4]) -> Result<&'a [u8]> {
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HapFormat {
+    /// HAP: RGB DXT1 (BC1).
     Rgb,
+    /// HAP Alpha: RGBA DXT5 (BC3).
     Alpha,
+    /// HAP Q: scaled YCoCg DXT5 (BC3).
     YCoCg,
+    /// HAP Q Alpha: scaled YCoCg DXT5 colour, then an RGTC1 (BC4) alpha
+    /// image. A frame's blocks hold the colour image followed by the alpha.
+    YCoCgAlpha,
+    /// HAP R: RGBA BPTC (BC7).
+    Bptc,
 }
 impl HapFormat {
+    /// Bytes per 4x4 pixel block, over every image of a frame.
     pub fn block_bytes(self) -> usize {
-        if self == Self::Rgb { 8 } else { 16 }
+        match self {
+            Self::Rgb => 8,
+            Self::Alpha | Self::YCoCg | Self::Bptc => 16,
+            Self::YCoCgAlpha => 24,
+        }
+    }
+    /// Bytes per block of the colour image alone.
+    pub fn color_block_bytes(self) -> usize {
+        if self == Self::YCoCgAlpha { 16 } else { self.block_bytes() }
     }
     pub fn fourcc(self) -> u32 {
         u32::from_be_bytes(match self {
             Self::Rgb => *b"Hap1",
             Self::Alpha => *b"Hap5",
             Self::YCoCg => *b"HapY",
+            Self::YCoCgAlpha => *b"HapM",
+            Self::Bptc => *b"Hap7",
         })
     }
 }
@@ -157,6 +176,8 @@ impl HapVideoDecoder {
                 b"Hap1" => HapFormat::Rgb,
                 b"Hap5" => HapFormat::Alpha,
                 b"HapY" => HapFormat::YCoCg,
+                b"HapM" => HapFormat::YCoCgAlpha,
+                b"Hap7" => HapFormat::Bptc,
                 other => {
                     if let Some(name) = unsupported_variant_name(other) {
                         unsupported.get_or_insert(name);
@@ -352,9 +373,7 @@ pub enum HapOpenError {
 /// HAP variants other tools write that this path does not decode yet.
 fn unsupported_variant_name(codec: &[u8; 4]) -> Option<&'static str> {
     match codec {
-        b"HapM" => Some("HAP Q Alpha"),
         b"HapA" => Some("HAP Alpha-Only"),
-        b"Hap7" => Some("HAP R"),
         b"HapH" => Some("HAP HDR"),
         other if other.starts_with(b"Hap") => Some("This HAP variant"),
         _ => None,
@@ -745,12 +764,35 @@ pub fn decode_packet(packet: &[u8], format: HapFormat, expected: usize) -> Resul
 /// Expands a frame's texture blocks into `output`, reusing its memory.
 pub fn decode_packet_into(packet: &[u8], format: HapFormat, expected: usize, output: &mut Vec<u8>) -> Result<()> {
     let (kind, body, end) = section(packet)?;
+    if end != packet.len() || expected > MAX_PACKET_BYTES {
+        return Err(bad());
+    }
     let tag = match format {
         HapFormat::Rgb => 0x0b,
         HapFormat::Alpha => 0x0e,
         HapFormat::YCoCg => 0x0f,
+        HapFormat::Bptc => 0x0c,
+        HapFormat::YCoCgAlpha => {
+            // A multiple-images section: the YCoCg colour image, then the
+            // RGTC1 alpha image, each a complete texture section.
+            if kind != 0x0d {
+                return Err(bad());
+            }
+            let (color_kind, color, n) = section(body)?;
+            let (alpha_kind, alpha, m) = section(&body[n..])?;
+            if n + m != body.len() || color_kind & 15 != 0x0f || alpha_kind & 15 != 0x01 {
+                return Err(bad());
+            }
+            let color_bytes = expected / 24 * 16;
+            let mut chunks = texture_chunks(color_kind, color)?;
+            if chunks.iter().map(|c| c.len).sum::<usize>() != color_bytes {
+                return Err("HAP block data does not match frame dimensions".into());
+            }
+            chunks.extend(texture_chunks(alpha_kind, alpha)?);
+            return expand_chunks(&chunks, output, expected);
+        }
     };
-    if end != packet.len() || kind & 15 != tag || expected > MAX_PACKET_BYTES {
+    if kind & 15 != tag {
         return Err(bad());
     }
     expand_chunks(&texture_chunks(kind, body)?, output, expected)
@@ -928,9 +970,7 @@ mod tests {
     }
     #[test]
     fn unsupported_variants_are_named() {
-        assert_eq!(unsupported_variant_name(b"HapM"), Some("HAP Q Alpha"));
         assert_eq!(unsupported_variant_name(b"HapA"), Some("HAP Alpha-Only"));
-        assert_eq!(unsupported_variant_name(b"Hap7"), Some("HAP R"));
         assert_eq!(unsupported_variant_name(b"HapH"), Some("HAP HDR"));
         assert_eq!(unsupported_variant_name(b"Hapz"), Some("This HAP variant"));
         assert_eq!(unsupported_variant_name(b"avc1"), None);
@@ -957,16 +997,16 @@ mod tests {
         let mut decoder = HapVideoDecoder::open(&delayed).unwrap();
         assert!((decoder.metadata().duration_seconds - 0.2).abs() < 1e-6);
         assert!((decoder.next_frame().unwrap().unwrap().pts_seconds).abs() < 1e-9);
-        // A HAP Q Alpha sample description: refused by name, as a HAP movie.
+        // A HAP Alpha-Only sample description: refused by name, as a HAP movie.
         let mut bytes = std::fs::read(&delayed).unwrap();
         let stsd = bytes.windows(4).position(|w| w == b"stsd").unwrap();
         let tag = stsd + bytes[stsd..].windows(4).position(|w| w == b"HapY").unwrap();
-        bytes[tag..tag + 4].copy_from_slice(b"HapM");
-        let q_alpha = dir.join("q-alpha.mov");
-        std::fs::write(&q_alpha, &bytes).unwrap();
-        assert_eq!(sniff_hap_codec(&q_alpha), Some(*b"HapM"));
-        match HapVideoDecoder::open_checked(&q_alpha) {
-            Err(HapOpenError::Unplayable(reason)) => assert!(reason.starts_with("HAP Q Alpha is not supported"), "{reason}"),
+        bytes[tag..tag + 4].copy_from_slice(b"HapA");
+        let alpha_only = dir.join("alpha-only.mov");
+        std::fs::write(&alpha_only, &bytes).unwrap();
+        assert_eq!(sniff_hap_codec(&alpha_only), Some(*b"HapA"));
+        match HapVideoDecoder::open_checked(&alpha_only) {
+            Err(HapOpenError::Unplayable(reason)) => assert!(reason.starts_with("HAP Alpha-Only is not supported"), "{reason}"),
             other => panic!("expected a named refusal, got {:?}", other.err()),
         }
         // Not HAP at all: left to the platform decoder.
@@ -1061,5 +1101,272 @@ mod tests {
                 }
             }
         }
+    }
+}
+
+/// Small HAP movies and BC blocks built in memory, for tests of formats no
+/// available encoder writes (HAP Q Alpha, HAP R).
+#[cfg(test)]
+pub(crate) mod test_media {
+    fn atom(kind: &[u8; 4], body: &[u8]) -> Vec<u8> {
+        let mut out = ((body.len() + 8) as u32).to_be_bytes().to_vec();
+        out.extend(kind);
+        out.extend(body);
+        out
+    }
+    fn full(kind: &[u8; 4], body: &[u8]) -> Vec<u8> {
+        let mut b = vec![0u8; 4];
+        b.extend(body);
+        atom(kind, &b)
+    }
+    fn be(parts: &[u32]) -> Vec<u8> {
+        parts.iter().flat_map(|v| v.to_be_bytes()).collect()
+    }
+    const MATRIX: [u32; 9] = [0x10000, 0, 0, 0, 0x10000, 0, 0, 0, 0x40000000];
+    /// A QuickTime movie with one video track of `packets` at 25 fps.
+    pub fn mov(fourcc: &[u8; 4], width: u16, height: u16, packets: &[Vec<u8>]) -> Vec<u8> {
+        let n = packets.len() as u32;
+        let ftyp = atom(b"ftyp", b"qt  \0\0\x02\0qt  ");
+        let payload: Vec<u8> = packets.concat();
+        let mdat = atom(b"mdat", &payload);
+        let mut offsets = Vec::new();
+        let mut at = (ftyp.len() + 8) as u32;
+        for p in packets {
+            offsets.push(at);
+            at += p.len() as u32;
+        }
+        let mut mvhd = be(&[0, 0, 25, n, 0x10000]);
+        mvhd.extend([1, 0]);
+        mvhd.extend([0; 10]);
+        mvhd.extend(be(&MATRIX));
+        mvhd.extend([0; 24]);
+        mvhd.extend(be(&[2]));
+        let mut tkhd = be(&[0, 0, 1, 0, n, 0, 0]);
+        tkhd.extend([0; 8]);
+        tkhd.extend(be(&MATRIX));
+        tkhd.extend(be(&[(width as u32) << 16, (height as u32) << 16]));
+        let mut tkhd_full = vec![0, 0, 0, 3];
+        tkhd_full.extend(tkhd);
+        let mut mdhd = be(&[0, 0, 25, n]);
+        mdhd.extend([0x55, 0xc4, 0, 0]);
+        let mut hdlr = b"mhlrvide".to_vec();
+        hdlr.extend([0; 13]);
+        let mut entry = vec![0u8; 6];
+        entry.extend([0, 1]);
+        entry.extend([0; 16]);
+        entry.extend(width.to_be_bytes());
+        entry.extend(height.to_be_bytes());
+        entry.extend(be(&[0x00480000, 0x00480000, 0]));
+        entry.extend([0, 1]);
+        entry.extend([0; 32]);
+        entry.extend([0, 24, 0xff, 0xff]);
+        let mut stsd = be(&[1]);
+        stsd.extend(atom(fourcc, &entry));
+        let mut stsz = be(&[0, n]);
+        stsz.extend(packets.iter().flat_map(|p| (p.len() as u32).to_be_bytes()));
+        let mut stco = be(&[n]);
+        stco.extend(be(&offsets));
+        let stbl = [
+            full(b"stsd", &stsd),
+            full(b"stts", &be(&[1, n, 1])),
+            full(b"stsc", &be(&[1, 1, 1, 1])),
+            full(b"stsz", &stsz),
+            full(b"stco", &stco),
+        ]
+        .concat();
+        let mut vmhd = vec![0, 0, 0, 1];
+        vmhd.extend([0; 8]);
+        let dref = full(b"dref", &[be(&[1]), atom(b"alis", &[0, 0, 0, 1])].concat());
+        let minf = [atom(b"vmhd", &vmhd), atom(b"dinf", &dref), atom(b"stbl", &stbl)].concat();
+        let mdia = [full(b"mdhd", &mdhd), full(b"hdlr", &hdlr), atom(b"minf", &minf)].concat();
+        let trak = [atom(b"tkhd", &tkhd_full), atom(b"mdia", &mdia)].concat();
+        let moov = [full(b"mvhd", &mvhd), atom(b"trak", &trak)].concat();
+        [ftyp, mdat, atom(b"moov", &moov)].concat()
+    }
+    /// A HAP section header and body (the long form when it does not fit 24 bits).
+    pub fn section(kind: u8, body: &[u8]) -> Vec<u8> {
+        let n = body.len();
+        let mut out = if n < 1 << 24 {
+            vec![n as u8, (n >> 8) as u8, (n >> 16) as u8, kind]
+        } else {
+            let mut h = vec![0, 0, 0, kind];
+            h.extend((n as u32).to_le_bytes());
+            h
+        };
+        out.extend(body);
+        out
+    }
+    /// A chunked (0x0c second-stage) texture section, Snappy chunks.
+    pub fn chunked(format: u8, blocks: &[u8], chunks: usize) -> Vec<u8> {
+        let step = blocks.len().div_ceil(chunks);
+        let (mut compressors, mut sizes, mut payload) = (Vec::new(), Vec::new(), Vec::new());
+        for part in blocks.chunks(step) {
+            let packed = snap::raw::Encoder::new().compress_vec(part).unwrap();
+            compressors.push(0x0b);
+            sizes.extend((packed.len() as u32).to_le_bytes());
+            payload.extend(packed);
+        }
+        let mut instructions = section(2, &compressors);
+        instructions.extend(section(3, &sizes));
+        let mut body = section(1, &instructions);
+        body.extend(payload);
+        section(0xc0 | format, &body)
+    }
+    /// RGTC1 (BC4) blocks for one channel, `width` x `height` (multiples of 4).
+    pub fn bc4(values: &[u8], width: usize, height: usize) -> Vec<u8> {
+        let mut out = Vec::new();
+        for by in 0..height / 4 {
+            for bx in 0..width / 4 {
+                let px: Vec<u8> = (0..16).map(|i| values[(by * 4 + i / 4) * width + bx * 4 + i % 4]).collect();
+                let (hi, lo) = (*px.iter().max().unwrap(), *px.iter().min().unwrap());
+                let palette = bc4_palette(hi, lo);
+                let mut bits = 0u64;
+                for (i, &v) in px.iter().enumerate() {
+                    let best = (0..8).min_by_key(|&k| (palette[k] as i32 - v as i32).abs()).unwrap();
+                    bits |= (best as u64) << (3 * i);
+                }
+                out.extend([hi, lo]);
+                out.extend(&bits.to_le_bytes()[..6]);
+            }
+        }
+        out
+    }
+    pub fn bc4_palette(a0: u8, a1: u8) -> [u8; 8] {
+        let (a, b) = (a0 as u32, a1 as u32);
+        let mut p = [a0, a1, 0, 0, 0, 0, 0, 0];
+        if a0 > a1 {
+            for k in 1..7u32 {
+                p[k as usize + 1] = (((7 - k) * a + k * b + 3) / 7) as u8;
+            }
+        } else {
+            for k in 1..5u32 {
+                p[k as usize + 1] = (((5 - k) * a + k * b + 2) / 5) as u8;
+            }
+            p[6] = 0;
+            p[7] = 255;
+        }
+        p
+    }
+    pub fn bc4_decode(blocks: &[u8], width: usize, height: usize) -> Vec<u8> {
+        let mut out = vec![0u8; width * height];
+        for (n, block) in blocks.chunks_exact(8).enumerate() {
+            let (bx, by) = (n % (width / 4), n / (width / 4));
+            let palette = bc4_palette(block[0], block[1]);
+            let mut b = [0u8; 8];
+            b[..6].copy_from_slice(&block[2..]);
+            let bits = u64::from_le_bytes(b);
+            for i in 0..16 {
+                out[(by * 4 + i / 4) * width + bx * 4 + i % 4] = palette[((bits >> (3 * i)) & 7) as usize];
+            }
+        }
+        out
+    }
+    const BC7_WEIGHTS: [u32; 16] = [0, 4, 9, 13, 17, 21, 26, 30, 34, 38, 43, 47, 51, 55, 60, 64];
+    /// BPTC (BC7) mode 6 blocks of RGBA pixels: one line through each block.
+    pub fn bc7(rgba: &[u8], width: usize, height: usize) -> Vec<u8> {
+        let mut out = Vec::new();
+        for by in 0..height / 4 {
+            for bx in 0..width / 4 {
+                let px: Vec<[u8; 4]> = (0..16)
+                    .map(|i| {
+                        let at = ((by * 4 + i / 4) * width + bx * 4 + i % 4) * 4;
+                        [rgba[at], rgba[at + 1], rgba[at + 2], rgba[at + 3]]
+                    })
+                    .collect();
+                // 7-bit endpoints; the low endpoint's p-bit 0, the high one's 1.
+                let mut e = [[0u8; 4]; 2];
+                for c in 0..4 {
+                    e[0][c] = px.iter().map(|p| p[c]).min().unwrap() >> 1;
+                    e[1][c] = px.iter().map(|p| p[c]).max().unwrap() >> 1;
+                }
+                let mut pbits = [0u8, 1];
+                let full = |e: [u8; 4], p: u8| e.map(|v| ((v << 1) | p) as f64);
+                let (lo, hi) = (full(e[0], pbits[0]), full(e[1], pbits[1]));
+                let d: Vec<f64> = (0..4).map(|c| hi[c] - lo[c]).collect();
+                let dd: f64 = d.iter().map(|v| v * v).sum();
+                let mut idx: Vec<u32> = px
+                    .iter()
+                    .map(|p| {
+                        if dd == 0.0 {
+                            return 0;
+                        }
+                        let t: f64 = (0..4).map(|c| (p[c] as f64 - lo[c]) * d[c]).sum::<f64>() / dd;
+                        let w = t.clamp(0.0, 1.0) * 64.0;
+                        (0..16).min_by(|&a, &b| {
+                            (BC7_WEIGHTS[a] as f64 - w).abs().partial_cmp(&(BC7_WEIGHTS[b] as f64 - w).abs()).unwrap()
+                        }).unwrap() as u32
+                    })
+                    .collect();
+                if idx[0] >= 8 {
+                    e.swap(0, 1);
+                    pbits.swap(0, 1);
+                    for i in &mut idx {
+                        *i = 15 - *i;
+                    }
+                }
+                let mut bits = 1u128 << 6;
+                let mut at = 7;
+                let mut put = |v: u128, n: usize| {
+                    bits |= v << at;
+                    at += n;
+                };
+                for c in 0..4 {
+                    put(e[0][c] as u128, 7);
+                    put(e[1][c] as u128, 7);
+                }
+                put(pbits[0] as u128, 1);
+                put(pbits[1] as u128, 1);
+                for (i, &v) in idx.iter().enumerate() {
+                    put(v as u128, if i == 0 { 3 } else { 4 });
+                }
+                out.extend(bits.to_le_bytes());
+            }
+        }
+        out
+    }
+    pub fn bc7_decode(blocks: &[u8], width: usize, height: usize) -> Vec<u8> {
+        let mut out = vec![0u8; width * height * 4];
+        for (n, block) in blocks.chunks_exact(16).enumerate() {
+            let (bx, by) = (n % (width / 4), n / (width / 4));
+            let bits = u128::from_le_bytes(block.try_into().unwrap());
+            assert_eq!(bits & 0x7f, 1 << 6, "mode 6 only");
+            let mut at = 7;
+            let mut get = |n: usize| {
+                let v = (bits >> at) & ((1u128 << n) - 1);
+                at += n;
+                v as u32
+            };
+            let mut e = [[0u32; 4]; 2];
+            for c in 0..4 {
+                e[0][c] = get(7);
+                e[1][c] = get(7);
+            }
+            let p = [get(1), get(1)];
+            let idx: Vec<u32> = (0..16).map(|i| get(if i == 0 { 3 } else { 4 })).collect();
+            for i in 0..16 {
+                let w = BC7_WEIGHTS[idx[i] as usize];
+                let at = ((by * 4 + i / 4) * width + bx * 4 + i % 4) * 4;
+                for c in 0..4 {
+                    let (a, b) = ((e[0][c] << 1) | p[0], (e[1][c] << 1) | p[1]);
+                    out[at + c] = (((64 - w) * a + w * b + 32) >> 6) as u8;
+                }
+            }
+        }
+        out
+    }
+    /// A test picture with soft and hard alpha edges, RGBA.
+    pub fn picture(width: usize, height: usize, frame: usize) -> Vec<u8> {
+        let mut out = Vec::with_capacity(width * height * 4);
+        for y in 0..height {
+            for x in 0..width {
+                let dx = x as f64 - width as f64 / 2.0 + frame as f64;
+                let dy = y as f64 - height as f64 / 2.0;
+                let r = (dx * dx + dy * dy).sqrt() / (width.min(height) as f64 / 2.0);
+                let a = ((1.2 - r) * 255.0).clamp(0.0, 255.0) as u8;
+                let a = if x < 4 { 0 } else if x >= width - 4 { 255 } else { a };
+                out.extend([(x * 255 / width) as u8, (y * 255 / height) as u8, ((x + y + frame * 9) * 3 % 256) as u8, a]);
+            }
+        }
+        out
     }
 }

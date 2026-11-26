@@ -6381,7 +6381,7 @@ impl App {
             "native_media_source_playback_state": true,
             "native_video_decode_pump": true,
             "native_hap_compressed_textures": cfg!(any(target_os = "macos", target_os = "windows")) && self.renderer.as_ref().is_some_and(|r| r.device.features().contains(wgpu::Features::TEXTURE_COMPRESSION_BC)),
-            "native_hap_formats": ["Hap1", "Hap5", "HapY"],
+            "native_hap_formats": ["Hap1", "Hap5", "HapY", "HapM", "Hap7"],
             "native_video_decode_pump_window": true,
             "decode_policy_controls": true,
             "decode_preview_cache_clear": true,
