@@ -25391,19 +25391,12 @@ impl RenderState {
 
     /// Feed completed frames to the frames-in-flight gate.
     fn update_frames_in_flight(&mut self, budget: Duration) {
-        // The Windows recorder reads the export right behind a frame's
-        // completion (a GPU fence), so the next frame must not be queued
-        // behind it already: one at a time while it records.
-        #[cfg(target_os = "windows")]
-        let force_single = self.native_recorder.is_some();
-        #[cfg(not(target_os = "windows"))]
-        let force_single = false;
+        // The Windows recorder no longer needs one frame at a time: the next
+        // frame's GPU work waits (on the GPU) for the encoder to have read
+        // the export (windows_video_encoder.rs).
         let budget_ms = budget.as_secs_f64() * 1000.0;
         for sample in self.gpu_frame_latency.take_samples() {
-            self.frames_in_flight.observe(sample, budget_ms, force_single);
-        }
-        if force_single {
-            self.frames_in_flight.observe_force_single();
+            self.frames_in_flight.observe(sample, budget_ms);
         }
     }
 

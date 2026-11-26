@@ -211,17 +211,7 @@ impl AdaptiveGate {
         }
     }
 
-    /// Hold one frame at a time now, even with no new completion to look at.
-    pub fn observe_force_single(&mut self) {
-        if self.allowed != 1 {
-            self.allowed = 1;
-            self.samples_since_change = 0;
-        }
-    }
-
-    /// `force_single`: something reads the frame right behind its completion
-    /// (the Windows recorder), so no second frame may follow it closely.
-    pub fn observe(&mut self, sample: GpuFrameSample, budget_ms: f64, force_single: bool) {
+    pub fn observe(&mut self, sample: GpuFrameSample, budget_ms: f64) {
         if self.cap <= 1 {
             self.allowed = 1;
             return;
@@ -241,7 +231,7 @@ impl AdaptiveGate {
             self.latency_ema_ms = ema(self.latency_ema_ms, sample.latency_ms);
             self.tail_ema_ms = ema(self.tail_ema_ms, sample.tail_ms);
         }
-        if force_single || self.budget_ms <= 0.0 {
+        if self.budget_ms <= 0.0 {
             if self.allowed != 1 {
                 self.allowed = 1;
                 self.samples_since_change = 0;
@@ -288,7 +278,7 @@ mod tests {
         let mut gate = AdaptiveGate::new(2);
         for _ in 0..1000 {
             // 58 ms of GPU, 2 ms of CPU.
-            gate.observe(frame(false, 60.0, 57.0, 60.0), BUDGET, false);
+            gate.observe(frame(false, 60.0, 57.0, 60.0), BUDGET);
             assert_eq!(gate.allowed(), 1);
         }
     }
@@ -296,20 +286,20 @@ mod tests {
     #[test]
     fn cpu_plus_gpu_over_budget_with_gpu_room_gets_two() {
         let mut gate = AdaptiveGate::new(2);
-        for _ in 0..MIN_SAMPLES { gate.observe(frame(false, 18.5, 12.0, 18.0), BUDGET, false); }
+        for _ in 0..MIN_SAMPLES { gate.observe(frame(false, 18.5, 12.0, 18.0), BUDGET); }
         assert_eq!(gate.allowed(), 2);
         // Overlapped and keeping up: an occasional queued frame inside budget.
-        for i in 0..1000 { gate.observe(frame(i % 5 == 0, 13.0, 12.0, 15.0), BUDGET, false); }
+        for i in 0..1000 { gate.observe(frame(i % 5 == 0, 13.0, 12.0, 15.0), BUDGET); }
         assert_eq!(gate.allowed(), 2);
     }
 
     #[test]
     fn a_frame_that_fits_or_only_just_misses_stays_at_one() {
         let mut gate = AdaptiveGate::new(2);
-        for _ in 0..1000 { gate.observe(frame(false, 16.7, 8.0, 11.0), BUDGET, false); }
+        for _ in 0..1000 { gate.observe(frame(false, 16.7, 8.0, 11.0), BUDGET); }
         assert_eq!(gate.allowed(), 1);
         // At the budget a second frame buys a frame a second for more latency.
-        for _ in 0..1000 { gate.observe(frame(false, 16.9, 12.0, 16.9), BUDGET, false); }
+        for _ in 0..1000 { gate.observe(frame(false, 16.9, 12.0, 16.9), BUDGET); }
         assert_eq!(gate.allowed(), 1);
     }
 
@@ -318,28 +308,23 @@ mod tests {
         let mut gate = AdaptiveGate::new(2);
         // Tail looks small (GPU work ran while the CPU encoded) but the GPU
         // is really 19 ms a frame.
-        for _ in 0..MIN_SAMPLES { gate.observe(frame(false, 23.0, 12.0, 23.0), BUDGET, false); }
+        for _ in 0..MIN_SAMPLES { gate.observe(frame(false, 23.0, 12.0, 23.0), BUDGET); }
         assert_eq!(gate.allowed(), 2);
-        for _ in 0..10 { gate.observe(frame(true, 19.0, 30.0, 38.0), BUDGET, false); }
+        for _ in 0..10 { gate.observe(frame(true, 19.0, 30.0, 38.0), BUDGET); }
         assert_eq!(gate.allowed(), 1);
         for _ in 0..1000 {
-            gate.observe(frame(false, 23.0, 12.0, 23.0), BUDGET, false);
+            gate.observe(frame(false, 23.0, 12.0, 23.0), BUDGET);
             assert_eq!(gate.allowed(), 1, "flapped back up on the same scene");
         }
         // A lighter scene earns it back; so does a new frame budget.
-        for _ in 0..200 { gate.observe(frame(false, 20.0, 8.0, 18.0), BUDGET, false); }
+        for _ in 0..200 { gate.observe(frame(false, 20.0, 8.0, 18.0), BUDGET); }
         assert_eq!(gate.allowed(), 2);
     }
 
     #[test]
-    fn cap_one_and_force_single_hold_one() {
+    fn cap_one_holds_one() {
         let mut gate = AdaptiveGate::new(1);
-        for _ in 0..100 { gate.observe(frame(false, 18.5, 12.0, 18.0), BUDGET, false); }
-        assert_eq!(gate.allowed(), 1);
-        let mut gate = AdaptiveGate::new(2);
-        for _ in 0..MIN_SAMPLES { gate.observe(frame(false, 18.5, 12.0, 18.0), BUDGET, false); }
-        assert_eq!(gate.allowed(), 2);
-        gate.observe(frame(false, 18.5, 12.0, 18.0), BUDGET, true);
+        for _ in 0..100 { gate.observe(frame(false, 18.5, 12.0, 18.0), BUDGET); }
         assert_eq!(gate.allowed(), 1);
     }
 
