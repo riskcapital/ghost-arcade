@@ -1,5 +1,6 @@
 //! Texture sharing straight from the core: the program composite published
-//! as a Syphon server (macOS) from the core's own output texture.
+//! as a Syphon server (macOS) or a Spout sender (Windows) from the core's own
+//! output texture.
 //!
 //! Before this, the Electron main process polled the core for the output
 //! surface id over the RPC pipe at 60 Hz and handed it to a Node addon that
@@ -7,7 +8,9 @@
 //! publish surfaces inside the frame's own command buffer, and publishes a
 //! surface once the GPU has completed that submission, so a client never
 //! reads a frame the GPU is still writing and the next frame never
-//! overwrites one being read.
+//! overwrites one being read. On Windows the frame goes into the Spout
+//! texture on a same-adapter D3D11 device, ordered after the frame (and the
+//! next frame after the copy) with shared GPU fences (`win_spout.rs`).
 //!
 //! The wanted sender (its name) is kept for the life of the process, apart
 //! from the renderer: a renderer rebuilt after a device loss starts
@@ -30,6 +33,8 @@ use crate::{App, RenderState};
 
 #[cfg(target_os = "macos")]
 use crate::mac_syphon;
+#[cfg(target_os = "windows")]
+use crate::win_spout;
 
 /// Publish surfaces per sender: one the GPU fills while one is read.
 #[cfg(target_os = "macos")]
@@ -40,6 +45,9 @@ struct ShareRequest {
     name: String,
     /// The app's name, which clients show beside the sender name.
     app_name: Option<String>,
+    /// Windows: the app's executable path, which Spout keeps as the
+    /// sender's host.
+    host_path: Option<String>,
 }
 
 static WANTED: Mutex<Option<ShareRequest>> = Mutex::new(None);
@@ -67,7 +75,7 @@ pub(crate) fn platform() -> &'static str {
 /// Whether this build can publish a sender itself (the framework or SDK it
 /// needs may still be missing at run time; `texture_share_state` says).
 pub(crate) fn implemented() -> bool {
-    cfg!(target_os = "macos")
+    cfg!(any(target_os = "macos", target_os = "windows"))
 }
 
 #[cfg(target_os = "macos")]
@@ -141,6 +149,8 @@ impl Publisher {
 pub(crate) struct TextureShare {
     #[cfg(target_os = "macos")]
     publisher: Option<Publisher>,
+    #[cfg(target_os = "windows")]
+    publisher: Option<win_spout::SpoutSender>,
     last_error: Option<String>,
 }
 
@@ -249,7 +259,47 @@ impl RenderState {
                 publisher.pending.push_back(capture);
             }
         }
+        #[cfg(target_os = "windows")]
+        self.send_spout_frame();
         self.drain_texture_share();
+    }
+
+    /// Windows: copy the frame just submitted into the Spout texture.
+    #[cfg(target_os = "windows")]
+    fn send_spout_frame(&mut self) {
+        let Some(request) = wanted() else {
+            self.texture_share.publisher = None;
+            return;
+        };
+        let Some(shared_name) = self.output_export.as_ref().map(|export| export.shared_name.clone()) else {
+            return;
+        };
+        let share = &mut self.texture_share;
+        if share.publisher.as_ref().is_some_and(|p| p.name() != request.name) {
+            share.publisher = None;
+        }
+        if share.publisher.is_none() {
+            match win_spout::SpoutSender::new(&self.device, &request.name, request.host_path.as_deref()) {
+                Ok(sender) => {
+                    share.publisher = Some(sender);
+                    share.last_error = None;
+                }
+                Err(error) => {
+                    eprintln!("[ghost-core] Spout sender unavailable: {error}");
+                    share.last_error = Some(error);
+                    set_wanted(None);
+                    return;
+                }
+            }
+        }
+        let sender = share.publisher.as_mut().expect("sender just ensured");
+        if let Err(error) = sender.send(&self.device, &shared_name) {
+            // Keep rendering; the app reads the reason and falls back.
+            eprintln!("[ghost-core] Spout send failed: {error}");
+            share.last_error = Some(error);
+            share.publisher = None;
+            set_wanted(None);
+        }
     }
 
     /// Publish the newest capture whose GPU work has completed. Older
@@ -295,6 +345,20 @@ impl RenderState {
                 "last_error": self.texture_share.last_error,
             });
         }
+        #[cfg(target_os = "windows")]
+        if let Some(sender) = self.texture_share.publisher.as_ref() {
+            let (width, height) = sender.size();
+            return json!({
+                "available": true,
+                "active": true,
+                "platform": platform(),
+                "name": sender.name(),
+                "width": width,
+                "height": height,
+                "frames_published": sender.frames,
+                "last_error": self.texture_share.last_error,
+            });
+        }
         json!({
             "available": implemented(),
             "active": false,
@@ -327,7 +391,13 @@ impl App {
                     .map(str::trim)
                     .filter(|app| !app.is_empty())
                     .map(str::to_string);
-                set_wanted(Some(ShareRequest { name: name.to_string(), app_name }));
+                let host_path = params
+                    .get("host_path")
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|path| !path.is_empty())
+                    .map(str::to_string);
+                set_wanted(Some(ShareRequest { name: name.to_string(), app_name, host_path }));
                 if let Some(renderer) = self.renderer.as_mut() {
                     renderer.texture_share.last_error = None;
                 }
@@ -337,7 +407,7 @@ impl App {
             }
             "texture_share_stop" => {
                 set_wanted(None);
-                #[cfg(target_os = "macos")]
+                #[cfg(any(target_os = "macos", target_os = "windows"))]
                 if let Some(renderer) = self.renderer.as_mut() {
                     renderer.texture_share.publisher = None;
                 }

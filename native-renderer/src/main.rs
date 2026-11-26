@@ -48,6 +48,8 @@ mod mac_video_recorder;
 #[cfg(target_os = "macos")]
 mod mac_syphon;
 mod texture_share;
+#[cfg(target_os = "windows")]
+mod win_spout;
 #[cfg(target_os = "macos")]
 mod video_texture;
 mod native_graph_manifest;
