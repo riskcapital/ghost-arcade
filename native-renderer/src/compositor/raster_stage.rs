@@ -242,6 +242,12 @@ impl StageBounds {
         if u.dome0[0] > 0.5 {
             return Err("dome Screen");
         }
+        // Each layer draw would search the Master Warp's mesh again for its
+        // pixels (fs_main does it once per pixel): measured at 4x the
+        // legacy compositor's time.
+        if u.mwarp[0] >= 0.5 && u.mwarp[1] >= 2.0 && u.mwarp[2] >= 2.0 {
+            return Err("Master Warp mesh Screen");
+        }
         let rotation = ((u.out1[0] + 0.5).floor() as i32).clamp(0, 3);
         let calibration = u.projector_calibration[2][3];
         let warp = (u.swarp[0] + 0.5).floor() as i32;
@@ -536,6 +542,13 @@ mod tests {
         for canvas in canvases {
             check(&u, canvas, curved);
         }
+    }
+
+    #[test]
+    fn master_warp_meshes_are_not_drawn_here() {
+        let mut u = uniforms();
+        u.mwarp = [1.0, 4.0, 4.0, 0.0];
+        assert_eq!(StageBounds::new(&u, 64, 64).err(), Some("Master Warp mesh Screen"));
     }
 
     #[test]

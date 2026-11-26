@@ -37,6 +37,13 @@ var raster_input: texture_2d<f32>;
 // the record target; a Screen's crop and warps for a Screen drawn straight
 // from the compositor).
 fn raster_canvas(uv: vec2<f32>) -> vec3<f32> {
+  // The identity stage (raster.rs stage_is_identity): the fragment's own
+  // UV, as fs_main reads it there, without the stage's arithmetic.
+  if (all(u.out0 == vec4<f32>(0.0, 0.0, 1.0, 1.0)) && i32(floor(u.out1.x + 0.5)) == 0
+      && i32(floor(u.swarp.x + 0.5)) == 0 && u.mwarp.x < 0.5 && u.dome0.x <= 0.5
+      && u.projector_calibration[2].w < 0.5) {
+    return vec3<f32>(uv, select(1.0, 0.0, u.projector_calibration[2].w < -0.5));
+  }
   let source = output_source_uv(uv);
   var canvas_uv = source.xy;
   var dome_mask = source.z;

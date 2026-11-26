@@ -667,6 +667,7 @@ const VIEW_SCENES: ViewScene[] = [
     views: ['slice:mw-crop', 'slice:mw-corners'],
   },
   {
+    // Left to the legacy compositor: each layer draw would search the mesh again.
     name: 'screens-master-mesh',
     build: (width, height) => viewLayers(width, height),
     setup: (width, height) => [
@@ -763,7 +764,7 @@ async function renderViews(env: Env, scene: ViewScene, width: number, height: nu
 }
 
 /** The views the raster compositor leaves to the legacy one. */
-const LEGACY_VIEWS: Record<string, string> = { 'slice:dome-crop': 'dome Screen' };
+const LEGACY_VIEWS: Record<string, string> = { 'slice:dome-crop': 'dome Screen', 'slice:mm-crop': 'Master Warp mesh Screen' };
 
 /** GA_CORE_COMPOSITOR_BENCH_DUMP=<dir>: write each run as a PNG there. */
 function dump(name: string, run: Run, bgra: boolean) {
@@ -841,11 +842,14 @@ suite('Compositor scene set', () => {
   // on an 8-bit step boundary to the next step (RASTER_TOLERANCE_LSB), so a
   // channel may differ by 1 on a few pixels; never by more.
   it('draws every scene the same with the raster compositor as with the legacy one', async () => {
-    const width = 640;
-    const height = 360;
+    // GA_CORE_COMPOSITOR_COMPARE_WIDTH/HEIGHT compare at another size,
+    // GA_CORE_COMPOSITOR_BENCH_SCENES=a,b only those scenes.
+    const width = Number(process.env.GA_CORE_COMPOSITOR_COMPARE_WIDTH ?? 640);
+    const height = Number(process.env.GA_CORE_COMPOSITOR_COMPARE_HEIGHT ?? 360);
+    const only = (process.env.GA_CORE_COMPOSITOR_BENCH_SCENES ?? '').split(',').filter(Boolean);
     // Minified pictures are compared with source mips on too, where both
     // read the mips.
-    const runs = SCENES.flatMap(scene => [{ scene, env: {} as Env, tag: '' },
+    const runs = SCENES.filter(scene => !only.length || only.includes(scene.name)).flatMap(scene => [{ scene, env: {} as Env, tag: '' },
       ...(scene.minified ? [{ scene, env: { GA_CORE_SOURCE_MIPS: '1' } as Env, tag: '-mips' }] : [])]);
     for (const { scene, env, tag } of runs) {
       const legacy = await renderScene(env, scene, width, height, false);
