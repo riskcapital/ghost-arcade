@@ -28114,11 +28114,14 @@ impl RenderState {
         };
         let target = slot_ref.target_view("Native hardware video target", 0);
         let is_hap = matches!(&frame.storage, hardware_video::FrameStorage::Hap(_));
+        // Inside a stream drain every frame, HAP or not, joins the drain's
+        // one encoder and submit: each source occurs once per drain, so no
+        // two frames write the same slot. A hardware frame's conversion
+        // writes nothing through the queue, so it batches as is.
         let mut batch_guard = self.hap_upload_batch.lock().unwrap();
-        let mut encoder = if is_hap {
-            batch_guard.as_mut().and_then(|batch| batch.encoder.take())
-        } else { None }.unwrap_or_else(|| self.device.create_command_encoder(
-            &wgpu::CommandEncoderDescriptor { label: Some("Native video conversion batch") }));
+        let mut encoder = batch_guard.as_mut().and_then(|batch| batch.encoder.take())
+            .unwrap_or_else(|| self.device.create_command_encoder(
+                &wgpu::CommandEncoderDescriptor { label: Some("Native video conversion batch") }));
         match &frame.storage {
             hardware_video::FrameStorage::Hap(hap) => self.hap_converter.encode(&self.device, &mut encoder, safe_slot, hap, &target, viewport)?,
             hardware_video::FrameStorage::Native(native) => {
@@ -28134,13 +28137,13 @@ impl RenderState {
         // every decoded frame multiplies render-pass/driver work for no
         // visible benefit; static sources still generate their mip chain.
         let gpu_lease = memory_lease.as_ref().map(|lease| lease.begin_gpu_work());
+        if let Some(batch) = batch_guard.as_mut() {
+            batch.encoder = Some(encoder);
+            batch.frames.push((frame, gpu_lease));
+            batch.slots.push(safe_slot);
+            return Ok(source_rect);
+        }
         if is_hap {
-            if let Some(batch) = batch_guard.as_mut() {
-                batch.encoder = Some(encoder);
-                batch.frames.push((frame, gpu_lease));
-                batch.slots.push(safe_slot);
-                return Ok(source_rect);
-            }
             self.hap_converter.finish_uploads(&encoder);
         }
         drop(batch_guard);
