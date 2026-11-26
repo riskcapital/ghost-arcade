@@ -4220,6 +4220,18 @@
         import('./lib/sync/stateBroadcast').then(m => m.broadcastCursorClear());
         break;
       }
+      case 'lightpainting_undo': {
+        const { layerId } = msg as any;
+        const strokes = get(project).layers.find(l => l.id === layerId)?.lightPaintingContent?.strokes;
+        const last = strokes?.[strokes.length - 1];
+        if (last) project.removeLightPaintingStroke(layerId, last.id);
+        break;
+      }
+      case 'lightpainting_clear': {
+        const { layerId } = msg as any;
+        if (typeof layerId === 'string') project.clearLightPaintingStrokes(layerId);
+        break;
+      }
     }
   }
 

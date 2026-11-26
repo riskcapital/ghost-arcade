@@ -304,8 +304,9 @@
   }
 
   function handlePaintPointer(e: PointerEvent) {
-    // Apple Pencil and mouse only — touch is reserved for UI (scrolling panels, etc.)
-    if (e.pointerType !== 'pen' && e.pointerType !== 'mouse') return;
+    // Pencil, mouse and a finger all paint. The surface has touch-action: none,
+    // so a finger drag draws instead of scrolling; a second finger is ignored.
+    if (e.pointerType === 'touch' && !e.isPrimary) return;
     if (!paintLayerId) return;
 
     const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
@@ -325,7 +326,8 @@
     const nx = Math.max(0, Math.min(1, (sx - cx) / cw));
     const ny = Math.max(0, Math.min(1, (sy - cy) / ch));
 
-    const pressure = e.pressure;
+    // A finger has no pressure; browsers report 0 or 0.5 for it, so it paints at 0.5.
+    const pressure = e.pointerType === 'touch' ? (e.pressure || 0.5) : e.pressure;
 
     // Hover mode: move without pressure → crosshair only (both local + send to desktop)
     if (!isPainting && (pressure === 0 || e.type === 'pointermove')) {
@@ -370,6 +372,22 @@
     if (ws && ws.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify({ type: 'lightpainting_stroke_end', layerId: paintLayerId }));
     }
+  }
+
+  $: paintStrokeCount = projectState?.layers?.find(l => l.id === paintLayerId)?.lightPaintingContent?.strokes?.length ?? 0;
+
+  // Undo / Clear act on the desktop's copy; the result syncs back like any stroke.
+  function undoPaintStroke() {
+    if (!paintLayerId || isPainting || !ws || ws.readyState !== WebSocket.OPEN) return;
+    ws.send(JSON.stringify({ type: 'lightpainting_undo', layerId: paintLayerId }));
+    renderDirty = true;
+  }
+
+  function clearPaintStrokes() {
+    if (!paintLayerId || isPainting || !ws || ws.readyState !== WebSocket.OPEN) return;
+    if (!confirm('Clear every stroke on this layer?')) return;
+    ws.send(JSON.stringify({ type: 'lightpainting_clear', layerId: paintLayerId }));
+    renderDirty = true;
   }
 
   function handlePaintPointerLeave() {
@@ -4378,6 +4396,18 @@
             <span class="paint-brush-name">{paintBrush.type}</span>
             <span class="paint-brush-size">{paintBrush.size}px</span>
           </button>
+          <button
+            class="paint-brush-chip"
+            onclick={undoPaintStroke}
+            disabled={!paintLayerId || paintStrokeCount === 0}
+            title="Undo the last stroke"
+          >Undo</button>
+          <button
+            class="paint-brush-chip"
+            onclick={clearPaintStrokes}
+            disabled={!paintLayerId || paintStrokeCount === 0}
+            title="Clear every stroke on this layer"
+          >Clear</button>
         </div>
 
         <!-- Drawing surface — full screen; canvas is letterboxed to project aspect. -->
@@ -6859,6 +6889,7 @@
   .paint-floating-controls > * { pointer-events: auto; }
   .paint-layer-select {
     flex: 1;
+    min-width: 0;
     max-width: 260px;
     background: rgba(22, 22, 24, 0.75);
     backdrop-filter: blur(8px);
@@ -6887,6 +6918,8 @@
     -webkit-tap-highlight-color: transparent;
   }
   .paint-brush-chip:hover { background: rgba(255,255,255,0.08); }
+  .paint-brush-chip:disabled { opacity: 0.4; cursor: default; }
+  .paint-floating-controls .paint-brush-chip { flex-shrink: 0; }
   .paint-brush-swatch {
     display: inline-block;
     width: 16px;
