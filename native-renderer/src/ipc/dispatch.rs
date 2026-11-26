@@ -497,6 +497,9 @@ impl App {
             | "texture_share_slices_start" | "texture_share_slices_stop" => {
                 self.texture_share_rpc(req.method.as_str(), &req.params)
             }
+            "live_capture_start" | "live_capture_stop" | "live_capture_state" | "live_capture_list_cameras" => {
+                self.live_capture_rpc(req.method.as_str(), &req.params)
+            }
             #[cfg(any(target_os = "macos", target_os = "windows"))]
             "stop_native_recording" => self.stop_native_recording_rpc(),
             #[cfg(any(target_os = "macos", target_os = "windows"))]
@@ -925,6 +928,7 @@ impl App {
                         continue;
                     }
                 }
+                "bind_live_capture_source" => self.apply_bind_live_capture_source(command),
                 "precompile_shader" => self.apply_precompile_shader(command),
                 "bind_isf_shader" => self.apply_bind_isf_shader(command),
                 "update_isf_uniforms" => self.apply_isf_uniforms(command),

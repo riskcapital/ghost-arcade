@@ -71,10 +71,6 @@ impl RenderState {
         descriptor: &SharedTextureSourceFrameDescriptor,
     ) -> Result<u64, String> {
         use objc2_io_surface::IOSurfaceRef;
-        use objc2_metal::{
-            MTLDevice, MTLStorageMode, MTLTextureDescriptor, MTLTextureType, MTLTextureUsage,
-        };
-        use wgpu::hal::{self, api::Metal};
 
         if descriptor.platform != "iosurface" {
             return Err(format!(
@@ -86,10 +82,38 @@ impl RenderState {
         let surface_id = descriptor.iosurface_id()?;
         let surface = IOSurfaceRef::lookup(surface_id)
             .ok_or_else(|| format!("IOSurfaceLookup({surface_id}) returned null"))?;
-        let metal_format = metal_texture_format_for_shared_texture(descriptor);
-        let wgpu_format = descriptor.wgpu_texture_format();
-        let width = descriptor.width.max(1);
-        let height = descriptor.height.max(1);
+        self.import_iosurface_into_slot(
+            slot,
+            &surface,
+            metal_texture_format_for_shared_texture(descriptor),
+            descriptor.wgpu_texture_format(),
+            descriptor.width,
+            descriptor.height,
+        )
+        .map_err(|error| format!("{error} (IOSurfaceID={surface_id} format={})", descriptor.format))
+    }
+
+    /// Copy an IOSurface into a source's slot (a shared texture another
+    /// process sent, or a frame the core captured itself). The surface must
+    /// stay unchanged until the GPU has done the copy submitted here.
+    #[cfg(target_os = "macos")]
+    pub(crate) fn import_iosurface_into_slot(
+        &self,
+        slot: usize,
+        surface: &objc2_io_surface::IOSurfaceRef,
+        metal_format: objc2_metal::MTLPixelFormat,
+        wgpu_format: wgpu::TextureFormat,
+        width: u32,
+        height: u32,
+    ) -> Result<u64, String> {
+        use objc2_metal::{
+            MTLDevice, MTLTextureDescriptor, MTLTextureType, MTLTextureUsage,
+        };
+        use wgpu::hal::{self, api::Metal};
+
+        let (frame_width, frame_height) = (width, height);
+        let width = width.max(1);
+        let height = height.max(1);
         let raw_device = unsafe { self.device.as_hal::<Metal>() }
             .ok_or_else(|| "native renderer is not running on the Metal backend".to_string())?;
         let texture_descriptor = unsafe {
@@ -107,12 +131,9 @@ impl RenderState {
         texture_descriptor.setUsage(MTLTextureUsage::ShaderRead);
         let raw_texture = raw_device
             .raw_device()
-            .newTextureWithDescriptor_iosurface_plane(&texture_descriptor, &surface, 0)
+            .newTextureWithDescriptor_iosurface_plane(&texture_descriptor, surface, 0)
             .ok_or_else(|| {
-                format!(
-                    "Metal failed to create texture from IOSurfaceID={surface_id} format={} size={}x{}",
-                    descriptor.format, width, height
-                )
+                format!("Metal failed to create a texture from the IOSurface, size={width}x{height}")
             })?;
         let hal_texture = unsafe {
             hal::metal::Device::texture_from_raw(
@@ -156,7 +177,7 @@ impl RenderState {
             ..Default::default()
         });
         let safe_slot = self.slots.clamp_slot(slot);
-        let (target_width, target_height) = self.imported_frame_size(descriptor.width, descriptor.height);
+        let (target_width, target_height) = self.imported_frame_size(frame_width, frame_height);
         let target = self.slots.ensure(safe_slot, target_width, target_height, true);
         let target_view = target.target_view("Ghost Render Core Shared Texture Source Frame Target", 0);
         let mut encoder = self

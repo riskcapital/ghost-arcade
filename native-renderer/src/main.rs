@@ -48,6 +48,7 @@ mod mac_video_recorder;
 #[cfg(target_os = "macos")]
 mod mac_syphon;
 mod texture_share;
+mod live_capture;
 #[cfg(target_os = "windows")]
 mod win_spout;
 #[cfg(target_os = "macos")]
@@ -913,6 +914,8 @@ struct App {
     stats: CoreStats,
     render_cpu_ema_ms: f64,
     native_quality: NativeQualityState,
+    /// Layer sources fed by the core's own capture sessions (live_capture.rs).
+    live_capture: live_capture::LiveCaptureBindings,
 }
 
 impl App {
@@ -1107,6 +1110,7 @@ impl App {
             stats: CoreStats::default(),
             render_cpu_ema_ms: 0.0,
             native_quality: NativeQualityState::default(),
+            live_capture: Default::default(),
         }
     }
 

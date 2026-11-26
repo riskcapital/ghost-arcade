@@ -669,6 +669,7 @@ impl App {
         self.pump_scheduled_launches();
         let pump_started = Instant::now();
         self.pump_native_video_decodes();
+        self.pump_live_captures();
         self.media_pump_ms = pump_started.elapsed().as_secs_f64() * 1000.0;
     }
 
