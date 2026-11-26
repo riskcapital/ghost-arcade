@@ -73,4 +73,15 @@ describe('render core exit reporting', () => {
     expect(stopped.core_exited_unexpectedly).toBe(false);
     broker.shutdownSync();
   });
+
+  it('restarts a GPU-faulted core with the settings it was last started with', async () => {
+    const broker = brokerFor(fakeCore('unused.sh', 'exit 0')) as any;
+    const starts: unknown[] = [];
+    broker.start = async (args: unknown) => { starts.push(args); };
+    broker.killProcess = () => {};
+    broker.lastStartArgs = { config: { width: 1920, height: 1080, native_quality_policy: 'auto' } };
+    broker.lastStatus = { ...broker.lastStatus, swapchain_last_present_result: 'gpu-fault' };
+    await broker.recoverFromGpuFault();
+    expect(starts).toEqual([{ config: { width: 1920, height: 1080, native_quality_policy: 'auto' } }]);
+  });
 });

@@ -869,6 +869,9 @@ class NativeRendererBroker {
       return this.lastStatus;
     }
     this.ensureProcess(executable);
+    // Kept for a GPU-fault restart: the new core is created with the same
+    // size, present policy and quality tier rather than the defaults.
+    this.lastStartArgs = args;
     // D3D12 compiles the shader warm-up set through FXC on first start, which
     // takes tens of seconds on a cold cache — far past the 8s that Metal needs.
     // Timing out here leaves the core alive but the app stuck on NATIVE OFFLINE.
@@ -1318,7 +1321,11 @@ class NativeRendererBroker {
       + `(attempt ${this.gpuFaultRestarts}/${MAX_GPU_FAULT_RESTARTS})`);
     try {
       this.killProcess();
-      await this.start({});
+      // The editor sends its start and scene again once it sees the new
+      // core; starting with its last settings means the device, swapchain
+      // and picture slots are made right the first time (some, like the
+      // slot size, are only chosen when the device is made).
+      await this.start(this.lastStartArgs || {});
       console.log('[NativeRenderer] render core restarted after GPU fault');
     } catch (err) {
       console.error('[NativeRenderer] GPU fault restart failed:', err?.message || err);
