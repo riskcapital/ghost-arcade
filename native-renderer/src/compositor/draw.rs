@@ -537,6 +537,7 @@ impl RenderState {
         self.capture_native_recording_frame(&mut mirror_encoder);
         self.capture_texture_share_frame(&mut mirror_encoder);
         self.capture_pixelmap_frame(&mut mirror_encoder);
+        self.capture_ndi_frame(&mut mirror_encoder);
         if let Some(frame) = surface_frame.as_ref() {
             if self.surface_copy_dst_supported {
                 mirror_encoder.copy_texture_to_texture(
@@ -580,6 +581,7 @@ impl RenderState {
         #[cfg(any(target_os = "macos", target_os = "windows"))]
         self.encode_native_recording_frame();
         self.texture_share_submitted();
+        self.ndi_submitted();
         if !frozen && output_gate > 0.0 {
             self.mark_graph_frames_submitted(native_graph_jobs.iter().flat_map(|job| job.render_plans.iter()).filter_map(|plan| match plan.target {
                 NativeComputeGraphRenderTarget::SourceFrame { slot, .. } => Some(slot), _ => None,

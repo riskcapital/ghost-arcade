@@ -50,6 +50,7 @@ mod mac_syphon;
 mod texture_share;
 mod pixelmap_out;
 mod live_capture;
+mod ndi_out;
 #[cfg(target_os = "windows")]
 mod win_spout;
 #[cfg(target_os = "macos")]
@@ -522,6 +523,8 @@ struct RenderState {
     texture_share: texture_share::TextureShare,
     /// Program picture for the core's own pixel-map output (pixelmap_out).
     pixelmap_capture: pixelmap_out::Capture,
+    /// NDI senders published by the core itself (ndi_out.rs).
+    ndi_out: ndi_out::NdiOut,
     /// Deck confidence monitors: two small targets (bank A, bank B) the VJ
     /// panel shows beside Program. Created lazily on the first frame that
     /// carries deck-monitor-tagged layers.

@@ -501,6 +501,9 @@ impl App {
             "live_capture_start" | "live_capture_stop" | "live_capture_state" | "live_capture_list_cameras" => {
                 self.live_capture_rpc(req.method.as_str(), &req.params)
             }
+            "ndi_send_start" | "ndi_send_stop" | "ndi_slices_start" | "ndi_slices_stop" | "ndi_state" => {
+                self.ndi_rpc(req.method.as_str(), &req.params)
+            }
             #[cfg(any(target_os = "macos", target_os = "windows"))]
             "stop_native_recording" => self.stop_native_recording_rpc(),
             #[cfg(any(target_os = "macos", target_os = "windows"))]

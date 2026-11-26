@@ -134,6 +134,7 @@ impl RenderState {
                 }
             }
             self.capture_slice_share(&mut encoder, spec);
+            self.capture_slice_ndi(&mut encoder, spec);
             self.outputs_encoder = Some(encoder);
             // The mirror pass has one uniform for every mirror Screen: send
             // this one before the next mirror Screen rewrites it.
@@ -392,6 +393,7 @@ impl RenderState {
             }
         }
         self.capture_slice_share(&mut encoder, spec);
+        self.capture_slice_ndi(&mut encoder, spec);
         // Its own submit: the projector view renderer has one set of
         // uniforms. Nothing in the outputs encoder reads what it draws.
         self.frame_submission = Some(churn_probe::submit(&self.queue, Some(encoder.finish())));
@@ -677,7 +679,10 @@ impl App {
                 let sender = string_at(entry, &["senderName"])
                     .map(|name| name.trim().to_string())
                     .filter(|name| !name.is_empty());
-                specs.push(SliceOutputSpec { id, width, height, stage, projector_view, mirror_mesh_id, mirror_mesh, sender });
+                let ndi_sender = string_at(entry, &["ndiName"])
+                    .map(|name| name.trim().to_string())
+                    .filter(|name| !name.is_empty());
+                specs.push(SliceOutputSpec { id, width, height, stage, projector_view, mirror_mesh_id, mirror_mesh, sender, ndi_sender });
             }
         }
         let ids: Vec<String> = specs.iter().map(|spec| spec.id.clone()).collect();
@@ -687,6 +692,7 @@ impl App {
         }
         if let Some(renderer) = self.renderer.as_mut() {
             renderer.retain_slice_shares(&specs);
+            renderer.retain_slice_ndi(&specs);
         }
         self.slice_outputs = Arc::new(specs);
         Ok(json!({ "slices": ids }))

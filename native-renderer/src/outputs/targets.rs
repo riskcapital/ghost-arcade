@@ -159,6 +159,9 @@ pub(crate) struct SliceOutputSpec {
     /// sender Screen and the app has the core publish Screen senders
     /// (texture_share.rs).
     pub(crate) sender: Option<String>,
+    /// The NDI sender this Screen sends under, when it is an NDI sender
+    /// Screen and the app has the core send Screens over NDI (ndi_out.rs).
+    pub(crate) ndi_sender: Option<String>,
 }
 
 pub(crate) fn output_dimensions_admitted(width: u32, height: u32) -> bool {

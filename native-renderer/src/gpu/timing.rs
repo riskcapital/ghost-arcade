@@ -244,6 +244,7 @@ impl RenderState {
             .unwrap_or_else(|| churn_probe::submit(&self.queue, std::iter::empty()));
         self.frame_submission = None;
         self.slice_shares_submitted();
+        self.slice_ndi_submitted();
         self.gpu_frames_submitted = self.gpu_frames_submitted.saturating_add(1);
         let _ = self.gpu_completion_tx.send((submission, frame_started, Instant::now()));
         if self.test_device_loss.as_ref().is_some_and(|loss| loss.due(self.gpu_frames_submitted)) {

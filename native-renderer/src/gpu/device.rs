@@ -1418,6 +1418,7 @@ impl RenderState {
             native_recorder_error: None,
             texture_share: Default::default(),
             pixelmap_capture: Default::default(),
+            ndi_out: Default::default(),
             deck_monitor_targets: None,
             dome_view_target: None,
             mirror: None,

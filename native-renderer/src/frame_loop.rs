@@ -377,6 +377,7 @@ impl App {
         // source frame they sample is already current after the program
         // render, so a slice costs one composite pass and no extra decode.
         renderer.retain_slice_shares(&slice_specs);
+        renderer.retain_slice_ndi(&slice_specs);
         if render_result.is_ok() && !slice_specs.is_empty() {
             renderer.render_slice_outputs(
                 self.command_phase,
