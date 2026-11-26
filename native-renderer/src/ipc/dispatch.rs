@@ -909,7 +909,21 @@ impl App {
                 }
                 "upload_source_preview" => self.apply_source_preview(command),
                 "upload_source_frame" | "upload_source_gpu_shared_texture" => {
-                    self.apply_source_frame(command)
+                    // A shared texture the core could not open says so in
+                    // the answer, so the sender can go back to pixels
+                    // instead of the layer staying on its last picture.
+                    let rejected = self.stats.source_frame_shared_texture_rejected_uploads;
+                    self.apply_source_frame(command);
+                    if self.stats.source_frame_shared_texture_rejected_uploads != rejected {
+                        if errors.len() < 16 {
+                            errors.push(json!({
+                                "type": command_type,
+                                "message": self.stats.source_frame_last_reject_reason,
+                            }));
+                        }
+                        dropped = dropped.saturating_add(1);
+                        continue;
+                    }
                 }
                 "precompile_shader" => self.apply_precompile_shader(command),
                 "bind_isf_shader" => self.apply_bind_isf_shader(command),
