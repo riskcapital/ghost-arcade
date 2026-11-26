@@ -5114,6 +5114,46 @@ struct NativeShaderBatch {
 /// Shaders per batch before it is submitted and a new one begun.
 const NATIVE_SHADER_BATCH_SLOTS: usize = 64;
 
+/// Env var for the device-loss test hook: the number of frames after which
+/// the core destroys its own GPU device, once per core process.
+const TEST_DEVICE_LOSS_ENV: &str = "GA_CORE_TEST_DEVICE_LOSS";
+
+struct TestDeviceLoss {
+    after_frames: u64,
+    /// Read by the device-lost callback, so the destroy is reported as a loss.
+    fired: Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl TestDeviceLoss {
+    fn parse(value: Option<&str>) -> Option<u64> {
+        value.and_then(|value| value.trim().parse::<u64>().ok()).filter(|frames| *frames > 0)
+    }
+
+    fn from_env(fired: Arc<std::sync::atomic::AtomicBool>) -> Option<Self> {
+        let after_frames = Self::parse(std::env::var(TEST_DEVICE_LOSS_ENV).ok().as_deref())?;
+        eprintln!("[ghost-core] TEST: the GPU device will be destroyed after {after_frames} frames ({TEST_DEVICE_LOSS_ENV})");
+        Some(Self { after_frames, fired })
+    }
+
+    fn due(&self, frames_submitted: u64) -> bool {
+        frames_submitted >= self.after_frames
+    }
+}
+
+#[cfg(test)]
+mod test_device_loss_tests {
+    use super::TestDeviceLoss;
+
+    #[test]
+    fn test_device_loss_hook_is_off_unless_given_a_frame_count() {
+        assert_eq!(TestDeviceLoss::parse(None), None);
+        assert_eq!(TestDeviceLoss::parse(Some("")), None);
+        assert_eq!(TestDeviceLoss::parse(Some("0")), None);
+        assert_eq!(TestDeviceLoss::parse(Some("yes")), None);
+        assert_eq!(TestDeviceLoss::parse(Some(" 120 ")), Some(120));
+    }
+}
+
 struct RenderState {
     window: Arc<Window>,
     adapter_name: String,
@@ -5344,6 +5384,9 @@ struct RenderState {
     gpu_frames_submitted: u64,
     gpu_frames_completed: Arc<AtomicU64>,
     gpu_fault: bool,
+    /// Test hook (GA_CORE_TEST_DEVICE_LOSS=N): destroy the device after N
+    /// frames, reported like a real device loss. None outside tests.
+    test_device_loss: Option<TestDeviceLoss>,
     gpu_completion_tx: Sender<(wgpu::SubmissionIndex, Instant, Instant)>,
     frames_in_flight: frames_in_flight::AdaptiveGate,
     gpu_frame_latency: Arc<frames_in_flight::FrameLatency>,
@@ -22703,6 +22746,8 @@ impl RenderState {
             .map_err(|err| err.to_string())?;
         // Before any pipeline is built, so all of them can use it.
         let disk_pipeline_cache = pipeline_cache::DiskPipelineCache::open(&device, &adapter_info);
+        let test_device_loss_fired = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let test_device_loss = TestDeviceLoss::from_env(Arc::clone(&test_device_loss_fired));
         // A driver reset (Windows TDR), a hung GPU or an unplugged external
         // GPU ends the device. Say so in the log with the adapter, so a support
         // log tells a GPU fault from a fault in the app, and raise the same
@@ -22715,8 +22760,11 @@ impl RenderState {
                 adapter_info.name, adapter_info.backend, adapter_info.driver, adapter_info.driver_info
             );
             let lost_proxy = event_proxy.clone();
+            let forced = Arc::clone(&test_device_loss_fired);
             device.set_device_lost_callback(move |reason, message| {
-                if matches!(reason, wgpu::DeviceLostReason::Destroyed) {
+                // The core destroys its own device on shutdown; that is not a
+                // loss. The test hook's destroy is, and goes the same way.
+                if matches!(reason, wgpu::DeviceLostReason::Destroyed) && !forced.load(Ordering::Acquire) {
                     return;
                 }
                 eprintln!("[ghost-core] GPU DEVICE LOST on {adapter_label}: reason={reason:?} {message}");
@@ -23662,6 +23710,7 @@ impl RenderState {
             gpu_frames_submitted: 0,
             gpu_frames_completed,
             gpu_fault: false,
+            test_device_loss,
             gpu_completion_tx,
             frames_in_flight: frames_in_flight::AdaptiveGate::new(frames_in_flight::from_env()),
             gpu_frame_latency,
@@ -25394,6 +25443,13 @@ impl RenderState {
         self.frame_submission = None;
         self.gpu_frames_submitted = self.gpu_frames_submitted.saturating_add(1);
         let _ = self.gpu_completion_tx.send((submission, frame_started, Instant::now()));
+        if self.test_device_loss.as_ref().is_some_and(|loss| loss.due(self.gpu_frames_submitted)) {
+            if let Some(loss) = self.test_device_loss.take() {
+                eprintln!("[ghost-core] TEST: destroying the GPU device after {} frames ({TEST_DEVICE_LOSS_ENV})", loss.after_frames);
+                loss.fired.store(true, Ordering::Release);
+                self.device.destroy();
+            }
+        }
     }
 
     fn last_render_gpu_ms(&self) -> Option<f64> {
