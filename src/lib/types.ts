@@ -6382,7 +6382,49 @@ export function createMeshGrid(rows: number, cols: number): MeshWarpGrid {
   return { rows, cols, points };
 }
 
+/**
+ * What a new SVG layer starts as: the artwork exactly as drawn (Original
+ * SVG), no effects, no bloom or vignette. Everything else keeps the values
+ * the effects and 3D controls had before, so switching one on looks as it
+ * always did.
+ */
 export function createDefaultSVGContent(): SVGContent {
+  return {
+    ...createLegacySVGContent(),
+    renderMode: 'source',
+    fillMode: 'solid',
+    colorCycleEnabled: false,
+    liquidEnabled: false,
+    particlesEnabled: false,
+    energyEnabled: false,
+    connectionsEnabled: false,
+    glowEnabled: false,
+    ripplesEnabled: false,
+    lightningEnabled: false,
+    edgeFlowEnabled: false,
+    innerGlowEnabled: false,
+    nebulaEnabled: false,
+    heartbeatEnabled: false,
+    plasmaEnabled: false,
+    particleLinksEnabled: false,
+    echoEnabled: false,
+    arcBridgesEnabled: false,
+    particleFillEnabled: false,
+    organicWarpEnabled: false,
+    growthEnabled: false,
+    breatheEnabled: false,
+    bloomStrength: 0,
+    chromatic: 0,
+    vignette: 0,
+  };
+}
+
+/**
+ * The SVG layer's defaults up to 2.2.1: flat mode with every effect on. The
+ * SVG panel's "Classic" preset is this look; new layers start clean
+ * (createDefaultSVGContent).
+ */
+export function createLegacySVGContent(): SVGContent {
   return {
     svgSource: '',
 
@@ -6572,9 +6614,9 @@ export function createLayer(id: string, name: string, type: LayerType = 'media')
     visible: true,
     locked: false,
     opacity: 1,
+    // An SVG starts on Normal so a logo shows as drawn, not added on top.
     blendMode:
       type === 'lines' ||
-      type === 'svg' ||
       type === 'lightpainting' ||
       type === 'adv-lightpaint' ||
       type === 'splat' ||

@@ -1,10 +1,13 @@
 <script lang="ts">
-  import { project, selectedSVGLayer, selectedSVGContent, layers } from '../stores/layers';
+  import { project, selectedSVGLayer, selectedSVGContent, layers, recordDiscreteAction } from '../stores/layers';
   import type {
     Layer, SVGFillMode, SVGColorMode, SVGContent,
     SVGRenderMode, SVGMaterialPreset, SVGLightPreset, SVGOutlineStyle, SVGConnectionStyle,
   } from '../types';
   import { SVG_PAN_MIN, SVG_PAN_MAX, SVG_SCALE_MIN, SVG_SCALE_MAX } from '../svg/svgTransform';
+  import { isUsableSvgSource } from '../svg/svgSourceCheck';
+  import { createDefaultSVGContent, createLegacySVGContent } from '../types';
+  import { showToast } from '../stores/errorToast';
 
   // Tray state
   export let isOpen = false;
@@ -74,7 +77,7 @@
   // Preset configurations
   const presets = [
     { name: 'Original SVG', key: 'original' },
-    { name: 'Default', key: 'default' },
+    { name: 'Classic', key: 'default' },
     { name: 'Electric', key: 'electric' },
     { name: 'Organic', key: 'organic' },
     { name: 'Neon', key: 'neon' },
@@ -141,12 +144,7 @@
     const file = input.files?.[0];
     if (!file || !$selectedSVGLayer) return;
 
-    try {
-      const svgSource = await file.text();
-      project.setSVGSource($selectedSVGLayer.id, svgSource);
-    } catch (err) {
-      console.error('Failed to load SVG:', err);
-    }
+    await loadSvgFile(file, $selectedSVGLayer.id);
     input.value = '';
   }
 
@@ -158,17 +156,25 @@
     const files = e.dataTransfer?.files;
     if (!files || !$selectedSVGLayer) return;
 
-    for (const file of files) {
-      if (file.name.toLowerCase().endsWith('.svg')) {
-        try {
-          const svgSource = await file.text();
-          project.setSVGSource($selectedSVGLayer.id, svgSource);
-        } catch (err) {
-          console.error('Failed to load SVG:', err);
-        }
-        break;
-      }
+    const layerId = $selectedSVGLayer.id;
+    const file = Array.from(files).find((f) => f.name.toLowerCase().endsWith('.svg'));
+    if (file) await loadSvgFile(file, layerId);
+    else if (files.length > 0) showToast(`${files[0].name} is not a valid SVG file.`, 'error');
+  }
+
+  /** Put a file's artwork on the layer, or say why it cannot be. */
+  async function loadSvgFile(file: File, layerId: string) {
+    let svgSource = '';
+    try {
+      svgSource = await file.text();
+    } catch (err) {
+      console.error('Failed to load SVG:', err);
     }
+    if (!isUsableSvgSource(svgSource)) {
+      showToast(`${file.name} is not a valid SVG file.`, 'error');
+      return;
+    }
+    project.setSVGSource(layerId, svgSource);
   }
 
   function handleDragOver(e: DragEvent) {
@@ -374,7 +380,18 @@
 
     const config = presetConfigs[preset];
     if (config) {
-      project.updateSVGContent($selectedSVGLayer.id, config);
+      // A preset is a whole look: it starts from a clean layer (the Classic
+      // one from the old defaults), so nothing the previous preset or the
+      // user switched on carries over. The artwork and where it sits stay.
+      const current = $selectedSVGLayer.svgContent;
+      const base = preset === 'default' ? createLegacySVGContent() : createDefaultSVGContent();
+      project.updateSVGContent($selectedSVGLayer.id, {
+        ...base,
+        ...(current ? { panX: current.panX, panY: current.panY, contentScale: current.contentScale } : {}),
+        ...config,
+        svgSource: current?.svgSource ?? '',
+      });
+      recordDiscreteAction();
     }
   }
 
@@ -391,7 +408,7 @@
 
 {#if !embedded}
 <!-- Toggle button -->
-<button data-help-page="custom-shaders" class="tray-toggle" class:open={isOpen} onclick={toggleTray}>
+<button data-help-page="layers" class="tray-toggle" class:open={isOpen} onclick={toggleTray}>
   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
     {#if isOpen}
       <path d="M9 18l6-6-6-6" />
@@ -404,7 +421,7 @@
 {/if}
 
 <!-- Slide-out tray -->
-<div data-help-page="custom-shaders" class="svg-tray" class:open={isOpen || embedded} class:embedded>
+<div data-help-page="layers" class="svg-tray" class:open={isOpen || embedded} class:embedded>
   <div class="tray-header">
     <h3>SVG controls</h3>
   </div>
@@ -565,14 +582,14 @@
             <div class="param-row">
               <label>Render mode</label>
               <select
-                value={$selectedSVGContent.renderMode ?? 'flat'}
+                value={$selectedSVGContent.renderMode ?? 'source'}
                 onchange={(e) => updateParam('renderMode', (e.target as HTMLSelectElement).value)}
               >
                 {#each renderModes as m}<option value={m.value}>{m.label}</option>{/each}
               </select>
             </div>
 
-            {#if ($selectedSVGContent.renderMode ?? 'flat') === 'extrude'}
+            {#if ($selectedSVGContent.renderMode ?? 'source') === 'extrude'}
               <div class="param-row">
                 <label>Material</label>
                 <select
@@ -696,6 +713,9 @@
                   oninput={(e) => updateParam('floatAmount', parseFloat((e.target as HTMLInputElement).value))} />
                 <input class="value vnum" type="number" inputmode="decimal" onchange={syncFromNumber} value={Math.round($selectedSVGContent.floatAmount ?? 8)} />
               </div>
+            {/if}
+            {#if ($selectedSVGContent.renderMode ?? 'source') !== 'source'}
+              <!-- Bloom runs in Flat as well as 3D, so it shows in both. -->
               <div class="param-row">
                 <label>Bloom</label>
                 <input type="range" min="0" max="4" step="0.05"
@@ -745,7 +765,9 @@
               </select>
             </div>
 
-            {#if $selectedSVGContent.fillMode === 'liquid'}
+            <!-- The liquid wave moves the shape whatever the fill, so its switch
+                 stays in view while it is on. -->
+            {#if $selectedSVGContent.fillMode === 'liquid' || $selectedSVGContent.liquidEnabled}
               <div class="param-row">
                 <label>
                   <input
@@ -753,7 +775,7 @@
                     checked={$selectedSVGContent.liquidEnabled}
                     onchange={() => toggleParam('liquidEnabled')}
                   />
-                  Enabled
+                  Liquid
                 </label>
               </div>
               <div class="param-row">
@@ -962,6 +984,8 @@
               </label>
             </div>
             {#if $selectedSVGContent.particleFillEnabled}
+              <!-- The Particles fill above already has the density slider. -->
+              {#if $selectedSVGContent.fillMode !== 'particles'}
               <div class="param-row">
                 <label>Fill density</label>
                 <input type="range" min="50" max="500" step="10"
@@ -969,6 +993,7 @@
                   oninput={(e) => updateParam('particleFillDensity', parseFloat((e.target as HTMLInputElement).value))} />
                 <input class="value vnum" type="number" inputmode="decimal" onchange={syncFromNumber} value={$selectedSVGContent.particleFillDensity} />
               </div>
+              {/if}
               <div class="param-row">
                 <label>Fill speed</label>
                 <input type="range" min="0.1" max="3" step="0.05"
@@ -1062,6 +1087,20 @@
                   oninput={(e) => updateParam('colorCycleSpeed', parseFloat((e.target as HTMLInputElement).value))}
                 />
                 <input class="value vnum" type="number" inputmode="decimal" onchange={syncFromNumber} value={$selectedSVGContent.colorCycleSpeed.toFixed(2)} />
+              </div>
+              <div class="param-row">
+                <label>Saturation</label>
+                <input type="range" min="0.3" max="1" step="0.05"
+                  value={$selectedSVGContent.colorCycleSaturation}
+                  oninput={(e) => updateParam('colorCycleSaturation', parseFloat((e.target as HTMLInputElement).value))} />
+                <input class="value vnum" type="number" inputmode="decimal" onchange={syncFromNumber} value={$selectedSVGContent.colorCycleSaturation?.toFixed(2)} />
+              </div>
+              <div class="param-row">
+                <label>Lightness</label>
+                <input type="range" min="0.3" max="0.8" step="0.05"
+                  value={$selectedSVGContent.colorCycleLightness}
+                  oninput={(e) => updateParam('colorCycleLightness', parseFloat((e.target as HTMLInputElement).value))} />
+                <input class="value vnum" type="number" inputmode="decimal" onchange={syncFromNumber} value={$selectedSVGContent.colorCycleLightness?.toFixed(2)} />
               </div>
             {/if}
           </div>
@@ -1728,70 +1767,6 @@
                   </div>
                 </div>
               {/if}
-            </div>
-
-            <!-- Color Cycle -->
-            <div class="effect-group">
-              <label class="effect-toggle">
-                <input
-                  type="checkbox"
-                  checked={$selectedSVGContent.colorCycleEnabled}
-                  onchange={() => toggleParam('colorCycleEnabled')}
-                />
-                Color cycle
-              </label>
-              {#if $selectedSVGContent.colorCycleEnabled}
-                <div class="effect-params">
-                  <div class="mini-param">
-                    <span>Speed</span>
-                    <input
-                      type="range"
-                      min="0.05"
-                      max="1"
-                      step="0.01"
-                      value={$selectedSVGContent.colorCycleSpeed}
-                      oninput={(e) => updateParam('colorCycleSpeed', parseFloat((e.target as HTMLInputElement).value))}
-                    />
-                    <input class="mini-value vnum" type="number" inputmode="decimal" onchange={syncFromNumber} value={$selectedSVGContent.colorCycleSpeed?.toFixed(2)} />
-                  </div>
-                  <div class="mini-param">
-                    <span>Saturation</span>
-                    <input
-                      type="range"
-                      min="0.3"
-                      max="1"
-                      step="0.05"
-                      value={$selectedSVGContent.colorCycleSaturation}
-                      oninput={(e) => updateParam('colorCycleSaturation', parseFloat((e.target as HTMLInputElement).value))}
-                    />
-                    <input class="mini-value vnum" type="number" inputmode="decimal" onchange={syncFromNumber} value={$selectedSVGContent.colorCycleSaturation?.toFixed(2)} />
-                  </div>
-                  <div class="mini-param">
-                    <span>Lightness</span>
-                    <input
-                      type="range"
-                      min="0.3"
-                      max="0.8"
-                      step="0.05"
-                      value={$selectedSVGContent.colorCycleLightness}
-                      oninput={(e) => updateParam('colorCycleLightness', parseFloat((e.target as HTMLInputElement).value))}
-                    />
-                    <input class="mini-value vnum" type="number" inputmode="decimal" onchange={syncFromNumber} value={$selectedSVGContent.colorCycleLightness?.toFixed(2)} />
-                  </div>
-                </div>
-              {/if}
-            </div>
-
-            <!-- Per-Shape Colors -->
-            <div class="effect-group">
-              <label class="effect-toggle">
-                <input
-                  type="checkbox"
-                  checked={$selectedSVGContent.perShapeColors}
-                  onchange={() => toggleParam('perShapeColors')}
-                />
-                Per-shape colors
-              </label>
             </div>
 
             <!-- Particles (edge particles) -->
