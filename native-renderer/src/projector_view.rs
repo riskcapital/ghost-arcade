@@ -422,6 +422,17 @@ pub(crate) struct ProjectorViewRenderer {
 
 impl ProjectorViewRenderer {
     pub fn new(device: &wgpu::Device, queue: &wgpu::Queue, format: wgpu::TextureFormat) -> Self {
+        Self::build(device, queue, format, MAP_DEPTH_SIZE)
+    }
+
+    /// Build the pipelines once and let them go (the map depth texture at
+    /// one texel), so the driver's shader cache holds them before the first
+    /// projector view Screen needs them. Any thread.
+    pub fn prewarm(device: &wgpu::Device, queue: &wgpu::Queue, format: wgpu::TextureFormat) {
+        let _ = Self::build(device, queue, format, 1);
+    }
+
+    fn build(device: &wgpu::Device, queue: &wgpu::Queue, format: wgpu::TextureFormat, map_depth_size: u32) -> Self {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Map Sim projector view"),
             source: wgpu::ShaderSource::Wgsl(include_str!("projector_view.wgsl").into()),
@@ -608,7 +619,7 @@ impl ProjectorViewRenderer {
         });
         let map_depth = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("Map Sim mapping lens depth"),
-            size: wgpu::Extent3d { width: MAP_DEPTH_SIZE, height: MAP_DEPTH_SIZE, depth_or_array_layers: 1 },
+            size: wgpu::Extent3d { width: map_depth_size, height: map_depth_size, depth_or_array_layers: 1 },
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,

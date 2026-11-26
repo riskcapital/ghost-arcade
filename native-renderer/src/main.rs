@@ -3006,13 +3006,24 @@ struct MirrorRenderer {
 
 impl MirrorRenderer {
     fn new(device: &wgpu::Device, format: wgpu::TextureFormat) -> Self {
+        Self::build(device, format, MIRROR_MASTER_SIZE)
+    }
+
+    /// Build the pipeline once and let it go (the master at one texel), so
+    /// the driver's shader cache holds it before the first mirror dome
+    /// Screen needs it. Any thread.
+    fn prewarm(device: &wgpu::Device, format: wgpu::TextureFormat) {
+        let _ = Self::build(device, format, 1);
+    }
+
+    fn build(device: &wgpu::Device, format: wgpu::TextureFormat, master_size: u32) -> Self {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Mirror dome mesh"),
             source: wgpu::ShaderSource::Wgsl(MIRROR_MESH_WGSL.into()),
         });
         let master = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("Mirror dome master"),
-            size: wgpu::Extent3d { width: MIRROR_MASTER_SIZE, height: MIRROR_MASTER_SIZE, depth_or_array_layers: 1 },
+            size: wgpu::Extent3d { width: master_size, height: master_size, depth_or_array_layers: 1 },
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
@@ -23272,6 +23283,22 @@ impl RenderState {
                 }
             })
             .map_err(|err| format!("failed to start GPU completion worker: {err}"))?;
+
+        // Renderers made on first use (mirror dome and projector view Screens,
+        // graph mip chains) compile their pipelines then, on the render
+        // thread: up to ~100 ms each with a cold driver cache. Compile them
+        // once on a worker now, so first use finds them in the driver's cache
+        // (and, on Vulkan, in the pipeline cache).
+        {
+            let (device, queue, format) = (device.clone(), queue.clone(), config.format);
+            let _ = thread::Builder::new()
+                .name("ghost-pipeline-prewarm".into())
+                .spawn(move || {
+                    MirrorRenderer::prewarm(&device, format);
+                    projector_view::ProjectorViewRenderer::prewarm(&device, &queue, format);
+                    graph_textures::prewarm_mip_builders(&device);
+                });
+        }
 
         Ok(Self {
             window,

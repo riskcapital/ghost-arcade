@@ -191,6 +191,15 @@ struct MipBuilder {
     pipeline: wgpu::RenderPipeline,
 }
 
+/// Build the mip pipelines of every graph texture format with mips once,
+/// so the first graph that asks for a mip chain finds them in the driver's
+/// shader cache. Any thread.
+pub(crate) fn prewarm_mip_builders(device: &wgpu::Device) {
+    for format in [wgpu::TextureFormat::Rgba16Float, wgpu::TextureFormat::Rgba8Unorm] {
+        let _ = MipBuilder::new(device, format);
+    }
+}
+
 impl MipBuilder {
     fn new(device: &wgpu::Device, format: wgpu::TextureFormat) -> Self {
         let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
