@@ -500,8 +500,9 @@ impl App {
             // on a worker after start; until then frames read level zero.
             "compositor_source_mips_ready": self.renderer.as_ref().is_some_and(|renderer| renderer.mips_pipeline.get().is_some()),
             // GA_CORE_COMPOSITOR=raster: its pipelines are made on a worker
-            // after start; until then frames use the legacy compositor.
-            "compositor_raster_ready": self.renderer.as_ref().is_some_and(|renderer| renderer.raster.as_ref().is_some_and(RasterCompositor::ready)),
+            // after start (the source mips build last); until then frames
+            // use the legacy compositor.
+            "compositor_raster_ready": self.renderer.as_ref().is_some_and(|renderer| renderer.raster.as_ref().is_some_and(RasterCompositor::all_ready)),
             "source_frame_hdr": self.renderer.as_ref().is_some_and(|renderer| renderer.source_frame_format == SOURCE_FRAME_FORMAT_HDR),
             "native_static_image_decode": true,
             "native_static_image_prefetch": true,
@@ -1563,6 +1564,7 @@ impl App {
         // legacy compositor and why the last one was.
         value["compositor_raster"] = self.renderer.as_ref().and_then(|r| r.raster.as_ref()).map_or(Value::Null, |raster| json!({
             "frames": raster.frames, "fallback_frames": raster.fallback_frames, "last_fallback": raster.last_fallback,
+            "last_passes": raster.last_passes,
         }));
         value["timing_coverage"] = json!({ "cpu": "graph preparation, program and auxiliary output encoding; media pump reported separately",
             "gpu_timestamps": "program encoder only; auxiliary work is included in completion fence", "completion": "program, deck monitors and slices" });

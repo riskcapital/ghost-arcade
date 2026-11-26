@@ -869,7 +869,7 @@ impl RenderState {
 
         let raster = if raster_compositor_requested() {
             RasterCompositor::new(&device, &bind_group_layout, &source_frames_bind_group_layout,
-                source_frame_mode, source_frame_bindings, format)
+                source_frame_mode, source_frame_bindings, format, source_mips_enabled())
         } else {
             None
         };
