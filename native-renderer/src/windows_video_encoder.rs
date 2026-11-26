@@ -789,6 +789,18 @@ impl WindowsVideoEncoder {
             None => Ok(()),
         };
         self.finished = Some(result.clone());
+        // The renderer's queue may still be waiting on the last read signal
+        // (and the conversion on the last frame signal); keep the fences
+        // alive until both have passed. Every signal was flushed, so this is
+        // normally done already; the bound only covers a device that died.
+        let deadline = Instant::now() + std::time::Duration::from_secs(2);
+        while unsafe {
+            self.export_read12.GetCompletedValue() < self.fence_value
+                || self.frame_done12.GetCompletedValue() < self.fence_value
+        } && Instant::now() < deadline
+        {
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
         result
     }
 }
