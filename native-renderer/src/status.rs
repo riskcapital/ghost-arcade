@@ -576,6 +576,9 @@ impl App {
             "multi_pass_instruments": true,
             "storage_buffer_instruments": true,
             "shared_texture_source_frame_upload": source_frame_shared_texture_import_ready,
+            // submit_commands answers a shared-texture frame it could not
+            // open with an error, so the sender can fall back to pixels.
+            "shared_texture_source_frame_errors": true,
             "native_output_mirror_texture": true,
             "native_post_composite_graph": true,
             "shared_texture_upload": shared_texture_media_transport,
