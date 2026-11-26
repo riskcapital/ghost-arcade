@@ -18,12 +18,18 @@ GhostMacVideoRecorder *ghost_mac_recorder_open(const char *path, uint32_t width,
                                                const char *quality, char *error,
                                                size_t error_capacity);
 
-// Append the composite, addressed by the IOSurface id the core already
-// exports. Returns 1 when a frame was written, 0 when this render landed
-// inside a slot already written (the core renders faster than the recording
-// rate), and -1 on error.
+// Claim the recording slot *now* belongs to. Returns the frame index to
+// capture, or -1 when this render landed inside a slot already claimed (the
+// core renders faster than the recording rate) or the recorder is stopped.
+int64_t ghost_mac_recorder_claim(GhostMacVideoRecorder *recorder);
+
+// Append a captured frame, addressed by IOSurface id, at a claimed index.
+// The caller must only append once the GPU work that filled the surface has
+// completed, and must not write the surface again while it is in use.
+// Returns 1 when the frame was written, 0 when the writer was not ready (the
+// frame is dropped rather than stalling the render thread), -1 on error.
 int ghost_mac_recorder_append(GhostMacVideoRecorder *recorder, uint32_t iosurface_id,
-                              char *error, size_t error_capacity);
+                              int64_t index, char *error, size_t error_capacity);
 
 // Finish the file. `frames` and `duration_seconds` are optional out params.
 int ghost_mac_recorder_finish(GhostMacVideoRecorder *recorder, uint64_t *frames,

@@ -221,23 +221,131 @@ pub struct Voice {
     pub gain: f32, pub pan: f32, pub playing: bool,
 }
 #[derive(Clone)]
-struct MixVoice { voice: Voice, asset: Arc<Asset> }
+struct MixVoice { voice: Voice, asset: Arc<Asset>, stream: Arc<VoiceStream> }
+/// What the mixer plays: published whole by the control thread, picked up by
+/// the mixer without ever waiting for a lock.
 struct MixState { voices: Vec<MixVoice>, at: Instant }
-fn voice_reader_key(voice: &MixVoice) -> (String, PathBuf) { (voice.voice.id.clone(), voice.asset.path.clone()) }
-struct Reader { file: File, start: u64, samples: Vec<[f32; 2]>, bytes: Vec<u8> }
-impl Reader {
-    fn sample(&mut self, asset: &Asset, frame: u64) -> [f32; 2] {
-        let available = asset.frames.load(Ordering::Acquire);
-        if frame >= available { return [0.0; 2]; }
-        if frame < self.start || frame >= self.start + self.samples.len() as u64 {
-            self.start = frame / 4096 * 4096;
-            let count = (available - self.start).min(8192) as usize;
-            self.bytes.resize(count * 8, 0);
-            if self.file.seek(SeekFrom::Start(self.start * 8)).is_err() || self.file.read_exact(&mut self.bytes).is_err() { self.samples.clear(); return [0.0; 2]; }
-            self.samples.clear();
-            self.samples.extend(self.bytes.chunks_exact(8).map(|v| [f32::from_le_bytes(v[..4].try_into().unwrap()), f32::from_le_bytes(v[4..].try_into().unwrap())]));
+fn empty_mix() -> Arc<MixState> { Arc::new(MixState { voices: Vec::new(), at: Instant::now() }) }
+
+/// Frames per prefetched chunk: 16 KiB of stereo f32.
+const CHUNK: u64 = 2048;
+/// Chunks resident per voice: 32768 frames, 680 ms at 48 kHz.
+const SLOTS: usize = 16;
+/// How far ahead of a voice's read position the prefetcher keeps audio
+/// loaded, in wall-clock seconds. Covers the longest mixer lookahead, and
+/// rides out the prefetch thread being descheduled for a while.
+const PREFETCH_SECONDS: f64 = 0.5;
+const EMPTY_CHUNK: u64 = u64::MAX;
+
+/// One resident chunk. The prefetch thread is the only writer; the mixer
+/// reads it lock-free and discards a read that raced a rewrite (seqlock).
+struct Slot { seq: AtomicU64, chunk: AtomicU64, filled: AtomicU32, data: Box<[AtomicU32]> }
+impl Slot {
+    fn new() -> Self { Self { seq: AtomicU64::new(0), chunk: AtomicU64::new(EMPTY_CHUNK), filled: AtomicU32::new(0), data: (0..CHUNK as usize * 2).map(|_| AtomicU32::new(0)).collect() } }
+    fn read(&self, chunk: u64, offset: usize) -> Option<[f32; 2]> {
+        let before = self.seq.load(Ordering::Acquire);
+        if before & 1 == 1 || self.chunk.load(Ordering::Relaxed) != chunk || offset as u32 >= self.filled.load(Ordering::Relaxed) { return None; }
+        let pair = [f32::from_bits(self.data[offset * 2].load(Ordering::Relaxed)), f32::from_bits(self.data[offset * 2 + 1].load(Ordering::Relaxed))];
+        std::sync::atomic::fence(Ordering::Acquire);
+        (self.seq.load(Ordering::Relaxed) == before).then_some(pair)
+    }
+    /// Prefetch thread only. `bytes` is f32le stereo, `frames` frames of it.
+    fn write(&self, chunk: u64, bytes: &[u8], frames: u32) {
+        let seq = self.seq.load(Ordering::Relaxed);
+        self.seq.store(seq.wrapping_add(1), Ordering::Relaxed);
+        std::sync::atomic::fence(Ordering::Release);
+        self.chunk.store(chunk, Ordering::Relaxed);
+        for (cell, value) in self.data.iter().zip(bytes.chunks_exact(4)) { cell.store(u32::from_le_bytes(value.try_into().unwrap()), Ordering::Relaxed); }
+        self.filled.store(frames, Ordering::Relaxed);
+        self.seq.store(seq.wrapping_add(2), Ordering::Release);
+    }
+}
+/// One voice's audio as the mixer sees it: chunks the prefetch thread loaded
+/// from the decoded clip around the voice's read position, and the mixer's
+/// own per-voice state. The mixer never touches the file: disk reads stall
+/// for as long as the disk is busy, and the mixer runs in the audio class.
+struct VoiceStream { slots: Box<[Slot]>, cursor: AtomicU64, gain: [AtomicU32; 2], hint: AtomicUsize }
+impl VoiceStream {
+    fn new(gain: (f32, f32), cursor: Option<f64>) -> Self {
+        let stream = Self { slots: (0..SLOTS).map(|_| Slot::new()).collect(), cursor: AtomicU64::new(f64::NAN.to_bits()),
+            gain: [AtomicU32::new(gain.0.to_bits()), AtomicU32::new(gain.1.to_bits())], hint: AtomicUsize::new(0) };
+        stream.set_cursor(cursor); stream
+    }
+    fn cursor(&self) -> Option<f64> { Some(f64::from_bits(self.cursor.load(Ordering::Acquire))).filter(|c| c.is_finite()) }
+    fn set_cursor(&self, cursor: Option<f64>) { self.cursor.store(cursor.unwrap_or(f64::NAN).to_bits(), Ordering::Release); }
+    fn gain(&self) -> (f32, f32) { (f32::from_bits(self.gain[0].load(Ordering::Relaxed)), f32::from_bits(self.gain[1].load(Ordering::Relaxed))) }
+    fn set_gain(&self, gain: (f32, f32)) { self.gain[0].store(gain.0.to_bits(), Ordering::Relaxed); self.gain[1].store(gain.1.to_bits(), Ordering::Relaxed); }
+    /// Mixer side: never blocks. Audio the prefetcher has not loaded yet
+    /// plays as silence for that voice instead of stalling the whole mix.
+    fn sample(&self, asset: &Asset, frame: u64, hint: &mut usize) -> [f32; 2] {
+        if frame >= asset.frames.load(Ordering::Acquire) { return [0.0; 2]; }
+        let (chunk, offset) = (frame / CHUNK, (frame % CHUNK) as usize);
+        if let Some(pair) = self.slots.get(*hint).and_then(|slot| slot.read(chunk, offset)) { return pair; }
+        for (index, slot) in self.slots.iter().enumerate() {
+            if let Some(pair) = slot.read(chunk, offset) { *hint = index; return pair; }
         }
-        self.samples.get((frame - self.start) as usize).copied().unwrap_or([0.0; 2])
+        [0.0; 2]
+    }
+    /// Prefetch side: make `chunk` resident, evicting only chunks not in `wanted`.
+    fn load(&self, chunk: u64, available: u64, wanted: &[u64], file: &mut File, bytes: &mut Vec<u8>) {
+        let start = chunk * CHUNK;
+        if start >= available { return; }
+        let frames = (available - start).min(CHUNK) as u32;
+        let resident = self.slots.iter().find(|slot| slot.chunk.load(Ordering::Relaxed) == chunk);
+        if resident.is_some_and(|slot| slot.filled.load(Ordering::Relaxed) >= frames) { return; }
+        // A partly decoded chunk is rewritten in place as the decode grows.
+        let Some(slot) = resident.or_else(|| self.slots.iter().find(|slot| !wanted.contains(&slot.chunk.load(Ordering::Relaxed)))) else { return; };
+        bytes.resize(frames as usize * 8, 0);
+        if file.seek(SeekFrom::Start(start * 8)).is_err() || file.read_exact(bytes).is_err() { return; }
+        slot.write(chunk, bytes, frames);
+    }
+}
+/// The chunks a voice reads over the next PREFETCH_SECONDS from media
+/// position `start` (unwrapped seconds), soonest first, at most SLOTS - 1 so a
+/// free slot always remains. Follows loops, bounces and reverse playback.
+fn wanted_chunks(start: f64, voice: &Voice, available: u64) -> Vec<u64> {
+    let mut wanted = Vec::with_capacity(SLOTS);
+    let step = (CHUNK / 2) as f64 / RATE;
+    let span = PREFETCH_SECONDS * voice.rate.abs();
+    let direction = if voice.rate < 0.0 { -1.0 } else { 1.0 };
+    let mut offset = 0.0;
+    while offset <= span + step && wanted.len() < SLOTS - 1 {
+        if let Some(time) = transport_time(start + offset * direction, voice.lo, voice.hi, voice.looping, voice.bounce) {
+            let frame = (time.max(0.0) * RATE).floor() as u64;
+            // The interpolation neighbour can sit in the next chunk.
+            for chunk in [frame / CHUNK, (frame + 1) / CHUNK] {
+                if chunk * CHUNK < available && !wanted.contains(&chunk) && wanted.len() < SLOTS - 1 { wanted.push(chunk); }
+            }
+        }
+        if span == 0.0 { break; }
+        offset += step;
+    }
+    wanted
+}
+/// One prefetch pass over the voices: load what each will read next.
+/// `age` is how old the voices' times are, for voices the mixer has no
+/// read position for yet.
+fn prefetch(voices: &[MixVoice], age: f64, files: &mut HashMap<PathBuf, File>, bytes: &mut Vec<u8>) {
+    files.retain(|path, _| voices.iter().any(|v| v.asset.path == *path));
+    let mut plans = Vec::with_capacity(voices.len());
+    for entry in voices {
+        let available = entry.asset.frames.load(Ordering::Acquire);
+        if available == 0 { continue; }
+        if !files.contains_key(&entry.asset.path) {
+            let Ok(file) = File::open(&entry.asset.path) else { continue; };
+            files.insert(entry.asset.path.clone(), file);
+        }
+        let start = entry.stream.cursor().unwrap_or(entry.voice.time + age * entry.voice.rate);
+        plans.push((entry, available, wanted_chunks(start, &entry.voice, available)));
+    }
+    // What every voice reads next first, then the rest of each window: a
+    // voice that just started is not kept waiting behind another's prefetch.
+    for pass in 0..2 {
+        for (entry, available, wanted) in &plans {
+            let Some(file) = files.get_mut(&entry.asset.path) else { continue; };
+            let range = if pass == 0 { &wanted[..wanted.len().min(2)] } else { &wanted[wanted.len().min(2)..] };
+            for chunk in range { entry.stream.load(*chunk, *available, wanted, file, bytes); }
+        }
     }
 }
 pub fn transport_time(time: f64, lo: f64, hi: f64, looping: bool, bounce: bool) -> Option<f64> {
@@ -262,50 +370,43 @@ pub fn follow_cursor(cursor: Option<f64>, target: f64, advance: f64, period: Opt
     let limit = advance.abs() * 0.005;
     expected + (error * 0.02).clamp(-limit, limit)
 }
-/// The mixer thread's per-voice state: file readers, smoothed gains and read cursors.
+/// The mixer: per-voice state (smoothed gains, read cursors, resident audio)
+/// lives in each voice's stream, so a block allocates nothing and reads no file.
 #[derive(Default)]
-struct Mixer { readers: HashMap<(String, PathBuf), Reader>, gains: HashMap<String, (f32, f32)>, cursors: HashMap<String, f64> }
+struct Mixer;
 impl Mixer {
     /// One block of the mix, for frames first heard `ahead` seconds from now;
     /// `age` is how old the voices' times are.
     fn block(&mut self, voices: &[MixVoice], age: f64, ahead: f64, rate: f64) -> [[f32; 2]; BLOCK] {
-        let Self { readers, gains, cursors } = self;
-        readers.retain(|(id, path), _| voices.iter().any(|v| v.voice.id == *id && v.asset.path == *path));
-        gains.retain(|id, _| voices.iter().any(|v| v.voice.id == *id));
-        cursors.retain(|id, _| voices.iter().any(|v| v.voice.id == *id));
-        for entry in voices { gains.entry(entry.voice.id.clone()).or_insert((0.0, 0.0)); }
         let smoothing = (1.0 / (rate * 0.003)) as f32;
         let mut block = [[0.0_f32; 2]; BLOCK];
         // Mix each voice as a block: resolve its independent cursor and
         // gain once, not 128 times. Assets remain shared and bounded.
         for entry in voices {
-            let voice = &entry.voice;
+            let (voice, stream) = (&entry.voice, &*entry.stream);
             let (left, right) = balance(voice.pan);
             let target = if voice.playing && age <= 0.5 { voice.gain } else { 0.0 };
-            let gain = gains.get_mut(&voice.id).unwrap();
-            if target == 0.0 && gain.0.abs() + gain.1.abs() < 0.00001 { cursors.remove(&voice.id); continue; }
+            let mut gain = stream.gain();
+            if target == 0.0 && gain.0.abs() + gain.1.abs() < 0.00001 { stream.set_cursor(None); continue; }
             let period = if voice.bounce { Some(2.0 * (voice.hi - voice.lo)) } else if voice.looping { Some(voice.hi - voice.lo) } else { None };
-            let start = follow_cursor(cursors.get(&voice.id).copied(), voice.time + (age + ahead) * voice.rate, block.len() as f64 / rate * voice.rate, period);
-            cursors.insert(voice.id.clone(), start);
-            let key = voice_reader_key(entry);
-            if !readers.contains_key(&key) {
-                let Ok(file) = File::open(&key.1) else { continue; };
-                readers.insert(key.clone(), Reader { file, start: 0, samples: Vec::new(), bytes: Vec::new() });
-            }
-            let reader = readers.get_mut(&key).unwrap();
+            let start = follow_cursor(stream.cursor(), voice.time + (age + ahead) * voice.rate, block.len() as f64 / rate * voice.rate, period);
+            stream.set_cursor(Some(start));
+            let mut hint = stream.hint.load(Ordering::Relaxed);
             for (frame, sum) in block.iter_mut().enumerate() {
                 gain.0 += (target * left - gain.0) * smoothing;
                 gain.1 += (target * right - gain.1) * smoothing;
                 if gain.0.abs() + gain.1.abs() < 0.00001 { continue; }
                 let Some(time) = transport_time(start + frame as f64 / rate * voice.rate, voice.lo, voice.hi, voice.looping, voice.bounce) else { continue; };
                 let position = time.max(0.0) * RATE;
-                let a = reader.sample(&entry.asset, position.floor() as u64);
+                let a = stream.sample(&entry.asset, position.floor() as u64, &mut hint);
                 let next_time = transport_time(time + 1.0 / RATE, voice.lo, voice.hi, voice.looping, voice.bounce).unwrap_or(time);
-                let b = reader.sample(&entry.asset, (next_time.max(0.0) * RATE).floor() as u64);
+                let b = stream.sample(&entry.asset, (next_time.max(0.0) * RATE).floor() as u64, &mut hint);
                 let fraction = position.fract() as f32;
                 sum[0] += (a[0] + (b[0] - a[0]) * fraction) * gain.0;
                 sum[1] += (a[1] + (b[1] - a[1]) * fraction) * gain.1;
             }
+            stream.set_gain(gain);
+            stream.hint.store(hint, Ordering::Relaxed);
         }
         for sum in block.iter_mut() {
             // Linked stereo peak protection preserves balance when layers sum above unity.
@@ -354,7 +455,9 @@ fn decode(asset: Arc<Asset>, input: PathBuf) {
 pub struct ClipAudio {
     assets: HashMap<String, Arc<Asset>>, budget: Arc<AtomicU64>, serial: u64, directory: PathBuf,
     jobs: Option<std::sync::mpsc::SyncSender<(Arc<Asset>, PathBuf)>>,
-    mix: Arc<Mutex<MixState>>, stop: Arc<AtomicBool>, ring: Arc<Ring>,
+    mix: Arc<Mutex<Arc<MixState>>>, mix_generation: Arc<AtomicU64>, retired_mix: Vec<Arc<MixState>>,
+    prefetch_stop: Arc<AtomicBool>, prefetcher: Option<thread::JoinHandle<()>>,
+    stop: Arc<AtomicBool>, ring: Arc<Ring>,
     stream: Option<cpal::Stream>, output_rate: u32, device: String,
     error: Arc<Mutex<String>>, underflows: Arc<Underflows>, callbacks: Arc<AtomicU64>,
     priority: Arc<AtomicU8>, lookahead_setting: Option<f64>,
@@ -370,8 +473,23 @@ impl ClipAudio {
         let rx = Arc::new(Mutex::new(rx));
         let mut decoders = Vec::new();
         for _ in 0..2 { let rx = rx.clone(); decoders.push(thread::spawn(move || loop { let job = rx.lock().unwrap().recv(); match job { Ok((asset, input)) => decode(asset, input), Err(_) => break } })); }
+        let mix = Arc::new(Mutex::new(empty_mix()));
+        let prefetch_stop = Arc::new(AtomicBool::new(false));
+        // Disk reads for the mixer happen here, ahead of need, at ordinary
+        // priority. Woken by every update and every mixer refill.
+        let prefetcher = { let (mix, stop) = (mix.clone(), prefetch_stop.clone());
+            thread::Builder::new().name("ghost-clip-audio-prefetch".into()).spawn(move || {
+                let (mut files, mut bytes) = (HashMap::new(), Vec::new());
+                while !stop.load(Ordering::Acquire) {
+                    let state = mix.lock().unwrap_or_else(|e| e.into_inner()).clone();
+                    prefetch(&state.voices, state.at.elapsed().as_secs_f64(), &mut files, &mut bytes);
+                    drop(state);
+                    thread::park_timeout(Duration::from_millis(4));
+                }
+            }).ok() };
         Self { assets: HashMap::new(), budget: Arc::new(AtomicU64::new(0)), serial: 0, directory, jobs: Some(tx),
-            mix: Arc::new(Mutex::new(MixState { voices: Vec::new(), at: Instant::now() })), stop: Arc::new(AtomicBool::new(false)), ring: Arc::new(Ring::new()),
+            mix, mix_generation: Arc::new(AtomicU64::new(0)), retired_mix: Vec::new(), prefetch_stop, prefetcher,
+            stop: Arc::new(AtomicBool::new(false)), ring: Arc::new(Ring::new()),
             stream: None, output_rate: 48000, device: "default".into(), error: Arc::new(Mutex::new(String::new())),
             underflows: Arc::new(Underflows::default()), callbacks: Arc::new(AtomicU64::new(0)),
             priority: Arc::new(AtomicU8::new(MixerPriority::Unknown as u8)), lookahead_setting: lookahead_setting(std::env::var("GA_CLIP_AUDIO_LOOKAHEAD_MS").ok().as_deref()), latency: Arc::new(AtomicU64::new(0)), peak_left: Arc::new(AtomicU32::new(0)), peak_right: Arc::new(AtomicU32::new(0)), callback_frames: Arc::new(AtomicUsize::new(256)), last_attempt: None, decoders, worker: None,
@@ -461,6 +579,8 @@ impl ClipAudio {
     fn spawn_mixer(&mut self) {
         self.stop.store(false, Ordering::Release);
         let (stop, ring, mix, latency, callback_frames, priority) = (self.stop.clone(), self.ring.clone(), self.mix.clone(), self.latency.clone(), self.callback_frames.clone(), self.priority.clone());
+        let generation = self.mix_generation.clone();
+        let prefetcher = self.prefetcher.as_ref().map(|worker| worker.thread().clone());
         let (rate, setting) = (self.output_rate as f64, self.lookahead_setting);
         self.worker = Some(thread::spawn(move || {
             let _ = ring.waker.set(thread::current());
@@ -469,19 +589,28 @@ impl ClipAudio {
                 else { audio_priority::raise_current_thread(Duration::from_secs_f64(callback_frames.load(Ordering::Relaxed).max(64) as f64 / rate)) };
             priority.store(guard.priority as u8, Ordering::Release);
             let lookahead = lookahead_ms(setting, guard.priority);
-            let mut mixer = Mixer::default();
+            let mut mixer = Mixer;
+            // The mix being played. Swapped for a newer one without waiting:
+            // when the control thread holds the lock this refill plays the
+            // previous mix and the next one picks the update up. The control
+            // thread keeps retired mixes alive, so dropping one here never
+            // frees memory on this thread.
+            let (mut current, mut seen): (Option<Arc<MixState>>, u64) = (None, u64::MAX);
             while !stop.load(Ordering::Acquire) {
                 let target = ring_target_frames(lookahead, rate, latency.load(Ordering::Acquire), callback_frames.load(Ordering::Relaxed));
                 // Full: wait for the device to take a buffer (it wakes this
                 // thread); the timeout only bounds how long a stop waits.
                 if ring.frames() >= target { thread::park_timeout(Duration::from_millis(20)); continue; }
-                let Some((voices, at)) = mix.lock().ok().map(|s| (s.voices.clone(), s.at)) else { thread::park_timeout(Duration::from_millis(20)); continue; };
+                let published = generation.load(Ordering::Acquire);
+                if published != seen { if let Ok(state) = mix.try_lock() { current = Some(Arc::clone(&state)); seen = published; } }
+                let Some(state) = current.as_ref() else { thread::park_timeout(Duration::from_millis(1)); continue; };
                 while ring.frames() < target && !stop.load(Ordering::Acquire) {
                     // Each block is mixed for the moment it will be heard: after
                     // the frames already queued and the device's latency.
                     let ahead = ring.frames() as f64 / rate + latency.load(Ordering::Acquire) as f64 / 1e9;
-                    for [left, right] in mixer.block(&voices, at.elapsed().as_secs_f64(), ahead, rate) { ring.push(left, right); }
+                    for [left, right] in mixer.block(&state.voices, state.at.elapsed().as_secs_f64(), ahead, rate) { ring.push(left, right); }
                 }
+                if let Some(prefetcher) = prefetcher.as_ref() { prefetcher.unpark(); }
             }
             drop(guard);
         }));
@@ -561,12 +690,34 @@ impl ClipAudio {
         }
     }
     pub fn update(&mut self, voices: Vec<Voice>) {
-        let voices: Vec<_> = voices.into_iter().filter_map(|voice| self.assets.get(&voice.uri).map(|asset| MixVoice { voice, asset: asset.clone() })).collect();
+        let previous = self.mix.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        let voices: Vec<_> = voices.into_iter().filter_map(|voice| {
+            let asset = self.assets.get(&voice.uri)?.clone();
+            // A voice keeps its stream (resident audio, gain, cursor) while it
+            // plays the same file; a new file starts from its current gain.
+            let same_id = || previous.voices.iter().filter(|v| v.voice.id == voice.id);
+            let stream = same_id().find(|v| v.asset.path == asset.path).map(|v| v.stream.clone())
+                .unwrap_or_else(|| Arc::new(same_id().next().map(|v| VoiceStream::new(v.stream.gain(), v.stream.cursor())).unwrap_or_else(|| VoiceStream::new((0.0, 0.0), None))));
+            Some(MixVoice { voice, asset, stream })
+        }).collect();
+        drop(previous);
         if self.stream.is_none() && self.null_output.is_none() && self.last_attempt.is_none_or(|at| at.elapsed() >= Duration::from_secs(2)) && voices.iter().any(|v| v.voice.playing && v.voice.gain > 0.0 && v.asset.frames.load(Ordering::Acquire) > 0) {
             self.last_attempt = Some(Instant::now());
             if let Err(error) = self.start_output() { *self.error.lock().unwrap() = error; }
         }
-        if let Ok(mut mix) = self.mix.try_lock() { mix.voices = voices; mix.at = Instant::now(); }
+        self.publish_mix(Arc::new(MixState { voices, at: Instant::now() }));
+    }
+    /// Hand the mixer a new mix. Always lands: the lock is only ever held for
+    /// a pointer copy, so waiting for it here is brief, and the mixer itself
+    /// never waits for it. Pause, seek, trigger and gain all arrive this way.
+    fn publish_mix(&mut self, next: Arc<MixState>) {
+        let old = std::mem::replace(&mut *self.mix.lock().unwrap_or_else(|e| e.into_inner()), next);
+        self.mix_generation.fetch_add(1, Ordering::Release);
+        // Free retired mixes here, once neither the mixer nor the prefetcher
+        // still holds them: never on the audio thread.
+        self.retired_mix.push(old);
+        self.retired_mix.retain(|mix| Arc::strong_count(mix) > 1);
+        if let Some(prefetcher) = self.prefetcher.as_ref() { prefetcher.thread().unpark(); }
     }
     /// Mono post-mix frames for the app's audio analyser, base64 f32le.
     pub fn scope(&self, since: u64, max_frames: usize) -> Value {
@@ -588,7 +739,7 @@ impl ClipAudio {
     pub fn status(&self) -> Value {
         json!({ "running": self.stream.is_some() || self.null_output.is_some(), "device": self.device, "sample_rate": self.output_rate,
             "peak_left": f32::from_bits(self.peak_left.load(Ordering::Relaxed)), "peak_right": f32::from_bits(self.peak_right.load(Ordering::Relaxed)),
-            "voices": self.mix.lock().map(|s| s.voices.iter().map(|v| json!({"id": v.voice.id, "time": v.voice.time, "rate": v.voice.rate, "playing": v.voice.playing, "gain": v.voice.gain, "pan": v.voice.pan})).collect::<Vec<_>>()).unwrap_or_default(),
+            "voices": self.mix.lock().map(|s| s.clone()).map(|s| s.voices.iter().map(|v| json!({"id": v.voice.id, "time": v.voice.time, "rate": v.voice.rate, "playing": v.voice.playing, "gain": v.voice.gain, "pan": v.voice.pan})).collect::<Vec<_>>()).unwrap_or_default(),
             "callbacks": self.callbacks.load(Ordering::Relaxed), "underflow_frames": self.underflows.frames.load(Ordering::Relaxed),
             "underflow_events": self.underflows.events.load(Ordering::Relaxed), "lookahead_ms": self.lookahead_ms(),
             "buffered_ms": self.ring.frames() as f64 / self.output_rate.max(1) as f64 * 1000.0, "mixer_priority": self.mixer_priority().label(),
@@ -599,7 +750,7 @@ impl ClipAudio {
     }
 }
 impl Drop for ClipAudio {
-    fn drop(&mut self) { self.stop_tap(); self.stop_output(); for asset in self.assets.values() { asset.cancel(); } self.jobs.take(); for worker in self.decoders.drain(..) { let _ = worker.join(); } self.assets.clear(); if let Ok(mut mix) = self.mix.lock() { mix.voices.clear(); } let _ = std::fs::remove_dir_all(&self.directory); }
+    fn drop(&mut self) { self.stop_tap(); self.stop_output(); for asset in self.assets.values() { asset.cancel(); } self.jobs.take(); for worker in self.decoders.drain(..) { let _ = worker.join(); } self.prefetch_stop.store(true, Ordering::Release); if let Some(prefetcher) = self.prefetcher.take() { prefetcher.thread().unpark(); let _ = prefetcher.join(); } self.publish_mix(empty_mix()); self.retired_mix.clear(); self.assets.clear(); let _ = std::fs::remove_dir_all(&self.directory); }
 }
 
 /// Decoded clip audio lives in `ghost-audio-<pid>-<ns>` under the temp folder,
@@ -727,18 +878,64 @@ pub fn sweep_stale_temp_dirs(root: &std::path::Path, now: std::time::SystemTime,
         std::fs::write(&path, samples).unwrap();
         let asset = Arc::new(Asset { path: path.clone(), frames: AtomicU64::new(96000), bytes: AtomicU64::new(0),
             done: AtomicBool::new(true), cancelled: AtomicBool::new(false), error: Mutex::new(String::new()), child: Mutex::new(None), budget: Arc::new(AtomicU64::new(0)) });
-        let voices: Vec<_> = ["deck-a", "deck-b"].iter().map(|id| MixVoice { asset: asset.clone(), voice: Voice {
+        let voices: Vec<_> = ["deck-a", "deck-b"].iter().map(|id| MixVoice { asset: asset.clone(), stream: Arc::new(VoiceStream::new((0.0, 0.0), None)), voice: Voice {
             id: id.to_string(), uri: "same-file".to_string(), time: 0.0, rate: 1.0, lo: 0.0, hi: 2.0, looping: true, bounce: false, gain: 1.0, pan: 0.0, playing: true,
         }}).collect();
-        let mut readers: HashMap<_, _> = voices.iter().map(|v| (voice_reader_key(v), Reader { file: File::open(&path).unwrap(), start: 0, samples: Vec::new(), bytes: Vec::new() })).collect();
-        assert_eq!(readers.len(), 2);
+        voices[0].stream.set_cursor(Some(0.0));
+        voices[1].stream.set_cursor(Some(1.0));
+        // Nothing is resident before the prefetcher runs: the mixer plays
+        // silence rather than reading the file itself.
+        let (mut hint_a, mut hint_b) = (0, 0);
+        assert_eq!(voices[0].stream.sample(&asset, 0, &mut hint_a), [0.0; 2]);
+        prefetch(&voices, 0.0, &mut HashMap::new(), &mut Vec::new());
         for i in 0..128 {
-            assert_eq!(readers.get_mut(&voice_reader_key(&voices[0])).unwrap().sample(&asset, i), [0.25; 2]);
-            assert_eq!(readers.get_mut(&voice_reader_key(&voices[1])).unwrap().sample(&asset, 48000+i), [-0.5; 2]);
+            assert_eq!(voices[0].stream.sample(&asset, i, &mut hint_a), [0.25; 2]);
+            assert_eq!(voices[1].stream.sample(&asset, 48000 + i, &mut hint_b), [-0.5; 2]);
         }
-        assert_eq!(readers[&voice_reader_key(&voices[0])].start, 0);
-        assert_eq!(readers[&voice_reader_key(&voices[1])].start, 45056);
-        drop(readers); drop(voices); drop(asset);
+        // Each voice holds its own window of the shared file.
+        let resident = |stream: &VoiceStream| { let mut chunks: Vec<_> = stream.slots.iter().map(|s| s.chunk.load(Ordering::Relaxed)).filter(|c| *c != EMPTY_CHUNK).collect(); chunks.sort(); chunks };
+        assert_eq!(resident(&voices[0].stream)[0], 0);
+        assert_eq!(resident(&voices[1].stream)[0], 48000 / CHUNK);
+        assert!(resident(&voices[0].stream).len() < SLOTS && resident(&voices[1].stream).len() < SLOTS);
+        // The window follows the read position, through a loop wrap.
+        voices[0].stream.set_cursor(Some(1.9));
+        prefetch(&voices, 0.0, &mut HashMap::new(), &mut Vec::new());
+        assert_eq!(voices[0].stream.sample(&asset, 95000, &mut hint_a), [-0.5; 2]);
+        assert_eq!(voices[0].stream.sample(&asset, 10, &mut hint_a), [0.25; 2]);
+        drop(voices); drop(asset); let _ = std::fs::remove_file(&path);
+    }
+    #[test] fn a_partly_decoded_chunk_is_reloaded_as_the_decode_grows() {
+        let path = std::env::temp_dir().join(format!("ghost-voice-partial-{}.pcm", std::process::id()));
+        let bytes: Vec<u8> = (0..4096).flat_map(|_| [0.5f32.to_le_bytes(), 0.5f32.to_le_bytes()].concat()).collect();
+        std::fs::write(&path, bytes).unwrap();
+        let asset = Arc::new(Asset { path: path.clone(), frames: AtomicU64::new(100), bytes: AtomicU64::new(0),
+            done: AtomicBool::new(false), cancelled: AtomicBool::new(false), error: Mutex::new(String::new()), child: Mutex::new(None), budget: Arc::new(AtomicU64::new(0)) });
+        let voices = vec![MixVoice { asset: asset.clone(), stream: Arc::new(VoiceStream::new((0.0, 0.0), Some(0.0))), voice: Voice {
+            id: "clip".into(), uri: "clip".into(), time: 0.0, rate: 1.0, lo: 0.0, hi: 10.0, looping: false, bounce: false, gain: 1.0, pan: 0.0, playing: true } }];
+        let mut hint = 0;
+        prefetch(&voices, 0.0, &mut HashMap::new(), &mut Vec::new());
+        assert_eq!(voices[0].stream.sample(&asset, 99, &mut hint), [0.5; 2]);
+        asset.frames.store(4096, Ordering::Release);
+        assert_eq!(voices[0].stream.sample(&asset, 500, &mut hint), [0.0; 2]);
+        prefetch(&voices, 0.0, &mut HashMap::new(), &mut Vec::new());
+        assert_eq!(voices[0].stream.sample(&asset, 500, &mut hint), [0.5; 2]);
+        assert_eq!(voices[0].stream.sample(&asset, 3000, &mut hint), [0.5; 2]);
+        drop(voices); drop(asset); let _ = std::fs::remove_file(&path);
+    }
+    #[test] fn an_update_always_reaches_the_mixer_while_it_holds_the_previous_mix() {
+        let mut audio = ClipAudio::new();
+        // The mixer has picked up the current mix and still holds it.
+        let held = audio.mix.lock().unwrap().clone();
+        let before = audio.mix_generation.load(Ordering::Acquire);
+        audio.publish_mix(Arc::new(MixState { voices: Vec::new(), at: Instant::now() }));
+        assert_eq!(audio.mix_generation.load(Ordering::Acquire), before + 1);
+        assert!(!Arc::ptr_eq(&held, &audio.mix.lock().unwrap()));
+        // The retired mix stays owned by the control thread until the mixer
+        // lets go, so the mixer never frees it.
+        assert!(audio.retired_mix.iter().any(|mix| Arc::ptr_eq(mix, &held)));
+        drop(held);
+        audio.publish_mix(empty_mix());
+        assert!(audio.retired_mix.iter().all(|mix| Arc::strong_count(mix) > 1));
     }
     #[test] fn reverse_bounce_and_trim_coordinates() {
         assert_eq!(transport_time(1.5, 2.0, 6.0, true, false), Some(5.5));
@@ -787,12 +984,11 @@ pub fn sweep_stale_temp_dirs(root: &std::path::Path, now: std::time::SystemTime,
         std::fs::write(&path, bytes).unwrap();
         let asset = Arc::new(Asset { path: path.clone(), frames: AtomicU64::new(96000), bytes: AtomicU64::new(0),
             done: AtomicBool::new(true), cancelled: AtomicBool::new(false), error: Mutex::new(String::new()), child: Mutex::new(None), budget: Arc::new(AtomicU64::new(0)) });
-        let voices = vec![MixVoice { asset: asset.clone(), voice: Voice { id: "clip".into(), uri: "clip".into(), time: 0.25, rate: 1.0,
-            lo: 0.0, hi: 2.0, looping: false, bounce: false, gain: 1.0, pan: 0.0, playing: true } }];
         let first_frame = |age: f64, ahead: f64| {
-            let mut mixer = Mixer::default();
-            mixer.gains.insert("clip".into(), (1.0, 1.0));
-            let block = mixer.block(&voices, age, ahead, 48000.0);
+            let voices = vec![MixVoice { asset: asset.clone(), stream: Arc::new(VoiceStream::new((1.0, 1.0), None)), voice: Voice { id: "clip".into(), uri: "clip".into(), time: 0.25, rate: 1.0,
+                lo: 0.0, hi: 2.0, looping: false, bounce: false, gain: 1.0, pan: 0.0, playing: true } }];
+            prefetch(&voices, age, &mut HashMap::new(), &mut Vec::new());
+            let block = Mixer.block(&voices, age, ahead, 48000.0);
             // Consecutive frames advance by one media frame.
             assert!((block[1][0] - block[0][0] - 1e-5).abs() < 1e-6 && (block[0][0] - block[0][1]).abs() < 1e-9);
             block[0][0] as f64 / 1e-5
@@ -802,7 +998,7 @@ pub fn sweep_stale_temp_dirs(root: &std::path::Path, now: std::time::SystemTime,
         assert!((first_frame(0.0, 0.017) - (0.25 + 0.017) * 48000.0).abs() < 0.05);
         assert!((first_frame(0.0, 0.060) - (0.25 + 0.060) * 48000.0).abs() < 0.05);
         assert!((first_frame(0.010, 0.040) - (0.25 + 0.050) * 48000.0).abs() < 0.05);
-        drop(voices); drop(asset);
+        drop(asset); let _ = std::fs::remove_file(&path);
     }
     #[test] fn the_device_callback_wakes_the_mixer_and_counts_each_gap_once() {
         let (ring, tap, underflows) = (Ring::new(), Tap::new(), Underflows::default());

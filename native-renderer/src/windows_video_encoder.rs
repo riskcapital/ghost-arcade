@@ -21,7 +21,7 @@ use std::path::Path;
 
 use wgpu::hal::api::Dx12;
 use windows::core::{Interface, PCWSTR};
-use windows::Win32::Foundation::GENERIC_ALL;
+use windows::Win32::Foundation::{CloseHandle, GENERIC_ALL};
 use windows::Win32::Graphics::Direct3D11::*;
 use windows::Win32::Graphics::Direct3D12::{ID3D12Fence, D3D12_FENCE_FLAG_SHARED};
 use windows::Win32::Graphics::Dxgi::Common::*;
@@ -280,9 +280,11 @@ impl WindowsVideoEncoder {
                 .cast()
                 .map_err(|e| mf_error("query ID3D11Device5 for fences", e))?;
             let mut fence11 = None;
-            device5
-                .OpenSharedFence(shared, &mut fence11)
-                .map_err(|e| mf_error("open render fence on D3D11", e))?;
+            let opened = device5.OpenSharedFence(shared, &mut fence11);
+            // D3D11 holds its own reference once the fence is open; the
+            // exported NT handle is ours to close either way.
+            let _ = CloseHandle(shared);
+            opened.map_err(|e| mf_error("open render fence on D3D11", e))?;
             let fence11 =
                 fence11.ok_or_else(|| "native recording: D3D11 returned no shared fence".to_string())?;
 
@@ -397,7 +399,7 @@ impl WindowsVideoEncoder {
                 .map_err(|e| mf_error("wait on render fence", e))?;
 
             // BGRA -> NV12, on the GPU.
-            let stream = D3D11_VIDEO_PROCESSOR_STREAM {
+            let mut stream = D3D11_VIDEO_PROCESSOR_STREAM {
                 Enable: true.into(),
                 OutputIndex: 0,
                 InputFrameOrField: 0,
@@ -406,9 +408,16 @@ impl WindowsVideoEncoder {
                 pInputSurface: std::mem::ManuallyDrop::new(Some(input_view.clone())),
                 ..Default::default()
             };
-            let blt = self
-                .video_context
-                .VideoProcessorBlt(&self.processor, &output_view, 0, &[stream]);
+            let blt = self.video_context.VideoProcessorBlt(
+                &self.processor,
+                &output_view,
+                0,
+                std::slice::from_ref(&stream),
+            );
+            // The stream struct holds its own reference to the input view and
+            // never releases it by itself; without this every recorded frame
+            // leaked a view that kept the shared composite alive.
+            std::mem::ManuallyDrop::drop(&mut stream.pInputSurface);
             blt.map_err(|e| mf_error("VideoProcessorBlt (BGRA->NV12)", e))?;
             self.context.Flush();
 

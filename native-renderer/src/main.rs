@@ -22061,6 +22061,9 @@ impl ApplicationHandler<UserEvent> for App {
             }
             UserEvent::GpuFrameCompleted => {
                 self.sync_gpu_frame_stats();
+                if let Some(renderer) = self.renderer.as_mut() {
+                    renderer.drain_native_recording();
+                }
                 if !self.running {
                     return;
                 }
@@ -22348,18 +22351,56 @@ impl RenderState {
             .map_err(|err| err.to_string())?;
         // A driver reset (Windows TDR), a hung GPU or an unplugged external
         // GPU ends the device. Say so in the log with the adapter, so a support
-        // log tells a GPU fault from a fault in the app.
+        // log tells a GPU fault from a fault in the app, and raise the same
+        // GPU fault the completion watchdog raises: the core stops rendering
+        // on a dead device and the app restarts it instead of the show
+        // freezing on the last frame.
         {
             let adapter_label = format!(
                 "{} ({:?}, driver {} {})",
                 adapter_info.name, adapter_info.backend, adapter_info.driver, adapter_info.driver_info
             );
+            let lost_proxy = event_proxy.clone();
             device.set_device_lost_callback(move |reason, message| {
                 if matches!(reason, wgpu::DeviceLostReason::Destroyed) {
                     return;
                 }
                 eprintln!("[ghost-core] GPU DEVICE LOST on {adapter_label}: reason={reason:?} {message}");
+                let _ = lost_proxy.send_event(UserEvent::GpuFrameFailed(format!(
+                    "GPU device lost ({reason:?}: {message}); restart the renderer process to recover"
+                )));
             });
+        }
+        // Without a handler wgpu panics on any error no error scope caught,
+        // which aborts the process mid-show. A validation error only
+        // invalidates the work it was raised on, so log it and keep going;
+        // running out of GPU memory or an internal driver error leaves the
+        // device unreliable, so report it as a GPU fault for a restart.
+        {
+            let error_proxy = event_proxy.clone();
+            let validation_errors = Arc::new(AtomicU64::new(0));
+            device.on_uncaptured_error(Arc::new(move |error: wgpu::Error| match error {
+                wgpu::Error::Validation { description, .. } => {
+                    let count = validation_errors.fetch_add(1, Ordering::Relaxed) + 1;
+                    // The same error usually repeats every frame: log the
+                    // first few, then a periodic count.
+                    if count <= 5 || count.is_power_of_two() {
+                        eprintln!("[ghost-core] GPU validation error #{count} (frame work skipped): {description}");
+                    }
+                }
+                wgpu::Error::OutOfMemory { source } => {
+                    eprintln!("[ghost-core] GPU out of memory: {source}");
+                    let _ = error_proxy.send_event(UserEvent::GpuFrameFailed(format!(
+                        "GPU out of memory ({source}); restart the renderer process to recover"
+                    )));
+                }
+                wgpu::Error::Internal { description, .. } => {
+                    eprintln!("[ghost-core] GPU internal error: {description}");
+                    let _ = error_proxy.send_event(UserEvent::GpuFrameFailed(format!(
+                        "GPU internal error ({description}); restart the renderer process to recover"
+                    )));
+                }
+            }));
         }
 
         let caps = surface.get_capabilities(&adapter);
@@ -23336,13 +23377,17 @@ impl RenderState {
         (texture, view)
     }
 
+    /// A global BGRA IOSurface imported into wgpu as a texture.
     #[cfg(target_os = "macos")]
-    fn create_output_export_target(
+    fn create_iosurface_texture(
         device: &wgpu::Device,
         width: u32,
         height: u32,
         format: wgpu::TextureFormat,
-    ) -> Result<NativeOutputExport, String> {
+        label: &str,
+        usage: wgpu::TextureUsages,
+        initial_use: wgpu::TextureUses,
+    ) -> Result<(objc2_core_foundation::CFRetained<objc2_io_surface::IOSurfaceRef>, wgpu::Texture), String> {
         use objc2_core_foundation::{CFBoolean, CFDictionary, CFNumber, CFType};
         use objc2_io_surface::{
             IOSurfaceRef, kIOSurfaceAllocSize, kIOSurfaceBytesPerElement, kIOSurfaceBytesPerRow,
@@ -23388,7 +23433,7 @@ impl RenderState {
         ];
         let properties = CFDictionary::<CFType, CFType>::from_slices(&keys, &values);
         let surface = unsafe { IOSurfaceRef::new(properties.as_opaque()) }.ok_or_else(|| {
-            format!("IOSurfaceCreate failed for native output export {width}x{height}")
+            format!("IOSurfaceCreate failed for {label} {width}x{height}")
         })?;
 
         let raw_device = unsafe { device.as_hal::<Metal>() }
@@ -23411,7 +23456,7 @@ impl RenderState {
             .raw_device()
             .newTextureWithDescriptor_iosurface_plane(&texture_descriptor, &surface, 0)
             .ok_or_else(|| {
-                format!("Metal failed to create native output export texture {width}x{height}")
+                format!("Metal failed to create {label} texture {width}x{height}")
             })?;
         let hal_texture = unsafe {
             hal::metal::Device::texture_from_raw(
@@ -23432,7 +23477,7 @@ impl RenderState {
             device.create_texture_from_hal::<Metal>(
                 hal_texture,
                 &wgpu::TextureDescriptor {
-                    label: Some("Ghost Render Core Output IOSurface Export"),
+                    label: Some(label),
                     size: wgpu::Extent3d {
                         width,
                         height,
@@ -23442,14 +23487,35 @@ impl RenderState {
                     sample_count: 1,
                     dimension: wgpu::TextureDimension::D2,
                     format,
-                    usage: wgpu::TextureUsages::RENDER_ATTACHMENT
-                        | wgpu::TextureUsages::TEXTURE_BINDING
-                        | wgpu::TextureUsages::COPY_SRC,
+                    usage,
                     view_formats: &[],
                 },
-                wgpu::TextureUses::COLOR_TARGET,
+                initial_use,
             )
         };
+        Ok((surface, texture))
+    }
+
+    #[cfg(target_os = "macos")]
+    fn create_output_export_target(
+        device: &wgpu::Device,
+        width: u32,
+        height: u32,
+        format: wgpu::TextureFormat,
+    ) -> Result<NativeOutputExport, String> {
+        let (surface, texture) = Self::create_iosurface_texture(
+            device,
+            width,
+            height,
+            format,
+            "Ghost Render Core Output IOSurface Export",
+            wgpu::TextureUsages::RENDER_ATTACHMENT
+                | wgpu::TextureUsages::TEXTURE_BINDING
+                | wgpu::TextureUsages::COPY_SRC,
+            wgpu::TextureUses::COLOR_TARGET,
+        )?;
+        let width = width.max(1);
+        let height = height.max(1);
         let view = texture.create_view(&wgpu::TextureViewDescriptor {
             label: Some("Ghost Render Core Output IOSurface Export View"),
             format: Some(format),
@@ -23730,35 +23796,79 @@ impl RenderState {
             .output_export
             .as_ref()
             .ok_or_else(|| "native recording needs the output shared texture".to_string())?;
-        let (width, height) = (export.width, export.height);
+        let (width, height, format) = (export.width, export.height, export.format);
+        // A few surfaces so the encoder can still be reading one frame while
+        // the GPU fills the next; a frame finding none free is dropped.
+        const CAPTURE_SURFACES: usize = 4;
+        let slots = (0..CAPTURE_SURFACES)
+            .map(|_| {
+                Self::create_iosurface_texture(
+                    &self.device,
+                    width,
+                    height,
+                    format,
+                    "Ghost Render Core Recording Capture",
+                    wgpu::TextureUsages::COPY_DST,
+                    wgpu::TextureUses::COPY_DST,
+                )
+                .map(|(surface, texture)| mac_video_recorder::CaptureSlot { surface, texture })
+            })
+            .collect::<Result<Vec<_>, String>>()?;
         let recorder =
-            mac_video_recorder::MacVideoRecorder::new(path, width, height, fps, quality)?;
+            mac_video_recorder::MacVideoRecorder::new(path, width, height, fps, quality, slots)?;
         self.native_recorder = Some(recorder);
         self.native_recorder_error = None;
         Ok((width, height))
     }
 
+    /// Inside the frame's encoder, after the export has been written: copy
+    /// the composite into a capture surface the encoder will own.
     #[cfg(target_os = "macos")]
-    fn encode_native_recording_frame(&mut self) {
-        let Some(surface_id) = self
-            .output_export
-            .as_ref()
-            .map(|export| export.surface.id())
+    fn capture_native_recording_frame(&mut self, encoder: &mut wgpu::CommandEncoder) {
+        let (Some(recorder), Some(export)) =
+            (self.native_recorder.as_mut(), self.output_export.as_ref())
         else {
             return;
         };
+        recorder.capture(encoder, &export.texture, export.width, export.height);
+    }
+
+    #[cfg(target_os = "macos")]
+    fn encode_native_recording_frame(&mut self) {
+        if let Some(recorder) = self.native_recorder.as_mut() {
+            recorder.submitted(&self.queue);
+        }
+        self.drain_native_recording();
+    }
+
+    /// Append captures whose GPU work has completed. Runs after each frame
+    /// and when a GPU completion arrives, so a take does not wait for the
+    /// next render when the scene goes static.
+    #[cfg(target_os = "macos")]
+    fn drain_native_recording(&mut self) {
         let Some(recorder) = self.native_recorder.as_mut() else {
             return;
         };
-        if let Err(err) = recorder.append_iosurface(surface_id) {
+        if let Err(err) = recorder.drain_completed() {
             // Keep rendering: a failed recording must not take the show down.
             self.native_recorder_error = Some(err);
             self.native_recorder = None;
         }
     }
 
+    #[cfg(not(target_os = "macos"))]
+    fn drain_native_recording(&mut self) {}
+
     #[cfg(target_os = "macos")]
     fn stop_native_recording(&mut self) -> Result<(u64, f64), String> {
+        if self.native_recorder.as_ref().is_some_and(|r| r.has_pending()) {
+            // The last captures belong in the take: let the GPU finish them.
+            let _ = self.device.poll(wgpu::PollType::Wait {
+                submission_index: None,
+                timeout: Some(Duration::from_secs(2)),
+            });
+            self.drain_native_recording();
+        }
         let mut recorder = self
             .native_recorder
             .take()
@@ -24236,15 +24346,14 @@ impl RenderState {
             .find(|format| *format == wgpu::TextureFormat::Bgra8Unorm)
             .or_else(|| caps.formats.iter().copied().find(|format| !format.is_srgb()))
             .unwrap_or(caps.formats[0]);
+        let present_mode = linux_slice_present_mode(&caps.present_modes);
         let config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
             format,
             color_space: wgpu::SurfaceColorSpace::Srgb,
             width,
             height,
-            // A Screen is projector output: never tear, and FIFO is the one
-            // mode every surface is required to support.
-            present_mode: wgpu::PresentMode::Fifo,
+            present_mode,
             desired_maximum_frame_latency: 2,
             alpha_mode: caps.alpha_modes[0],
             view_formats: vec![],
@@ -24254,7 +24363,7 @@ impl RenderState {
             .sample_type(wgpu::FilterMode::Linear)
             .build();
         self.linux_slice_windows.insert(id.to_string(), LinuxSliceWindow { window, surface, config, blitter });
-        Ok(json!({ "attached": true, "slice_id": id, "width": width, "height": height, "format": format!("{format:?}") }))
+        Ok(json!({ "attached": true, "slice_id": id, "width": width, "height": height, "format": format!("{format:?}"), "present_mode": present_mode_label(present_mode) }))
     }
 
     /// Linux: follow the Electron Screen window when it resizes or goes
@@ -28763,6 +28872,8 @@ impl RenderState {
             output_gate, stage, time_seconds.unwrap_or(0.0));
         #[cfg(any(target_os = "macos", target_os = "windows"))]
         self.refresh_output_export(&mut mirror_encoder);
+        #[cfg(target_os = "macos")]
+        self.capture_native_recording_frame(&mut mirror_encoder);
         if let Some(frame) = surface_frame.as_ref() {
             if self.surface_copy_dst_supported {
                 mirror_encoder.copy_texture_to_texture(
@@ -36971,6 +37082,20 @@ fn choose_present_mode(
         .unwrap_or(wgpu::PresentMode::AutoVsync)
 }
 
+/// Present mode for a Linux Screen (slice) window. Every Screen is acquired
+/// and presented in turn on the main thread, so with FIFO each one waited for
+/// its own vblank and N projectors divided the frame rate by N. Mailbox never
+/// blocks and never tears, so it comes first; then the non-blocking modes the
+/// surface has; FIFO, the one mode every surface must support, last. The
+/// program window keeps its own pacing (`choose_present_mode`).
+#[cfg_attr(any(target_os = "macos", target_os = "windows"), allow(dead_code))]
+fn linux_slice_present_mode(supported: &[wgpu::PresentMode]) -> wgpu::PresentMode {
+    [wgpu::PresentMode::Mailbox, wgpu::PresentMode::Immediate, wgpu::PresentMode::FifoRelaxed]
+        .into_iter()
+        .find(|mode| supported.contains(mode))
+        .unwrap_or(wgpu::PresentMode::Fifo)
+}
+
 fn present_mode_label(mode: wgpu::PresentMode) -> &'static str {
     match mode {
         wgpu::PresentMode::AutoVsync => "auto-vsync",
@@ -37103,10 +37228,21 @@ mod manual_video_frame_tests {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn linux_screens_prefer_a_present_mode_that_does_not_wait_for_vblank() {
+        use super::linux_slice_present_mode;
+        use wgpu::PresentMode::*;
+        assert_eq!(linux_slice_present_mode(&[Fifo, Immediate, Mailbox]), Mailbox);
+        assert_eq!(linux_slice_present_mode(&[Fifo, FifoRelaxed, Immediate]), Immediate);
+        assert_eq!(linux_slice_present_mode(&[Fifo, FifoRelaxed]), FifoRelaxed);
+        assert_eq!(linux_slice_present_mode(&[Fifo]), Fifo);
+        assert_eq!(linux_slice_present_mode(&[]), Fifo);
+    }
 
     #[test]
     fn layer_upload_scratch_follows_the_scene_not_the_layer_limit() {
         use super::{fit_byte_scratch, fit_layer_upload_scratch, LayerGpu, LAYER_UPLOAD_SCRATCH_MIN_SLOTS, MAX_SCENE_LAYERS};
+
         let slot = std::mem::size_of::<LayerGpu>();
         let mut scratch = Vec::new();
         // A new render state holds nothing; a five-layer scene holds five slots.
