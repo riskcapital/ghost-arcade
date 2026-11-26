@@ -538,4 +538,34 @@ mod tests {
         };
         assert!(error.contains("preserve geometry"), "{error}");
     }
+
+    /// Time spent inside next_frame for GHOST_TEST_BENCH_PATH: flat out, and
+    /// with a consumer that works GHOST_TEST_BENCH_WORK_MS between frames.
+    #[test]
+    #[ignore = "requires Mac hardware decoder access and GHOST_TEST_BENCH_PATH"]
+    fn next_frame_timing_report() {
+        let path = std::env::var_os("GHOST_TEST_BENCH_PATH").expect("Set GHOST_TEST_BENCH_PATH");
+        let work: f64 = std::env::var("GHOST_TEST_BENCH_WORK_MS").ok().and_then(|v| v.parse().ok()).unwrap_or(8.0);
+        for pause in [0.0, work] {
+            let mut decoder = MacVideoDecoder::open(Path::new(&path)).unwrap();
+            let mut times = Vec::new();
+            let started = std::time::Instant::now();
+            loop {
+                let t = std::time::Instant::now();
+                let Some(frame) = decoder.next_frame().unwrap() else { break };
+                times.push(t.elapsed().as_secs_f64() * 1000.0);
+                std::thread::sleep(std::time::Duration::from_secs_f64(pause / 1000.0));
+                drop(frame);
+            }
+            let total = started.elapsed().as_secs_f64() * 1000.0 / times.len() as f64;
+            let mean = times.iter().sum::<f64>() / times.len() as f64;
+            times.sort_by(|a, b| a.partial_cmp(b).unwrap());
+            println!(
+                "consumer work {pause} ms: {} frames, {total:.2} ms per frame overall, in next_frame mean {mean:.2} ms, p95 {:.2} ms, max {:.2} ms",
+                times.len(),
+                times[times.len() * 95 / 100],
+                times[times.len() - 1]
+            );
+        }
+    }
 }

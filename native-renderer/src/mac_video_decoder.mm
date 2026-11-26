@@ -7,7 +7,9 @@
 #import <VideoToolbox/VideoToolbox.h>
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
+#include <condition_variable>
 #include <cstdio>
 #include <cstring>
 #include <deque>
@@ -19,10 +21,13 @@
 #include <vector>
 
 namespace {
-// Four asynchronous submissions at a time, with a separate hard bound on
-// surfaces waiting for B-frame presentation order. Never block a VT callback.
-constexpr size_t kDecodeBatch = 4;
+// Decoding streams ahead of presentation: submissions continue while decoded
+// and in-flight frames together fit the bounded queue, which also holds the
+// surfaces waiting for B-frame presentation order. The media worker waits
+// only for the frame it needs next. Never block a VT callback.
 constexpr size_t kMaxPendingFrames = 24;
+// A frame VideoToolbox has not returned after this long will not come.
+constexpr auto kDecodeStall = std::chrono::seconds(10);
 constexpr size_t kDefaultPendingFrames = 8;
 
 void write_error(char *out, size_t capacity, const std::string &message) {
@@ -283,9 +288,17 @@ struct GhostMacVideoDecoder {
     __strong AVSampleCursor *presentation = nil;
     VTDecompressionSessionRef session = nullptr;
     GhostVideoMetadata metadata = {};
+    // Guards pending, failure and in_flight: callbacks run on VideoToolbox's
+    // threads while the media worker reads, submits and waits.
     std::mutex callback_mutex;
+    std::condition_variable callback_signal;
     std::deque<std::unique_ptr<DecodedFrame>> pending;
     std::string failure;
+    // Frames submitted whose callback has not run yet.
+    size_t in_flight = 0;
+    // Delayed temporal-processing frames were asked out since the last
+    // submission (only needed when nothing more can be submitted).
+    bool delayed_flushed = false;
     CMTime first_pts = kCMTimeZero;
     CMTimeRange source_timeline = kCMTimeRangeInvalid;
     CMTimeRange target_timeline = kCMTimeRangeInvalid;
@@ -331,11 +344,13 @@ struct GhostMacVideoDecoder {
     }
 
     ~GhostMacVideoDecoder() {
-        [reader cancelReading];
         if (session) {
             // All callbacks complete before their context and queued buffers
             // are destroyed. Frames handed to Rust have independent retains.
             VTDecompressionSessionWaitForAsynchronousFrames(session);
+        }
+        [reader cancelReading];
+        if (session) {
             VTDecompressionSessionInvalidate(session);
             CFRelease(session);
         }
@@ -347,17 +362,28 @@ struct GhostMacVideoDecoder {
         }
     }
 
+    // Waits for every submitted frame (delayed ones included) to come back.
+    // Afterwards nothing runs concurrently with the media worker.
     bool wait_for_decode() {
-        const OSStatus status = VTDecompressionSessionWaitForAsynchronousFrames(session);
+        const OSStatus status = session ? VTDecompressionSessionWaitForAsynchronousFrames(session) : noErr;
         std::lock_guard<std::mutex> lock(callback_mutex);
+        in_flight = 0;
         if (status != noErr && failure.empty()) failure = vt_error("Hardware decode failed", status);
         return failure.empty();
+    }
+
+    void fail(std::string message) {
+        std::lock_guard<std::mutex> lock(callback_mutex);
+        if (failure.empty()) failure = std::move(message);
     }
 
     static void decoded(void *context, void *, OSStatus status, VTDecodeInfoFlags flags,
                         CVImageBufferRef image, CMTime pts, CMTime duration) {
         auto *self = static_cast<GhostMacVideoDecoder *>(context);
         std::lock_guard<std::mutex> lock(self->callback_mutex);
+        if (self->in_flight) --self->in_flight;
+        // The worker re-checks under this lock, after this callback returns.
+        self->callback_signal.notify_all();
         if (!self->failure.empty()) return;
         if (status != noErr) {
             self->failure = vt_error("Hardware decode callback failed", status);
@@ -595,7 +621,7 @@ struct GhostMacVideoDecoder {
 
     void close_session() {
         if (!session) return;
-        VTDecompressionSessionWaitForAsynchronousFrames(session);
+        wait_for_decode();
         [reader cancelReading];
         reader = nil;
         output = nil;
@@ -614,7 +640,7 @@ struct GhostMacVideoDecoder {
         }
         // No previous callback may observe the new trim bounds or add an old
         // frame after the queue is cleared. Keep the hardware session itself.
-        VTDecompressionSessionWaitForAsynchronousFrames(session);
+        wait_for_decode();
         [reader cancelReading];
         reader = nil;
         output = nil;
@@ -664,6 +690,8 @@ struct GhostMacVideoDecoder {
     }
 
     int step(double reference, int direction, double start, double end, GhostGpuVideoFrame *result) {
+        // Frames decoded ahead of the last next() may still be arriving.
+        wait_for_decode();
         if (!std::isfinite(reference) || !std::isfinite(start) || start < 0.0 ||
             std::isnan(end) || end < start || (direction != -1 && direction != 1)) {
             failure = "Video frame step requires finite timing, a valid trim, and direction -1 or 1";
@@ -694,48 +722,41 @@ struct GhostMacVideoDecoder {
         return next(result);
     }
 
-    bool decode_batch() {
-        if (pending.size() >= queue_capacity) {
-            failure = "Video presentation reorder window exceeds the bounded hardware queue";
-            return false;
-        }
-        // Each submitted sample contains one frame; reserve its potential
-        // callback slot before submitting. Pending + in-flight <= capacity.
-        const size_t batch_size = std::min(kDecodeBatch, queue_capacity - pending.size());
-        for (size_t submitted = 0; submitted < batch_size && !reader_ended; ) {
+    enum class Submit { Sent, Ended, Failed };
+
+    // Reads the next compressed sample and submits it without waiting.
+    Submit submit_one() {
+        for (;;) {
             CMSampleBufferRef sample = [output copyNextSampleBuffer];
             if (!sample) {
                 reader_ended = true;
                 if (reader.status == AVAssetReaderStatusFailed) {
-                    std::lock_guard<std::mutex> lock(callback_mutex);
-                    failure = describe(reader.error, "Compressed video reading failed");
+                    fail(describe(reader.error, "Compressed video reading failed"));
+                    return Submit::Failed;
                 }
-                break;
+                return Submit::Ended;
             }
             if (CMSampleBufferGetNumSamples(sample) == 0) { CFRelease(sample); continue; }
             if (CMSampleBufferGetNumSamples(sample) != 1) {
                 CFRelease(sample);
-                std::lock_guard<std::mutex> lock(callback_mutex);
-                failure = "Compressed video sample contains more than one frame";
-                break;
+                fail("Compressed video sample contains more than one frame");
+                return Submit::Failed;
             }
             CMFormatDescriptionRef format = CMSampleBufferGetFormatDescription(sample);
             if (format && tagged_format && CFEqual(format, tagged_format)) {
                 CMSampleBufferRef standard = sample_with_format(sample, standard_format);
                 CFRelease(sample);
                 if (!standard) {
-                    std::lock_guard<std::mutex> lock(callback_mutex);
-                    failure = "Cannot prepare a compressed video sample for the hardware decoder";
-                    break;
+                    fail("Cannot prepare a compressed video sample for the hardware decoder");
+                    return Submit::Failed;
                 }
                 sample = standard;
                 format = standard_format;
             }
             if (!format || !VTDecompressionSessionCanAcceptFormatDescription(session, format)) {
                 CFRelease(sample);
-                std::lock_guard<std::mutex> lock(callback_mutex);
-                failure = "Video codec changes require the compatibility decoder";
-                break;
+                fail("Video codec changes require the compatibility decoder");
+                return Submit::Failed;
             }
             std::string format_failure = unsupported_format(format);
             const CMVideoDimensions frame_size = CMVideoFormatDescriptionGetDimensions(format);
@@ -749,41 +770,80 @@ struct GhostMacVideoDecoder {
                 format_failure = "Video alpha changes require the compatibility decoder to preserve transparency";
             if (!format_failure.empty()) {
                 CFRelease(sample);
-                std::lock_guard<std::mutex> lock(callback_mutex);
-                failure = std::move(format_failure);
-                break;
+                fail(std::move(format_failure));
+                return Submit::Failed;
             }
+            // Count the frame before submitting: its callback may run on
+            // another thread, or inside the call, before the call returns.
+            {
+                std::lock_guard<std::mutex> lock(callback_mutex);
+                ++in_flight;
+            }
+            delayed_flushed = false;
             const OSStatus status = VTDecompressionSessionDecodeFrame(session, sample,
                 kVTDecodeFrame_EnableAsynchronousDecompression | kVTDecodeFrame_EnableTemporalProcessing,
                 nullptr, nullptr);
             CFRelease(sample);
-            ++submitted;
             if (status != noErr) {
-                std::lock_guard<std::mutex> lock(callback_mutex);
-                failure = vt_error("Cannot submit a compressed hardware video frame", status);
-                break;
+                fail(vt_error("Cannot submit a compressed hardware video frame", status));
+                return Submit::Failed;
             }
+            return Submit::Sent;
         }
-        // This also releases delayed temporal-processing callbacks. Only the
-        // media worker waits here. The callback queue never waits for a reader.
-        return wait_for_decode();
+    }
+
+    // Refills the decoder after a frame left the queue, so it keeps decoding
+    // while the caller presents. A failure here waits for the next call.
+    void top_up() {
+        for (;;) {
+            {
+                std::lock_guard<std::mutex> lock(callback_mutex);
+                if (reader_ended || !failure.empty() || pending.size() + in_flight >= queue_capacity) return;
+            }
+            if (submit_one() != Submit::Sent) return;
+        }
+    }
+
+    // A failed next(): let every callback finish first, so the failure and
+    // the queue stay as they are while the caller reads them.
+    int failed() {
+        wait_for_decode();
+        return -1;
+    }
+
+    void end_range() {
+        range_ended = true;
+        wait_for_decode();
+        [reader cancelReading];
+        pending.clear();
     }
 
     int next(GhostGpuVideoFrame *result) {
         worker_priority.follow_current_worker();
-        if (!failure.empty()) return -1;
+        {
+            std::unique_lock<std::mutex> lock(callback_mutex);
+            if (!failure.empty()) {
+                lock.unlock();
+                return failed();
+            }
+        }
         if (range_ended) return 0;
         for (;;) {
             const CMTime expected = presentation_time();
-            if (!finite_time(expected)) { failure = "Video presentation cursor has invalid timing"; return -1; }
+            if (!finite_time(expected)) {
+                fail("Video presentation cursor has invalid timing");
+                return failed();
+            }
             if (CMTimeGetSeconds(expected) >= end_seconds) {
-                range_ended = true;
-                [reader cancelReading];
-                pending.clear();
+                end_range();
                 return 0;
             }
-            // There are no callbacks in flight between batches, so this lookup
-            // and transfer need no lock. Compare rational timestamps directly.
+            std::unique_lock<std::mutex> lock(callback_mutex);
+            if (!failure.empty()) {
+                lock.unlock();
+                return failed();
+            }
+            // Compare rational timestamps directly.
             const auto found = std::find_if(pending.begin(), pending.end(), [&](const auto &frame) {
                 return CMTimeCompare(frame->pts, expected) == 0;
             });
@@ -791,18 +851,39 @@ struct GhostMacVideoDecoder {
                 *result = (*found)->info;
                 (*found)->pixel = nullptr; // Transfer the +1 retain to Rust.
                 pending.erase(found);
-                if ([presentation stepInPresentationOrderByCount:1] == 0) {
-                    range_ended = true;
-                    [reader cancelReading];
-                    pending.clear();
-                }
+                lock.unlock();
+                if ([presentation stepInPresentationOrderByCount:1] == 0) end_range();
+                else top_up();
                 return 1;
             }
-            if (reader_ended) {
-                failure = "Hardware decoder did not return the expected presentation frame";
-                return -1;
+            // Keep the decoder busy ahead of presentation, within the bound:
+            // pending + in-flight <= capacity.
+            if (!reader_ended && pending.size() + in_flight < queue_capacity) {
+                lock.unlock();
+                if (submit_one() == Submit::Failed) return failed();
+                continue;
             }
-            if (!decode_batch()) return -1;
+            if (in_flight == 0) {
+                lock.unlock();
+                fail(reader_ended ? "Hardware decoder did not return the expected presentation frame"
+                                  : "Video presentation reorder window exceeds the bounded hardware queue");
+                return failed();
+            }
+            // Nothing more can be submitted: frames held back for temporal
+            // processing must come out now (as waiting for them all would).
+            if (!delayed_flushed) {
+                delayed_flushed = true;
+                lock.unlock();
+                VTDecompressionSessionFinishDelayedFrames(session);
+                continue;
+            }
+            const size_t before = in_flight;
+            if (!callback_signal.wait_for(lock, kDecodeStall,
+                    [&] { return in_flight < before || !failure.empty(); })) {
+                lock.unlock();
+                fail("Hardware decoder stopped returning video frames");
+                return failed();
+            }
         }
     }
 };
@@ -842,12 +923,14 @@ extern "C" int ghost_mac_video_seek(GhostMacVideoDecoder *decoder, double start,
 
 extern "C" int ghost_mac_video_set_queue_capacity(GhostMacVideoDecoder *decoder,
     size_t capacity, char *error, size_t error_capacity) {
+    // Frames decoded ahead may still be arriving; let them land first.
+    decoder->wait_for_decode();
     if (capacity == 0 || capacity > kMaxPendingFrames || capacity < decoder->pending.size()) {
         write_error(error, error_capacity, "Hardware queue capacity must be 1 to 24 and fit existing frames");
         return -1;
     }
     // Public operations are serialized by Rust's exclusive decoder borrow;
-    // next_frame always drains its asynchronous submissions before returning.
+    // the wait above leaves no asynchronous submission in flight.
     decoder->queue_capacity = capacity;
     return 0;
 }
