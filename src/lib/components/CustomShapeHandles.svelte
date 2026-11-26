@@ -745,7 +745,11 @@
     top: 0;
     left: 0;
     pointer-events: none;
-    z-index: 15;
+    /* Above the layer's warp grips (50) and mesh handles (51-52): a shape
+       vertex next to the move / rotate / scale grip or a mesh point is
+       still the vertex, and while placing, adding or removing points the
+       pen owns the canvas. */
+    z-index: 55;
   }
 
   .custom-shape-handles.draw-mode {

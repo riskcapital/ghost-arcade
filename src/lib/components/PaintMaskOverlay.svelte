@@ -193,7 +193,10 @@
     /* The .warp-handles-offset parent is pointer-events: none. */
     pointer-events: auto;
     touch-action: none;
-    z-index: 30;
+    /* Above the warp handles (50) and mesh handles (51-52): while the
+       brush is armed a stroke starting on a corner, edge or grip paints
+       instead of dragging that handle. */
+    z-index: 60;
   }
   .paint-brush-ring {
     position: absolute;
