@@ -3,7 +3,9 @@
 // one in flight CPU and GPU time added up per frame; with two a frame costs
 // the larger of the two. This runs the same GPU-heavy scene, offscreen, with
 // 1 and 2 in flight and checks the queue stays bounded and the output keeps
-// advancing. GA_CORE_FIF_BENCH=1 prints frame rate and latency for both.
+// advancing. The default (2) is a cap: the core allows the second frame
+// only when the GPU alone fits the frame budget. GA_CORE_FIF_BENCH=1 prints
+// frame rate and latency for both.
 import { spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import { describe, expect, it } from 'vitest';
@@ -80,7 +82,7 @@ void main() {
   gl_FragColor = vec4(fract(acc), 0.25);
 }`;
 
-type Sample = { fps: number; latencyMs: number; latencyMaxMs: number; cpuMs: number; gpuMs: number; maxQueued: number; skips: number };
+type Sample = { fps: number; latencyMs: number; latencyMaxMs: number; cpuMs: number; gpuMs: number; maxQueued: number; skips: number; gate: string };
 
 async function measure(framesInFlight: number): Promise<Sample> {
   const width = envNumber('GA_CORE_FIF_WIDTH', 1920);
@@ -160,6 +162,7 @@ async function measure(framesInFlight: number): Promise<Sample> {
       gpuMs: gpuSum / Math.max(1, reads),
       maxQueued,
       skips: after.gpu_backpressure_skips - before.gpu_backpressure_skips,
+      gate: `allowed ${after.frames_in_flight?.allowed}, tail ${Number(after.frames_in_flight?.tail_ema_ms ?? 0).toFixed(1)} ms, saturations ${after.frames_in_flight?.saturations}`,
     };
   } finally {
     await rpc.close();
@@ -175,14 +178,15 @@ suite('Native frames in flight', () => {
     for (const n of order) runs.push([n, await measure(n)]);
     const average = (n: number): Sample => {
       const of = runs.filter(([k]) => k === n).map(([, s]) => s);
-      const mean = (key: keyof Sample) => of.reduce((sum, s) => sum + s[key], 0) / of.length;
+      const mean = (key: Exclude<keyof Sample, 'gate'>) => of.reduce((sum, s) => sum + s[key], 0) / of.length;
       return { fps: mean('fps'), latencyMs: mean('latencyMs'), latencyMaxMs: Math.max(...of.map(s => s.latencyMaxMs)),
-        cpuMs: mean('cpuMs'), gpuMs: mean('gpuMs'), maxQueued: Math.max(...of.map(s => s.maxQueued)), skips: mean('skips') };
+        cpuMs: mean('cpuMs'), gpuMs: mean('gpuMs'), maxQueued: Math.max(...of.map(s => s.maxQueued)), skips: mean('skips'),
+        gate: of.map(s => s.gate).join(' / ') };
     };
     const one = average(1);
     const two = average(2);
     if (bench) {
-      const row = (n: number, s: Sample) => `  ${n} in flight: ${s.fps.toFixed(1)} fps, latency ${s.latencyMs.toFixed(2)} ms (session max ${s.latencyMaxMs.toFixed(1)}), cpu ${s.cpuMs.toFixed(2)} ms, gpu ${s.gpuMs.toFixed(2)} ms, max queued ${s.maxQueued}, backpressure skips ${s.skips.toFixed(0)}`;
+      const row = (n: number, s: Sample) => `  ${n} in flight: ${s.fps.toFixed(1)} fps, latency ${s.latencyMs.toFixed(2)} ms (session max ${s.latencyMaxMs.toFixed(1)}), cpu ${s.cpuMs.toFixed(2)} ms, gpu ${s.gpuMs.toFixed(2)} ms, max queued ${s.maxQueued}, backpressure skips ${s.skips.toFixed(0)}; gate: ${s.gate}`;
       console.log(`frames in flight benchmark\n${row(1, one)}\n${row(2, two)}\n  runs: ${runs.map(([n, s]) => `${n}:${s.fps.toFixed(1)}`).join(' ')}`);
     }
     // The queue never grows past the setting: the output is never more
