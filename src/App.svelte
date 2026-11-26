@@ -3572,6 +3572,9 @@
     // their own click-to-add-point / click-to-stroke handlers on full-viewport
     // overlays; because the marquee begins on pointerdown (which those overlays
     // don't stop), without this guard it hijacks those clicks.
+    // The Screens tab edits screens, not layers: a click or drag on the
+    // canvas there must not pick or marquee-select the layers behind them.
+    if (get(leftSidebarTab) === 'screens') return false;
     if ($selectedLayer?.mask?.enabled && $maskEditingLayerId === $selectedLayer.id) return false;
     if ($selectedLayer && $paintMaskLayerId === $selectedLayer.id) return false;
     if ($selectedLightPaintingLayer && (lpDrawingEnabled || lpIsPathEditMode)) return false;
@@ -8513,8 +8516,9 @@
           </div>
         {/if}
 
-        <!-- Shape interaction overlay for lines layers -->
-        {#if $selectedLinesLayer}
+        <!-- Shape interaction overlay for lines layers (not on the Screens
+             tab, where it sat over the screen handles) -->
+        {#if $selectedLinesLayer && $leftSidebarTab !== 'screens'}
           <div
             class="shape-interaction-overlay"
             class:drawing-active={linesDrawingMode !== 'none'}
@@ -8786,7 +8790,7 @@
         {/if}
 
         <!-- Mask editing overlay (multi-shape bezier pen tool) -->
-        {#if $selectedLayer?.mask?.enabled && $maskEditingLayerId === $selectedLayer.id}
+        {#if $selectedLayer?.mask?.enabled && $maskEditingLayerId === $selectedLayer.id && $leftSidebarTab !== 'screens'}
           {@const maskShapes = $selectedLayer.mask.shapes ?? []}
           {@const maskHasClosedShape = maskShapes.some(s => s.closed)}
           <div
@@ -9057,7 +9061,7 @@
              self-disables pointer events when neither drawing nor
              path-editing is active so layer-level transform handles
              behind it keep working in normal Edit mode. -->
-        {#if $selectedLightPaintingLayer}
+        {#if $selectedLightPaintingLayer && $leftSidebarTab !== 'screens'}
           <LightPaintingPanel
             overlayOnly={true}
             viewportEl={viewportEl}
