@@ -58,6 +58,7 @@ const __dirname = path.dirname(__filename);
  *  file named "Intro...mov" does not. */
 const climbsUp = (value) => value.split(/[\\/]/).includes('..');
 const require = createRequire(import.meta.url);
+const { createNativeMidiHost } = require('./native-midi.cjs');
 const { parseOSCPacket, encodeOSCMessage } = require('./osc-parser.cjs');
 const abletonBridge = require('./ableton-bridge.cjs');
 const { randomUUID } = require('crypto');
@@ -5395,6 +5396,31 @@ function loadLinkAddon() {
   }
 }
 
+// Native MIDI (optional; Web MIDI in the renderer is the default). The
+// renderer opts in with a setting or GA_NATIVE_MIDI=1; see native-midi.cjs.
+let midiAddonLoadAttempted = false;
+let midiAddon = null;
+let midiAddonLoadError = null;
+function loadMidiAddon() {
+  if (midiAddon || midiAddonLoadAttempted) return midiAddon;
+  midiAddonLoadAttempted = true;
+  try {
+    const candidates = getTextureShareAddonCandidates('midi_addon.node');
+    const addonPath = candidates.find(candidate => fs.existsSync(candidate));
+    if (!addonPath) {
+      midiAddonLoadError = 'midi_addon.node not built';
+      return null;
+    }
+    midiAddon = require(addonPath);
+    return midiAddon;
+  } catch (err) {
+    midiAddonLoadError = err?.message || String(err);
+    console.error('[MIDI] Failed to load native addon:', midiAddonLoadError);
+    return null;
+  }
+}
+const nativeMidiHost = createNativeMidiHost({ loadAddon: loadMidiAddon, loadError: () => midiAddonLoadError });
+
 function shutdownLink() {
   if (linkSession) {
     try { linkSession.enable(false); } catch {}
@@ -7558,6 +7584,11 @@ function registerIpcHandlers() {
   // Renderer polls link_get_state (~4Hz) and re-anchors a local phase
   // extrapolation; tempo writes flow both ways (tap tempo → setTempo,
   // session tempo → audioStore.manualBPM in sync/abletonLink.ts).
+  ipcMain.handle('native_midi_status', () => nativeMidiHost.status());
+  ipcMain.handle('native_midi_start', (event) => nativeMidiHost.start(event.sender));
+  ipcMain.handle('native_midi_ports', () => nativeMidiHost.ports());
+  ipcMain.handle('native_midi_send', (_, args) => nativeMidiHost.send(args?.id, args?.data));
+
   ipcMain.handle('link_enable', (_, args) => {
     const addon = loadLinkAddon();
     if (!addon) return { ok: false, error: linkAddonLoadError || 'Link addon unavailable' };
@@ -12197,6 +12228,7 @@ function cleanupAndQuit() {
   runCleanupStep('destroyNdiReceivers', destroyNdiReceivers);
   runCleanupStep('stopNativeRenderer', () => nativeRendererBroker.shutdownSync());
   runCleanupStep('shutdownLink', shutdownLink);
+  runCleanupStep('stopNativeMidi', () => nativeMidiHost.stop());
   runCleanupStep('stopOSC', stopOSC);
   runCleanupStep('stopPowerSaveBlocker', stopPowerSaveBlocker);
   runCleanupStep('stopServer', stopServer);

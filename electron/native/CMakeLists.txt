@@ -439,6 +439,45 @@ else()
 endif()
 
 # ============================================================
+# Native MIDI — CoreMIDI (with "Ghost Arcade" virtual ports) on macOS,
+# WinMM on Windows. No third-party code. Optional at runtime: without it
+# the renderer keeps using Web MIDI.
+# ============================================================
+if(APPLE OR WIN32)
+    add_library(midi_addon SHARED
+        midi_addon.cpp
+        ${CMAKE_JS_SRC}
+    )
+    target_include_directories(midi_addon PRIVATE
+        ${CMAKE_JS_INC}
+        ${NODE_ADDON_API_DIR}
+    )
+    target_link_libraries(midi_addon PRIVATE ${CMAKE_JS_LIB})
+    target_compile_definitions(midi_addon PRIVATE
+        NAPI_VERSION=9
+        NODE_ADDON_API_DISABLE_DEPRECATED
+    )
+    if(APPLE)
+        target_link_libraries(midi_addon PRIVATE "-framework CoreMIDI" "-framework CoreFoundation")
+        add_custom_command(TARGET midi_addon POST_BUILD
+            COMMAND codesign --force --sign - "$<TARGET_FILE:midi_addon>" || true
+            COMMENT "Re-signing midi_addon for Apple Silicon"
+        )
+    else()
+        target_link_libraries(midi_addon PRIVATE winmm)
+        target_compile_definitions(midi_addon PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
+        if(MSVC)
+            target_compile_options(midi_addon PRIVATE /EHsc)
+        endif()
+    endif()
+    set_target_properties(midi_addon PROPERTIES
+        PREFIX ""
+        SUFFIX ".node"
+        CXX_STANDARD 17
+    )
+endif()
+
+# ============================================================
 # NDI (NewTek Network Device Interface) — cross-platform.
 # Detects either the "NDI Advanced SDK" or the regular NDI SDK
 # at standard install paths. Builds ndi_addon.node when found;
