@@ -3,12 +3,17 @@
 // GA_CORE_COMPOSITOR_BENCH=1) timed.
 //
 // Scenes: plain image quads, Bezier mesh warps, polygon masks, Edge
-// Effects, hierarchy masks, every blend mode, the dome output and minified
-// pictures. The
+// Effects, hierarchy masks, every blend mode, generated content, the dome
+// output and minified pictures; and the views composited after the program
+// (deck monitors, the record target, Screens drawn straight from the
+// compositor with their crops, warps and calibration). The
 // comparison runs by default and fails when a setting that must not change
 // the picture does. The benchmark prints, per scene and setting, the GPU
 // time of the composite pass (the frame timer) and the layer data the
 // core uploads per frame while one layer moves (GA_CORE_CHURN_PROBE).
+//
+// GA_CORE_COMPOSITOR_BENCH_BASE=<core binary>: the comparisons also check
+// that the legacy compositor draws exactly what that build does.
 //
 // GA_CORE_COMPOSITOR_BENCH_ENV='{"name":{"GA_X":"1"},...}' picks the
 // settings the benchmark compares (default: source mips on and off).
@@ -16,7 +21,7 @@
 // legacy one on every scene too; the benchmark also prints the CPU time of
 // the frame's render call.
 import { spawn } from 'node:child_process';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { appendFileSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 import { PNG } from 'pngjs';
@@ -30,6 +35,17 @@ type Command = Record<string, unknown>;
 type Env = Record<string, string>;
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 const bench = process.env.GA_CORE_COMPOSITOR_BENCH === '1';
+/** GA_CORE_COMPOSITOR_BENCH_TRACE=1 logs each comparison; set to a file
+ *  path, it appends them there too. */
+/** GA_CORE_COMPOSITOR_BENCH_MEASURE=1: the raster comparisons only trace
+ *  their differences (to measure a setting outside the tolerance). */
+const measureOnly = process.env.GA_CORE_COMPOSITOR_BENCH_MEASURE === '1';
+function trace(line: string) {
+  const to = process.env.GA_CORE_COMPOSITOR_BENCH_TRACE;
+  if (!to) return;
+  console.log(line);
+  if (to !== '1') appendFileSync(to, `${line}\n`);
+}
 
 /** `env.CORE_BINARY`, when set, names another core build to run (a
  *  before/after comparison); the rest is the core's environment. */
@@ -262,6 +278,16 @@ function colorLayer(id: string, z: number, rgba: [number, number, number, number
   ];
 }
 
+/** A layer showing generated content: a `gpu:` source with no frame of
+ *  its own, which the compositor draws itself. */
+function generatedLayer(id: string, z: number, layerCorners: WarpCorners, extra: Command = {}): Command[] {
+  return [
+    { type: 'upsert_layer', layer_id: id, opacity: 0.85, z_index: z, corners: layerCorners, ...extra },
+    { type: 'bind_media_source', layer_id: id, source_id: `${id}-gen`, source_type: 'gpu:bench', uri: `memory://${id}` },
+    { type: 'set_layer_visibility', layer_id: id, visible: true },
+  ];
+}
+
 const SCENES: Scene[] = [
   {
     name: 'plain-quads-64', mover: 'quad-0',
@@ -417,6 +443,18 @@ const SCENES: Scene[] = [
       { blend_mode: i === 0 ? 'normal' : ['overlay', 'difference', 'softlight', 'exclusion'][i % 4], opacity: 0.7 })).flat(),
   },
   {
+    // Generated content (the core's own procedural sources) under pictures,
+    // blending in hardware and by reading the stack back. (Layers with a
+    // larger z draw first; a Screen or Multiply after an Overlay over
+    // generated content would go to the legacy compositor.)
+    name: 'generated', mover: 'gen-0',
+    build: (width, height) => [
+      ...grid(4, (i, x, y, w, h) => imageLayer(`genbg-${i}`, i, fit(width, height, 1 / 4), i, corners(x, y, w, h))),
+      ...scatter(6, 29).flatMap((r, i) => generatedLayer(`gen-${i}`, 4 + i, corners(r.x, r.y, r.w, r.h),
+        { blend_mode: ['normal', 'overlay', 'normal', 'add', 'difference', 'screen'][i], opacity: 0.6 + 0.4 * r.a })),
+    ],
+  },
+  {
     name: 'minified', minified: true, mover: 'mini-0',
     build: () => grid(16, (i, x, y, w, h) => imageLayer(`mini-${i}`, i, 1024, i, corners(x, y, w, h))),
   },
@@ -539,6 +577,194 @@ async function renderScene(env: Env, scene: Scene, width: number, height: number
   }
 }
 
+// ---------------------------------------------------------------------------
+// Views composited after the program
+// ---------------------------------------------------------------------------
+
+/** Layers for the view scenes: pictures, colour, Edge Effects, a mask,
+ *  generated content (on top), blending in hardware and by reading the
+ *  stack back. */
+function viewLayers(width: number, height: number, extra: (index: number) => Command = () => ({})): Command[] {
+  return [
+    ...generatedLayer('view-gen', 0, corners(0.55, 0.05, 0.4, 0.35), { blend_mode: 'screen', ...extra(0) }),
+    ...grid(9, (i, x, y, w, h) => imageLayer(`view-${i}`, 1 + i, fit(width, height, 1 / 3), i, corners(x, y, w, h), extra(1 + i))),
+    ...scatter(8, 31).flatMap((r, i) => imageLayer(`view-top-${i}`, 10 + i, fit(width, height, 0.1), 9 + i,
+      corners(r.x, r.y, r.w, r.h), { blend_mode: ['normal', 'screen', 'overlay', 'multiply', 'difference', 'add', 'normal', 'softlight'][i],
+        opacity: 0.5 + 0.5 * r.a, ...(i === 6 ? circleMask(24) : {}), ...extra(10 + i) })),
+    ...colorLayer('view-color', 18, [0.9, 0.3, 0.2, 1], corners(0.05, 0.6, 0.3, 0.3), { blend_mode: 'hardlight', ...extra(18) }),
+    ...edgeLayersFrom(width, height, [{ id: 'view-edge', corners: corners(0.35, 0.35, 0.3, 0.3), stroke: 'neon',
+      extra: { opacity: 0.9, ...extra(19) } }]).map(command => command.type === 'upsert_layer' ? { ...command, z_index: 19 } : command),
+    ...maskLayer('view-mask', 20, corners(0.0, 0.0, 1.0, 1.0), ring(32, 0.47, 0.03), false, 0.02, extra(20)),
+    ...imageLayer('view-over', 21, fit(width, height, 0.3), 5, corners(0.6, 0.55, 0.35, 0.4), { blend_mode: 'exclusion', ...extra(21) }),
+  ];
+}
+
+/** A Screen: `extra` sets its crop, rotation, warp, calibration or grade. */
+function screen(id: string, width: number, height: number, extra: Command): Command {
+  return { id, width, height, cropX: 0, cropY: 0, cropW: 1, cropH: 1, warpMode: 'rect', ...extra };
+}
+
+/** A mild keystone, as the projector calibration uniforms (rows of a 3x3
+ *  homography in the first three, enabled in [2][3]). */
+const KEYSTONE = [[1.05, 0.06, -0.03, 0], [-0.04, 0.97, 0.02, 0], [0.05, -0.04, 1, 1], [0, 0, 0, 0], [0, 0, 0, 0]];
+
+type ViewScene = {
+  name: string;
+  build(width: number, height: number): Command[];
+  /** RPC calls after the layers: [method, params]. */
+  setup(width: number, height: number): Array<[string, Command]>;
+  /** 'program', 'deck:a', 'deck:b', 'record' or 'slice:<id>'. */
+  views: string[];
+};
+
+const VIEW_SCENES: ViewScene[] = [
+  {
+    name: 'deck-monitors',
+    // Bank A shows the layers, bank B the even ones; the program all.
+    build: (width, height) => viewLayers(width, height, i => ({ deck_monitor_bank: i % 2 ? 'a' : 'b', deck_monitor_opacity: 1 })),
+    setup: () => [['set_deck_monitor_width', { width: 480 }]],
+    views: ['program', 'deck:a', 'deck:b'],
+  },
+  {
+    name: 'record-composition',
+    build: (width, height) => viewLayers(width, height),
+    setup: () => [['set_record_target', { kind: 'composition', alpha: true }]],
+    views: ['program', 'record'],
+  },
+  {
+    name: 'record-layers',
+    build: (width, height) => viewLayers(width, height),
+    setup: () => [['set_record_target', { kind: 'layer', layer_ids: ['view-2', 'view-top-1', 'view-gen', 'view-edge'], alpha: false }]],
+    views: ['record'],
+  },
+  {
+    // Screens drawn straight from the compositor: a rotated crop, a corner
+    // warp with an edge blend, a Bezier mesh warp, a keystoned projector.
+    name: 'screens',
+    build: (width, height) => viewLayers(width, height),
+    setup: (width, height) => [['set_slice_outputs', { slices: [
+      screen('crop', width, height, { cropX: 0.2, cropY: 0.1, cropW: 0.5, cropH: 0.6, rotation: 90 }),
+      screen('corners', width, height, { warpMode: 'corners', edgeBlendRight: 0.2, blackLevelR: 0.05, blackLevelG: 0.05, blackLevelB: 0.05,
+        corners: { topLeft: { x: 0.1, y: 0.05 }, topRight: { x: 0.85, y: 0.15 }, bottomRight: { x: 0.95, y: 0.9 }, bottomLeft: { x: 0.05, y: 0.7 } } }),
+      screen('mesh', width, height, { warpMode: 'mesh', meshGrid: bezierMesh(4, 4, 0.4, 3) }),
+      screen('keystone', width, height, { cropX: 0.3, cropW: 0.6, projectorCalibration: KEYSTONE }),
+    ] }]],
+    views: ['slice:crop', 'slice:corners', 'slice:mesh', 'slice:keystone'],
+  },
+  {
+    // The Master Warp under every Screen: corners, then a Bezier mesh.
+    name: 'screens-master-warp',
+    build: (width, height) => viewLayers(width, height),
+    setup: (width, height) => [
+      ['submit_commands', { commands: [{ type: 'set_output_stage', masterWarp: { enabled: true, mode: 'corners',
+        corners: { topLeft: { x: 0.05, y: 0.0 }, topRight: { x: 0.92, y: 0.08 }, bottomRight: { x: 1.0, y: 0.95 }, bottomLeft: { x: 0.0, y: 1.0 } } } }] }],
+      ['set_slice_outputs', { slices: [
+        screen('mw-crop', width, height, { cropX: 0.1, cropY: 0.2, cropW: 0.6, cropH: 0.6 }),
+        screen('mw-corners', width, height, { warpMode: 'corners',
+          corners: { topLeft: { x: 0.1, y: 0.05 }, topRight: { x: 0.85, y: 0.15 }, bottomRight: { x: 0.95, y: 0.9 }, bottomLeft: { x: 0.05, y: 0.7 } } }),
+      ] }],
+    ],
+    views: ['slice:mw-crop', 'slice:mw-corners'],
+  },
+  {
+    name: 'screens-master-mesh',
+    build: (width, height) => viewLayers(width, height),
+    setup: (width, height) => [
+      ['submit_commands', { commands: [{ type: 'set_output_stage', masterWarp: { enabled: true, mode: 'mesh',
+        meshGrid: bezierMesh(4, 4, 0.3, 5) } }] }],
+      ['set_slice_outputs', { slices: [screen('mm-crop', width, height, { cropX: 0.25, cropY: 0.25, cropW: 0.5, cropH: 0.5 })] }],
+    ],
+    views: ['slice:mm-crop'],
+  },
+  {
+    // A dome with a Screen on it: the raster compositor leaves that Screen
+    // to the legacy one; the program is drawn raster (the dome reprojects
+    // the canvas after it).
+    name: 'dome-screen',
+    build: (width, height) => viewLayers(width, height),
+    setup: (width, height) => [
+      ['submit_commands', { commands: [{ type: 'set_output_stage', domeEnabled: true, domeMode: 0, domeFOV: 180 }] }],
+      ['set_slice_outputs', { slices: [screen('dome-crop', width, height, { cropX: 0.25, cropY: 0.0, cropW: 0.5, cropH: 1 })] }],
+    ],
+    views: ['program', 'slice:dome-crop'],
+  },
+];
+
+type ViewRun = {
+  views: Map<string, Run>;
+  /** Raster stats per view key ('program' for the program). */
+  raster: Record<string, Run['raster']>;
+  /** GA_CORE_PASS_TIMING: per pass label, average GPU ms over the timed window. */
+  passMs: Record<string, number>;
+  cpuMs: number | null;
+};
+
+async function readView(rpc: ReturnType<typeof core>, view: string): Promise<any> {
+  if (view === 'program') return rpc.send('frame_snapshot', { include_pixels: true });
+  if (view.startsWith('deck:')) return rpc.send('frame_snapshot', { deck_monitor: view.slice(5), include_pixels: true });
+  if (view === 'record') return rpc.send('output_shared_texture_snapshot', { include_pixels: true, capture_source: 'record_target' });
+  return rpc.send('output_shared_texture_snapshot', { include_pixels: true, capture_source: view });
+}
+
+async function renderViews(env: Env, scene: ViewScene, width: number, height: number, timed: boolean): Promise<ViewRun> {
+  const rpc = core({ ...env, ...(timed ? { GA_CORE_PASS_TIMING: '1', GA_CORE_MAX_FRAMES_IN_FLIGHT: '1' } : {}) });
+  try {
+    const started = await rpc.send('start', { config: {
+      backend: platform.rendererBackend, width, height, target_fps: 60, native_quality_policy: 'fixed',
+    } }, 30000);
+    expect(started?.backend_ready).toBe(true);
+    if (env.GA_CORE_COMPOSITOR === 'raster' && !env.CORE_BINARY) {
+      const ready = Date.now() + 30000;
+      while (!(await rpc.send('capabilities'))?.features?.compositor_raster_ready && Date.now() < ready) await sleep(50);
+    }
+    await rpc.send('set_render_clock', { mode: 'manual', time: 1.25 });
+    await rpc.send('submit_commands', { commands: [...scene.build(width, height), { type: 'present' }] });
+    for (const [method, params] of scene.setup(width, height)) await rpc.send(method, params);
+    await rpc.send('submit_commands', { commands: [{ type: 'present' }] });
+    await sleep(600);
+    const views = new Map<string, Run>();
+    for (const view of scene.views) {
+      const frame = await readView(rpc, view);
+      if (!frame?.rgba_b64) throw new Error(`${scene.name}: no pixels for ${view}`);
+      views.set(view, { pixels: Buffer.from(frame.rgba_b64, 'base64'), width: Number(frame.width), height: Number(frame.height),
+        bgra: String(frame.format ?? 'bgra').toLowerCase().startsWith('bgra'), gpuMs: null, gpuP10: null, cpuMs: null, passes: '',
+        layerBytesPerFrame: null, raster: null });
+    }
+    const passMs: Record<string, number> = {};
+    let cpuMs: number | null = null;
+    if (timed) {
+      const seconds = Number(process.env.GA_CORE_COMPOSITOR_BENCH_SECONDS ?? 3);
+      const before = (await rpc.send('status')).gpu_pass_timing;
+      const cpuSamples: number[] = [];
+      const end = performance.now() + seconds * 1000;
+      while (performance.now() < end) {
+        await sleep(50);
+        const cpu = Number((await rpc.send('status')).avg_render_cpu_ms ?? 0);
+        if (cpu > 0) cpuSamples.push(cpu);
+      }
+      const after = (await rpc.send('status')).gpu_pass_timing;
+      for (const [label, [sum, count]] of Object.entries(after?.passes ?? {}) as Array<[string, [number, number]]>) {
+        const [sum0, count0] = (before?.passes?.[label] ?? [0, 0]) as [number, number];
+        if (count > count0) passMs[label] = (sum - sum0) / (count - count0);
+      }
+      cpuSamples.sort((a, b) => a - b);
+      cpuMs = cpuSamples.length ? cpuSamples[Math.floor(cpuSamples.length / 2)] : null;
+    }
+    const stats = (await rpc.send('stats'))?.compositor_raster ?? null;
+    const raster: Record<string, Run['raster']> = {};
+    if (stats) {
+      raster.program = stats;
+      for (const [key, value] of Object.entries(stats.views ?? {})) raster[key] = value as Run['raster'];
+    }
+    return { views, raster, passMs, cpuMs };
+  } finally {
+    await rpc.close();
+  }
+}
+
+/** The views the raster compositor leaves to the legacy one. */
+const LEGACY_VIEWS: Record<string, string> = { 'slice:dome-crop': 'dome Screen' };
+
 /** GA_CORE_COMPOSITOR_BENCH_DUMP=<dir>: write each run as a PNG there. */
 function dump(name: string, run: Run, bgra: boolean) {
   const dir = process.env.GA_CORE_COMPOSITOR_BENCH_DUMP;
@@ -595,7 +821,7 @@ suite('Compositor scene set', () => {
     const width = 640;
     const height = 360;
     for (const scene of SCENES) {
-      if (process.env.GA_CORE_COMPOSITOR_BENCH_TRACE) console.log(`scene ${scene.name}`);
+      trace(`scene ${scene.name}`);
       const off = await renderScene({ GA_CORE_SOURCE_MIPS: '0' }, scene, width, height, false);
       const on = await renderScene({ GA_CORE_SOURCE_MIPS: '1' }, scene, width, height, false);
       dump(`${scene.name}-mips-off`, off, off.bgra);
@@ -624,17 +850,94 @@ suite('Compositor scene set', () => {
     for (const { scene, env, tag } of runs) {
       const legacy = await renderScene(env, scene, width, height, false);
       const raster = await renderScene({ ...env, GA_CORE_COMPOSITOR: 'raster' }, scene, width, height, false);
+      if (process.env.GA_CORE_COMPOSITOR_BENCH_BASE) {
+        const base = await renderScene({ ...env, CORE_BINARY: process.env.GA_CORE_COMPOSITOR_BENCH_BASE }, scene, width, height, false);
+        expect(difference(base, legacy).max, `${scene.name}${tag}: legacy against the base build`).toBe(0);
+      }
       dump(`${scene.name}${tag}-legacy`, legacy, legacy.bgra);
       dump(`${scene.name}${tag}-raster`, raster, raster.bgra);
       const diff = difference(legacy, raster);
-      if (process.env.GA_CORE_COMPOSITOR_BENCH_TRACE) {
-        console.log(`scene ${scene.name}${tag}: max diff ${diff.max}, differing ${(diff.differing * 100).toFixed(4)}%${rasterNote(raster)}`);
-      }
+      trace(`scene ${scene.name}${tag}: max diff ${diff.max}, differing ${(diff.differing * 100).toFixed(4)}%${rasterNote(raster)}`);
+      if (measureOnly) continue;
       expect(diff.max, `${scene.name}${tag}: max channel difference`).toBeLessThanOrEqual(1);
       expect(diff.differing, `${scene.name}${tag}: share of channels off by one`).toBeLessThan(0.001);
       expect(differenceOver(legacy, raster, 1)).toBe(0);
     }
   }, 420000);
+
+  // Deck monitors, the record target and Screens drawn straight from the
+  // compositor, with the same tolerance.
+  it('draws the composite views the same with the raster compositor as with the legacy one', async () => {
+    const width = 640;
+    const height = 360;
+    for (const scene of VIEW_SCENES) {
+      const legacy = await renderViews({}, scene, width, height, false);
+      const raster = await renderViews({ GA_CORE_COMPOSITOR: 'raster' }, scene, width, height, false);
+      const base = process.env.GA_CORE_COMPOSITOR_BENCH_BASE
+        ? await renderViews({ CORE_BINARY: process.env.GA_CORE_COMPOSITOR_BENCH_BASE }, scene, width, height, false) : null;
+      for (const view of scene.views) {
+        const a = legacy.views.get(view)!;
+        const b = raster.views.get(view)!;
+        const tag = `${scene.name}-${view.replace(':', '-')}`;
+        dump(`${tag}-legacy`, a, a.bgra);
+        dump(`${tag}-raster`, b, b.bgra);
+        const diff = difference(a, b);
+        const stats = raster.raster[view];
+        if (base) expect(difference(base.views.get(view)!, a).max, `${tag}: legacy against the base build`).toBe(0);
+        trace(`view ${tag}: ${a.width}x${a.height}, max diff ${diff.max}, differing ${(diff.differing * 100).toFixed(4)}%${stats ? rasterNote({ ...b, raster: stats }) : ', no raster plan'}`);
+        expect(a.pixels.length, `${tag}: size`).toBe(b.pixels.length);
+        if (measureOnly) continue;
+        expect(diff.max, `${tag}: max channel difference`).toBeLessThanOrEqual(1);
+        expect(diff.differing, `${tag}: share of channels off by one`).toBeLessThan(0.001);
+        expect(differenceOver(a, b, 1)).toBe(0);
+        // Drawn raster on every frame, or left to the legacy compositor for the reason it names.
+        expect(stats, `${tag}: raster plan`).toBeTruthy();
+        if (LEGACY_VIEWS[view]) {
+          expect(stats!.last_fallback, `${tag}: fallback`).toBe(LEGACY_VIEWS[view]);
+          expect(stats!.frames, `${tag}: raster frames`).toBe(0);
+        } else {
+          expect(stats!.frames, `${tag}: raster frames`).toBeGreaterThan(0);
+          // Only frames drawn before its pipelines were made.
+          if (stats!.fallback_frames > 0) expect(stats!.last_fallback, `${tag}: legacy frames`).toBe('pipelines not ready');
+        }
+      }
+    }
+  }, 420000);
+
+  // GA_CORE_COMPOSITOR_BENCH=1: GPU time of each view's composite pass
+  // (GA_CORE_PASS_TIMING) and the CPU time of the frame, both settings
+  // interleaved.
+  (bench ? it : it.skip)('benchmark: composite views GPU time', async () => {
+    const width = Number(process.env.GA_CORE_COMPOSITOR_BENCH_WIDTH ?? 1920);
+    const height = Number(process.env.GA_CORE_COMPOSITOR_BENCH_HEIGHT ?? 1080);
+    const envs = compareEnvs();
+    const rounds = Number(process.env.GA_CORE_COMPOSITOR_BENCH_ROUNDS ?? 2);
+    const only = (process.env.GA_CORE_COMPOSITOR_BENCH_VIEW_SCENES ?? '').split(',').filter(Boolean);
+    const lines: string[] = [`composite views benchmark ${width}x${height}`];
+    for (const scene of VIEW_SCENES.filter(scene => !only.length || only.includes(scene.name))) {
+      const samples = new Map<string, Array<{ passMs: Record<string, number>; cpuMs: number | null; raster: ViewRun['raster'] }>>();
+      for (let round = 0; round < rounds; round++) {
+        for (const [name, env] of Object.entries(envs)) {
+          const run = await renderViews(env, scene, width, height, true);
+          samples.set(name, [...(samples.get(name) ?? []), { passMs: run.passMs, cpuMs: run.cpuMs, raster: run.raster }]);
+        }
+      }
+      for (const [name, runs] of samples) {
+        // Per pass, the best round (other GPU work only ever adds time).
+        const labels = new Set(runs.flatMap(run => Object.keys(run.passMs)));
+        const best = (label: string) => Math.min(...runs.map(run => run.passMs[label] ?? Infinity));
+        const passes = [...labels].filter(label => /Deck Monitor|Record Target|Full-detail|Output Mirror Pass|Snapshot Pass/.test(label))
+          .sort().map(label => `${label} ${best(label).toFixed(3)} ms`).join(', ');
+        const cpu = runs.map(run => run.cpuMs ?? Infinity).sort((a, b) => a - b)[0];
+        const raster = runs[0].raster;
+        const drawn = Object.entries(raster).filter(([key]) => key !== 'program')
+          .map(([key, stats]) => `${key} ${stats && stats.frames > 0 ? `raster${stats.last_passes ? ` ${stats.last_passes}p` : ''}` : `legacy (${stats?.last_fallback})`}`).join(', ');
+        lines.push(`  ${scene.name.padEnd(20)} ${name.padEnd(12)} ${passes}; cpu median ${Number.isFinite(cpu) ? cpu.toFixed(2) : 'n/a'} ms${drawn ? `; ${drawn}` : ''}`);
+      }
+    }
+    console.log(lines.join('\n'));
+    if (process.env.GA_CORE_COMPOSITOR_BENCH_VIEWS_OUT) writeFileSync(process.env.GA_CORE_COMPOSITOR_BENCH_VIEWS_OUT, `${lines.join('\n')}\n`);
+  }, 1800000);
 
   (bench ? it : it.skip)('benchmark: composite GPU time and layer upload per frame', async () => {
     const width = Number(process.env.GA_CORE_COMPOSITOR_BENCH_WIDTH ?? 1920);
