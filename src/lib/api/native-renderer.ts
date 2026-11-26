@@ -1286,6 +1286,8 @@ export interface RendererFrameSnapshot {
   dark_frame: boolean;
   includes_pixels: boolean;
   rgba_b64?: string;
+  /** The pixels as raw bytes, when asked for with `pixel_bytes`. */
+  rgba_raw?: Uint8Array;
 }
 
 export interface NativeRendererFrameSnapshotExportResult extends RendererFrameSnapshot {
@@ -1867,7 +1869,7 @@ export async function getNativeRendererSnapshot() {
 
 export async function getNativeRendererFrameSnapshot(
   includePixels = false,
-  options: { time?: number; frame_index?: number; source_id?: string; layer_id?: string; max_dim?: number } = {},
+  options: { time?: number; frame_index?: number; source_id?: string; layer_id?: string; max_dim?: number; pixel_bytes?: boolean } = {},
 ) {
   return invoke<RendererFrameSnapshot>('native_renderer_get_frame_snapshot', {
     include_pixels: includePixels,

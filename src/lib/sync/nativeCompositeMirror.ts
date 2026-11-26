@@ -20,6 +20,7 @@
  */
 import { invoke } from '$lib/bridge';
 import { epochNow } from '$lib/utils/epochClock';
+import { PIXEL_BYTES, snapshotBytes, snapshotHas, type SnapshotPayload } from './snapshotBytes';
 
 export interface CompositeMirrorHandle {
   canvas: HTMLCanvasElement;
@@ -89,8 +90,7 @@ let rawFrame: ImageData | null = null;
 const frameListeners = new Set<() => void>();
 
 /** The pixel payload of a core frame snapshot. */
-export interface SnapshotPixels {
-  rgba_b64?: string;
+export interface SnapshotPixels extends SnapshotPayload {
   width?: number;
   height?: number;
   format?: string;
@@ -110,23 +110,11 @@ export function drawSnapshotToCanvas(
   ctx: CanvasRenderingContext2D,
   scratch: ImageData | null,
 ): ImageData | null {
-  if (!snap?.rgba_b64 || !snap.width || !snap.height) return null;
-  // A 1024px mirror frame is ~4MB of base64, and the obvious
-  // atob-then-charCodeAt-per-byte decode showed up in a live profile at 13%
-  // of renderer samples with another 6% in atob itself. Uint8Array.fromBase64
-  // does the whole thing in native code; the loop stays as the fallback for
-  // runtimes without it.
-  let bytes: Uint8Array;
-  const fromBase64 = (Uint8Array as unknown as {
-    fromBase64?: (s: string) => Uint8Array;
-  }).fromBase64;
-  if (typeof fromBase64 === 'function') {
-    bytes = fromBase64(snap.rgba_b64);
-  } else {
-    const raw = atob(snap.rgba_b64);
-    bytes = new Uint8Array(raw.length);
-    for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
-  }
+  if (!snapshotHas(snap, 'rgba') || !snap?.width || !snap.height) return null;
+  // Raw bytes when the core sends them (`pixel_bytes`); otherwise base64,
+  // decoded in native code (a 1024px frame is ~4MB of it).
+  const bytes = snapshotBytes(snap, 'rgba');
+  if (!bytes) return null;
   const w = snap.width;
   const h = snap.height;
   // The core sends rows already stripped of GPU padding, so the padded
@@ -154,20 +142,12 @@ export function drawSnapshotToCanvas(
   return image;
 }
 
-function base64Bytes(b64: string): Uint8Array {
-  const fromBase64 = (Uint8Array as unknown as { fromBase64?: (s: string) => Uint8Array }).fromBase64;
-  if (typeof fromBase64 === 'function') return fromBase64(b64);
-  const raw = atob(b64);
-  const bytes = new Uint8Array(raw.length);
-  for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
-  return bytes;
-}
-
 /** JPEG frames decode off the main thread and draw in one call (unless a
  *  newer frame was drawn while this one decoded). */
-async function decodeJpegIntoIfNewer(snap: { jpeg_b64?: string }, requestSeq: number): Promise<boolean> {
-  if (!mirrorCanvas || !mirrorCtx || !snap.jpeg_b64) return false;
-  const bitmap = await createImageBitmap(new Blob([base64Bytes(snap.jpeg_b64) as BlobPart], { type: 'image/jpeg' }));
+async function decodeJpegIntoIfNewer(snap: SnapshotPayload, requestSeq: number): Promise<boolean> {
+  const jpeg = snapshotBytes(snap, 'jpeg');
+  if (!mirrorCanvas || !mirrorCtx || !jpeg) return false;
+  const bitmap = await createImageBitmap(new Blob([jpeg as BlobPart], { type: 'image/jpeg' }));
   if (requestSeq <= drawnRequestSeq || !mirrorCanvas || !mirrorCtx) {
     bitmap.close();
     return false;
@@ -205,7 +185,7 @@ async function pumpOnce(maxDim: number): Promise<void> {
   lastPumpStart = performance.now();
   const requestedAt = epochMs();
   const requestSeq = ++pumpRequestSeq;
-  let snap: (Parameters<typeof decodeSnapshotInto>[0] & { jpeg_b64?: string }) | null = null;
+  let snap: SnapshotPixels | null = null;
   try {
     // Large frames travel as JPEG: raw pixels at 30 fps were ~150 MB/s of
     // base64 through the broker and slowed every window. Small ones (LED
@@ -215,8 +195,9 @@ async function pumpOnce(maxDim: number): Promise<void> {
       include_pixels: true,
       max_dim: maxDim,
       live_output: true,
+      ...PIXEL_BYTES,
       ...(useJpeg ? { encoding: 'jpeg', quality: 82 } : {}),
-    }) as (Parameters<typeof decodeSnapshotInto>[0] & { jpeg_b64?: string }) | null;
+    }) as SnapshotPixels | null;
   } catch (err) {
     failureStreak += 1;
     // Transient during core restarts; only worth a log line early on.
@@ -235,7 +216,7 @@ async function pumpOnce(maxDim: number): Promise<void> {
   if (!snap) return;
   try {
     let decoded: boolean;
-    if (snap.jpeg_b64) {
+    if (snapshotHas(snap, 'jpeg')) {
       decoded = await decodeJpegIntoIfNewer(snap, requestSeq);
     } else {
       decoded = requestSeq > drawnRequestSeq && decodeSnapshotInto(snap);

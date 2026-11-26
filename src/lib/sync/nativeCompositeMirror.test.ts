@@ -29,8 +29,10 @@ it('reads at the largest live consumer and drops back when it releases', async (
   await vi.advanceTimersByTimeAsync(60);
   // Back to small raw frames: no JPEG encoding asked for.
   expect(lastMaxDim()).toBe(192);
-  const call = vi.mocked(invoke).mock.calls.at(-1)?.[1] as { encoding?: string };
+  const call = vi.mocked(invoke).mock.calls.at(-1)?.[1] as { encoding?: string; pixel_bytes?: boolean };
   expect(call.encoding).toBeUndefined();
+  // Pixels come back as raw bytes where the core can send them.
+  expect(call.pixel_bytes).toBe(true);
   // A larger consumer joining later raises it again.
   const sim = acquireNativeCompositeMirror({ maxDim: 1280, fps: 24 });
   vi.mocked(invoke).mockClear();

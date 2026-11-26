@@ -2,6 +2,7 @@
   import { onDestroy } from 'svelte';
   import { get } from 'svelte/store';
   import { getNativeRendererFrameSnapshot } from '../api/native-renderer';
+  import { PIXEL_BYTES, snapshotBytes } from '../sync/snapshotBytes';
   import { project } from '../stores/layers';
   import type { CropRegion, MediaSource } from '../types';
   import { createDefaultCropRegion } from '../types';
@@ -253,12 +254,12 @@
         const startedAt = performance.now();
         try {
           if (!id) return;
-          const frame = await getNativeRendererFrameSnapshot(true, { source_id: id, layer_id: layerId, max_dim: PREVIEW_MAX_DIM });
+          const frame = await getNativeRendererFrameSnapshot(true, { source_id: id, layer_id: layerId, max_dim: PREVIEW_MAX_DIM, ...PIXEL_BYTES });
           if (generation !== revision) return;
-          if (!frame?.rgba_b64) throw new Error('Preview is not ready');
-          const binary = atob(frame.rgba_b64);
-          const bytes = new Uint8ClampedArray(binary.length);
-          for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+          const pixels = snapshotBytes(frame, 'rgba');
+          if (!pixels?.length) throw new Error('Preview is not ready');
+          // ImageData needs its own copy: raw bytes may be shared with IPC.
+          const bytes = new Uint8ClampedArray(pixels);
           if (bytes.length !== frame.width * frame.height * 4) throw new Error('Incomplete preview');
           if (node.width !== frame.width) node.width = frame.width;
           if (node.height !== frame.height) node.height = frame.height;

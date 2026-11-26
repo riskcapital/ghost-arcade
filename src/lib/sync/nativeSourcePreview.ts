@@ -1,15 +1,12 @@
 import {invoke} from '$lib/bridge';
-export type SourceSnapshot={width:number;height:number;rgba_b64?:string;jpeg_b64?:string;format?:string;bytes_per_row?:number;padded_bytes_per_row?:number};
-function base64Bytes(b64:string):Uint8Array{
- const decode=(Uint8Array as any).fromBase64;
- return decode?decode(b64):Uint8Array.from(atob(b64),c=>c.charCodeAt(0));
-}
+import {PIXEL_BYTES,snapshotBytes,snapshotHas,type SnapshotPayload} from './snapshotBytes';
+export type SourceSnapshot=SnapshotPayload&{width:number;height:number;format?:string;bytes_per_row?:number;padded_bytes_per_row?:number};
 /** Decode a source readback, retaining alpha. Both Metal and Windows formats work.
  * The core sends rows either packed or padded to the GPU copy alignment and
  * reports both strides, so the stride is taken from the data length. */
 export function sourceSnapshotPixels(s:SourceSnapshot):Uint8ClampedArray<ArrayBuffer>|null{
- if(!s.rgba_b64||!s.width||!s.height)return null;
- const raw=base64Bytes(s.rgba_b64),row=s.width*4;
+ if(!snapshotHas(s,'rgba')||!s.width||!s.height)return null;
+ const raw=snapshotBytes(s,'rgba')!,row=s.width*4;
  const fits=(stride:number|undefined)=>!!stride&&stride>=row&&raw.length>=stride*(s.height-1)+row;
  const stride=fits(s.padded_bytes_per_row)?s.padded_bytes_per_row!:fits(s.bytes_per_row)?s.bytes_per_row!:fits(row)?row:0;
  if(!stride)return null;
@@ -57,8 +54,9 @@ type PreviewCanvas=Pick<HTMLCanvasElement,'width'|'height'|'isConnected'|'client
 async function paintSnapshot(canvas:PreviewCanvas,s:SourceSnapshot):Promise<boolean>{
  const context=canvas.getContext('2d') as CanvasRenderingContext2D|null;if(!context)return false;
  const size=()=>{if(canvas.width!==s.width)canvas.width=s.width;if(canvas.height!==s.height)canvas.height=s.height;};
- if(s.jpeg_b64){
-  const bitmap=await createImageBitmap(new Blob([base64Bytes(s.jpeg_b64) as Uint8Array<ArrayBuffer>],{type:'image/jpeg'}));
+ const jpeg=snapshotBytes(s,'jpeg');
+ if(jpeg){
+  const bitmap=await createImageBitmap(new Blob([jpeg as Uint8Array<ArrayBuffer>],{type:'image/jpeg'}));
   if(!canvas.isConnected){bitmap.close();return false;}
   size();context.drawImage(bitmap,0,0);bitmap.close();return true;
  }
@@ -89,7 +87,7 @@ export function createNativeSourcePreview(target:(()=>string)|NativeSourcePrevie
   busy=true;
   try{
    const size=previewRequestSize(canvas.clientWidth,canvas.clientHeight);
-   const s=await invoke('native_renderer_get_frame_snapshot',{layer_id:id,include_pixels:true,...size,max_dim:Math.max(size.width,size.height),encoding:'jpeg',quality:82}) as SourceSnapshot|null;
+   const s=await invoke('native_renderer_get_frame_snapshot',{layer_id:id,include_pixels:true,...size,max_dim:Math.max(size.width,size.height),encoding:'jpeg',quality:82,...PIXEL_BYTES}) as SourceSnapshot|null;
    if(id!==options.layerId()||!canvas.isConnected||!s||!await paintSnapshot(canvas,s)){if(shownId!==id)shownId='';return shownId===id;}
    shownId=id;stillReads=settling?stillReads+1:1;shownStill=still;
    nextAt=now+Math.max(still!==null?STILL_READ_GAP_MS:0,previewInterval(performance.now()-now));

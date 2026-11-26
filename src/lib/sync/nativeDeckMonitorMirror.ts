@@ -11,6 +11,7 @@
  */
 import { invoke } from '$lib/bridge';
 import { drawSnapshotToCanvas, type SnapshotPixels } from './nativeCompositeMirror';
+import { PIXEL_BYTES } from './snapshotBytes';
 
 export interface DeckMonitorMirrorHandle {
   release(): void;
@@ -51,6 +52,7 @@ export function startNativeDeckMonitorMirror(
       const snap = await invoke('native_renderer_get_frame_snapshot', {
         include_pixels: true,
         deck_monitor: deck.bank,
+        ...PIXEL_BYTES,
       }) as SnapshotPixels | null;
       if (released) return;
       const image = drawSnapshotToCanvas(snap, deck.canvas, deck.ctx, deck.scratch);
