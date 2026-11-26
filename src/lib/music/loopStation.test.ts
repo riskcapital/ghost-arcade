@@ -32,6 +32,8 @@ import {
   setLoopTrackSound,
   liveTakeNotes,
   selectLoopTrack,
+  setLoopSessionHold,
+  startLoopTrack,
 } from './loopStation';
 import { normalizeStationData } from './loopTrack';
 import { memoryBackend, setUserLoopsBackend, userLoops } from './userLoops';
@@ -638,5 +640,56 @@ describe('against an outside clock (Ableton Link)', () => {
     expect(_trackRuntime(0).recStart).toBe(8);
     runTo(8);
     expect(clicks.length).toBeGreaterThan(0);
+  });
+});
+
+describe('Link Start/Stop Sync', () => {
+  it('a take armed while the session is stopped waits, then records from the bar the session starts on', () => {
+    musicStudio.updateLoopStation((d) => ({ ...d, startMode: 'bar' }));
+    setLoopSessionHold(true);
+    pressLoopTrack(0);
+    expect(_trackRuntime(0).phase).toBe('armed');
+    expect(get(loopStationView).tracks[0].waiting).toBe(true);
+    // Its bar comes and goes: it keeps waiting for the session.
+    runTo(9);
+    expect(_trackRuntime(0).phase).toBe('armed');
+    // The session started on bar 12 and is heard a moment late, at 12.01.
+    play(12);
+    clock.beat = 12.01;
+    setLoopSessionHold(false, 12);
+    expect(_trackRuntime(0).recStart).toBe(12);
+    expect(_trackRuntime(0).recEnd).toBe(28);
+    scheduleStation(0.12);
+    expect(_trackRuntime(0).phase).toBe('record');
+    runTo(28);
+    // The note on the session's downbeat is beat 1 of the loop.
+    expect(track0().layers[0].map((n) => n.beat)).toEqual([0]);
+  });
+
+  it('without the hold, a take arms on the next bar as before', () => {
+    musicStudio.updateLoopStation((d) => ({ ...d, startMode: 'bar' }));
+    setLoopSessionHold(false);
+    pressLoopTrack(0);
+    expect(_trackRuntime(0).recStart).toBe(4);
+    expect(get(loopStationView).tracks[0].waiting).toBe(false);
+  });
+
+  it('a stopped loop starts on the bar given, and one just gone plays its downbeat at once', () => {
+    musicStudio.updateLoopStation((d) => ({ ...d, startMode: 'bar' }));
+    pressLoopTrack(0);
+    runTo(4);
+    play(4);
+    runTo(20);
+    stopLoopTrack(0, true);
+    expect(_trackRuntime(0).phase).toBe('stopped');
+    clock.beat = 32.02;
+    sent = [];
+    startLoopTrack(0, 32);
+    expect(_trackRuntime(0).origin).toBe(32);
+    scheduleStation(0.12);
+    const ons = sent.filter((e) => e.type === 'on');
+    expect(ons).toHaveLength(1);
+    // Due at beat 32, already gone: it goes out now rather than a bar later.
+    expect(ons[0].time).toBeCloseTo((32.02 * 500) / 1000, 6);
   });
 });

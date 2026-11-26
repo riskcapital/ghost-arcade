@@ -316,11 +316,13 @@ export class AudioLoopEngine implements AudioLoopTracks {
     return true;
   }
 
-  play(i: number): void {
+  play(i: number, atBeat?: number): void {
     const t = this.tracks[i];
     if (!t.buffer || t.voice) return;
     const c = this.clock();
-    const beat = nextBarAt(c.beat + (LEAD * 1000) / c.beatMs);
+    const soonest = c.beat + (LEAD * 1000) / c.beatMs;
+    // From the bar given (a session start); one just gone joins in phase now.
+    const beat = atBeat !== undefined && Number.isFinite(atBeat) ? Math.max(atBeat, soonest) : nextBarAt(soonest);
     const offset = loopOffset(beat, t.originBeat, t.bars * BEATS_PER_BAR, t.buffer.duration);
     this.startVoice(t, this.timeOfBeat(beat), offset, 0.003);
     t.state = 'play';

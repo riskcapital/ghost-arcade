@@ -19,7 +19,8 @@ export interface AudioLoopTracks {
   closeRecording(i: number): number | null;
   cancel(i: number): void;
   overdub(i: number, on: boolean): boolean;
-  play(i: number): void;
+  /** Play from the next bar, or from `atBeat` (joining in phase if it has just gone). */
+  play(i: number, atBeat?: number): void;
   stop(i: number, fadeBars: number, now: boolean): void;
   setLevel(i: number, level: number): void;
   undo(i: number): boolean;

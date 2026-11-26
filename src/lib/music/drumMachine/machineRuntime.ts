@@ -254,15 +254,22 @@ export function setMachineMode(mode: MachineMode): void {
   }
 }
 
-export function startMachine(): void {
+/** Start the beat; from `atBeat` (a bar line, as when a Link session starts) when given. */
+export function startMachine(atBeat?: number): void {
   ensureMachine();
   if (get(machineTransport).playing) return;
   musicNow();
   const { beat } = launchClockPosition();
   const others = get(musicStudio).sequencerPlaying || Object.values(get(musicStudio).playingLoops).some(Boolean);
-  // With other music playing, come in on its next bar; alone, on the next beat.
-  origin = others ? Math.ceil(beat / 4 - 0.02) * 4 : Math.ceil(beat - 0.05);
-  scheduled = beat;
+  if (typeof atBeat === 'number' && Number.isFinite(atBeat)) {
+    // A start just gone (heard a moment late) plays its first hits at once.
+    origin = atBeat;
+    scheduled = Math.min(beat, Math.max(atBeat, beat - 0.25));
+  } else {
+    // With other music playing, come in on its next bar; alone, on the next beat.
+    origin = others ? Math.ceil(beat / 4 - 0.02) * 4 : Math.ceil(beat - 0.05);
+    scheduled = beat;
+  }
   heardLive.clear();
   machineTransport.update((x) => ({ ...x, playing: true, queued: null }));
   timer ??= setInterval(tick, TICK_MS);

@@ -148,6 +148,8 @@ import {
 
 /** How far ahead the sequencer and replay schedule, in seconds. */
 const LOOKAHEAD_SECONDS = 0.12;
+/** A start set for a beat just gone (a session start heard late) still plays what fell this close behind it, at once. */
+const START_CATCH_UP_BEATS = 0.25;
 const SCHEDULER_INTERVAL_MS = 25;
 /** Live notes start this far after "now" so a burst of input keeps its spacing. */
 const LIVE_OFFSET_SECONDS = 0.002;
@@ -179,7 +181,8 @@ const midiStarted = new Map<string, string>();
 const midiSustained: string[] = [];
 let sustainDown = false;
 
-let sequencer: { scheduledBeat: number; usedInTake: boolean } | null = null;
+/** `from`: a start set for a beat (a session start under Link): no step before it plays. */
+let sequencer: { scheduledBeat: number; usedInTake: boolean; from?: number } | null = null;
 let replay: { take: Take; origin: number; cursor: number; loop: boolean; held: Set<string> } | null = null;
 
 const heldKey = (instrument: InstrumentId, note: number) => `${instrument}:${note}`;
@@ -306,7 +309,8 @@ export interface MachineHooks {
   stop(): void;
   /** The drum machine beat is playing / start it (Play brings back what Stop stopped). */
   playing?(): boolean;
-  start?(): void;
+  /** Start it (from `atBeat`, a bar line, when given). */
+  start?(atBeat?: number): void;
 }
 
 let machineHooks: MachineHooks | null = null;
@@ -483,19 +487,35 @@ export function stopAll(): void {
   panic();
 }
 
-/** Start the music again: what Stop stopped, or the beat when there is nothing to bring back. */
-export function playAll(): void {
+/**
+ * Start the music again: what Stop stopped, or the beat when there is nothing
+ * to bring back. `atBeat` (a bar line) starts it all there, as when an
+ * Ableton Link session starts; `resumeOnly` brings back what Stop stopped and
+ * never starts the beat on its own.
+ */
+export function playAll(opts: { atBeat?: number; resumeOnly?: boolean } = {}): void {
+  if (opts.resumeOnly && !resumable) return;
   ensureMusicRuntime();
+  const at = opts.atBeat !== undefined && Number.isFinite(opts.atBeat) ? opts.atBeat : undefined;
   const back = resumable;
   resumable = null;
   // Nothing to bring back: the beat (the drum machine) starts.
-  if (back?.beat) startSequencer();
+  if (back?.beat) startSequencer(at);
   if (back?.machine || !back || (!back.beat && !back.loops.length && !back.loopTracks.length)) {
-    if (machineHooks?.start) machineHooks.start();
-    else if (!back?.machine) startSequencer();
+    if (machineHooks?.start) machineHooks.start(at);
+    else if (!back?.machine) startSequencer(at);
   }
-  for (const id of back?.loops ?? []) launchLoop(id, true);
-  for (const i of back?.loopTracks ?? []) startLoopTrack(i);
+  for (const id of back?.loops ?? []) launchLoop(id, true, at);
+  for (const i of back?.loopTracks ?? []) startLoopTrack(i, at);
+}
+
+/** Anything of the studio's playing, or set to start: what Play and Stop act on. */
+export function studioTransportPlaying(): boolean {
+  if (sequencer || replay || loopSlots.size || audioParts.size) return true;
+  if (machineHooks?.playing?.()) return true;
+  const s = get(musicStudio);
+  if (Object.keys(s.playingLoops).length || Object.keys(s.queuedLoops).length) return true;
+  return get(loopStationView).tracks.some((t) => t.phase === 'play' || t.phase === 'overdub');
 }
 
 /** Silence everything at once, effect tails included. */
@@ -745,12 +765,16 @@ export function releaseBowl(note: number): void {
 
 // ── Sequencer ───────────────────────────────────────────────────────────
 
-export function startSequencer(): void {
+export function startSequencer(atBeat?: number): void {
   ensureMusicRuntime();
   audio.now();
   // The pattern runs on the VJ launch clock's beats, so it stays in phase
   // with quantized launches, Link and the tapped tempo.
-  sequencer = { scheduledBeat: launchClockPosition().beat, usedInTake: get(musicStudio).recording };
+  const beat = launchClockPosition().beat;
+  const from = atBeat !== undefined && Number.isFinite(atBeat) ? atBeat : undefined;
+  // From a beat just gone (a session start heard a moment late) its first
+  // steps go out at once; from one to come, nothing plays before it.
+  sequencer = { scheduledBeat: from === undefined ? beat : Math.min(beat, Math.max(from, beat - START_CATCH_UP_BEATS)), usedInTake: get(musicStudio).recording, from };
   musicStudio.setTransport({ sequencerPlaying: true });
   ensureScheduler();
   ensureFrameLoop();
@@ -778,7 +802,9 @@ function scheduleSequencer(): void {
   const timeAt = (b: number) => Math.max(now, now + ((b - beat) * beatMs) / 1000 - lead);
   // One beat: while the drum machine plays, the step pattern's drums stay out (the acid line still plays).
   const machineBeat = machineHooks?.playing?.() ?? false;
+  const from = sequencer.from ?? -Infinity;
   for (const step of machineBeat ? [] : stepsBetween(s.pattern, sequencer.scheduledBeat, horizon)) {
+    if (step.beat < from - 1e-6) continue;
     if (s.drumMutes.includes(step.voice)) continue;
     // A hit just recorded onto this step was already heard live.
     if (heardLive.delete(`${step.voice}:${beatTick(step.beat)}`)) continue;
@@ -792,7 +818,7 @@ function scheduleSequencer(): void {
     acidHeld = null;
   }
   acidWasOn = acidLive;
-  if (acidLive && horizon > acidFromBeat) scheduleAcid(Math.max(sequencer.scheduledBeat, acidFromBeat), horizon, timeAt);
+  if (acidLive && horizon > Math.max(acidFromBeat, from)) scheduleAcid(Math.max(sequencer.scheduledBeat, acidFromBeat, from), horizon, timeAt);
   sequencer.scheduledBeat = horizon;
   if (s.recording && patternHasHits(s.pattern)) sequencer.usedInTake = true;
 }
@@ -1107,20 +1133,20 @@ let beatLoopTimer: ReturnType<typeof setTimeout> | null = null;
  * `now` (a scene already on the bar), it joins the current bar at once, so it
  * still sits on the same bar lines as the beat.
  */
-export function launchLoop(id: string, now = false): void {
+export function launchLoop(id: string, now = false, atBeat?: number): void {
   ensureMusicRuntime();
   audio.now();
   const s = get(musicStudio);
   const found = findClip(s.session, id);
   if (found) {
-    startClip(found.track, found.clip, now);
+    startClip(found.track, found.clip, now, atBeat);
     return;
   }
   // A factory preset that is not in the session (a scene saved before it was).
   const loop = loopById(id);
   if (!loop) return;
-  if ('rows' in loop) launchBeatLoop(beatPattern(loop), loop.id, now, loop.kit);
-  else startMelodic(loop, ROLE_INSTRUMENTS[s.set][loop.role], now);
+  if ('rows' in loop) launchBeatLoop(beatPattern(loop), loop.id, now, loop.kit, atBeat);
+  else startMelodic(loop, ROLE_INSTRUMENTS[s.set][loop.role], now, atBeat);
 }
 
 /** Where a playing clip is now, in beats from its start (null when its track is not playing it). */
@@ -1215,8 +1241,9 @@ function dressTrack(track: TrackId, clip: SessionClip, atMs: number): void {
 }
 
 /** Ms until a clip launched now starts: the next bar when music plays, at once otherwise. */
-function msToClipStart(now: boolean): number {
+function msToClipStart(now: boolean, atBeat?: number): number {
   const { beat, beatMs } = launchClockPosition();
+  if (atBeat !== undefined) return Math.max(0, (atBeat - beat) * beatMs);
   const busy = !!sequencer || !!replay || loopSlots.size > 0 || audioParts.size > 0;
   return busy && !now ? Math.max(0, (nextBar(beat) - beat) * beatMs) : 0;
 }
@@ -1233,8 +1260,8 @@ function sessionAudioPlayer(): SessionAudio {
   return sessionAudio;
 }
 
-function startAudioClip(role: LoopRole, clip: AudioClip, now: boolean): void {
-  const atMs = msToClipStart(now);
+function startAudioClip(role: LoopRole, clip: AudioClip, now: boolean, atBeat?: number): void {
+  const atMs = msToClipStart(now, atBeat);
   const { beat, beatMs } = launchClockPosition();
   const deadline = audio.now() + atMs / 1000;
   // What plays in the part keeps playing until the new clip takes over at the deadline.
@@ -1309,15 +1336,15 @@ function followAudioTempo(): void {
   sessionAudio.setTempo(tempo);
 }
 
-function startClip(track: TrackId, clip: SessionClip, now: boolean): void {
-  dressTrack(track, clip, msToClipStart(now));
+function startClip(track: TrackId, clip: SessionClip, now: boolean, atBeat?: number): void {
+  dressTrack(track, clip, msToClipStart(now, atBeat));
   const s = get(musicStudio);
-  if (clip.kind === 'beat') launchBeatLoop(clip.pattern, clip.id, now, clip.kit);
+  if (clip.kind === 'beat') launchBeatLoop(clip.pattern, clip.id, now, clip.kit, atBeat);
   else if (clip.kind === 'audio') {
-    if (track !== 'beats') startAudioClip(track, clip, now);
+    if (track !== 'beats') startAudioClip(track, clip, now, atBeat);
   } else if (track !== 'beats') {
     const loop = clipLoop(clip, track, s.set, s.key);
-    startMelodic(loop, loop.instrument, now);
+    startMelodic(loop, loop.instrument, now, atBeat);
   }
 }
 
@@ -1325,14 +1352,15 @@ function startClip(track: TrackId, clip: SessionClip, now: boolean): void {
  * Start a melodic loop in its part's slot. With music playing it starts on
  * the next bar (taking over from the loop there); with nothing playing, or
  * with `now` (a scene already on the bar), it joins the current bar at once,
- * so it still sits on the same bar lines as the beat.
+ * so it still sits on the same bar lines as the beat. With `atBeat` (a bar
+ * line) it starts there: one just gone plays its first notes at once.
  */
-function startMelodic(loop: MelodicLoop | RecordedLoop, instrument: InstrumentId, now: boolean): void {
+function startMelodic(loop: MelodicLoop | RecordedLoop, instrument: InstrumentId, now: boolean, atBeat?: number): void {
   const s = get(musicStudio);
   const { beat } = launchClockPosition();
   const busy = !!sequencer || !!replay || loopSlots.size > 0;
-  const startBeat = busy && !now ? nextBar(beat) : Math.floor(beat / 4 + 1e-6) * 4;
-  const from = Math.max(startBeat, beat);
+  const startBeat = atBeat !== undefined ? atBeat : busy && !now ? nextBar(beat) : Math.floor(beat / 4 + 1e-6) * 4;
+  const from = atBeat !== undefined ? Math.max(startBeat, Math.min(beat, beat - START_CATCH_UP_BEATS)) : Math.max(startBeat, beat);
   stopAudioPart(loop.role);
   const old = loopSlots.get(loop.role);
   if (old) {
@@ -1381,7 +1409,7 @@ function isRecorded(loop: MelodicLoop | RecordedLoop): loop is RecordedLoop {
   return 'kind' in loop && loop.kind === 'recorded';
 }
 
-function launchBeatLoop(pattern: DrumPattern, id: string, now: boolean, kit?: string): void {
+function launchBeatLoop(pattern: DrumPattern, id: string, now: boolean, kit?: string, atBeat?: number): void {
   if (beatLoopTimer) clearTimeout(beatLoopTimer);
   beatLoopTimer = null;
   const apply = () => {
@@ -1389,7 +1417,7 @@ function launchBeatLoop(pattern: DrumPattern, id: string, now: boolean, kit?: st
     if (kit) musicStudio.setDrumKit(kit);
     musicStudio.setPattern(pattern);
     musicTransport.update((t) => ({ ...t, beatLoop: id, queuedBeat: null }));
-    if (!sequencer) startSequencer();
+    if (!sequencer) startSequencer(atBeat);
   };
   if (!sequencer || now) {
     apply();
