@@ -3294,6 +3294,57 @@ describe('sender screens published by the core', () => {
   });
 });
 
+describe('NDI screens sent by the core one by one', () => {
+  it('sends NDI sender screens with their NDI names only while the core sends them', async () => {
+    const api = await import('../api/native-renderer');
+    const { settings, createDefaultSlice } = await import('../stores/settings');
+    const { coreNdiScreensActive, coreSliceSendersActive } = await import('../stores/screenOutputStatus');
+    const { get } = await import('svelte/store');
+    const submit = vi.spyOn(api, 'submitNativeRendererCommands').mockResolvedValue({ applied: 1, dropped: 0, errors: [] } as any);
+    const original = get(settings).output;
+    const sync = new NativeRendererSyncCtor() as any;
+    const command = () => (submit.mock.calls.at(-1)?.[0] as any[] | undefined)?.find(c => c.type === 'set_slice_outputs');
+    try {
+      settings.update(s => ({ ...s, output: { ...s.output, masterCanvasWidth: 1920, masterCanvasHeight: 1080, slices: [
+        { ...createDefaultSlice('left', 'Left', 'Left', 0, 0.5), outputType: 'ndi' },
+        { ...createDefaultSlice('right', 'Right', 'Right', 0.5, 0.5), outputType: 'ndi' },
+        { ...createDefaultSlice('syphon', 'Syphon', 'Syphon'), outputType: 'syphon' },
+        { ...createDefaultSlice('off', 'Off', 'Off'), outputType: 'ndi', enabled: false },
+      ] } }));
+      coreSliceSendersActive.set(false);
+      coreNdiScreensActive.set(false);
+      sync.lastSliceOutputsSig = null;
+      sync.pushSliceOutputs();
+      expect(command()?.slices ?? []).toEqual([]);
+
+      coreNdiScreensActive.set(true);
+      sync.pushSliceOutputs();
+      let slices = command()!.slices;
+      expect(slices.map((s: any) => s.id)).toEqual(['left', 'right']);
+      expect(slices[0]).toMatchObject({ ndiName: 'ghostArcade-Left', width: 960, height: 1080, cropX: 0, cropW: 0.5 });
+      expect(slices[0].senderName).toBeUndefined();
+      expect(slices[1]).toMatchObject({ ndiName: 'ghostArcade-Right', cropX: 0.5 });
+
+      // Syphon Screens keep their own switch and field.
+      coreSliceSendersActive.set(true);
+      sync.pushSliceOutputs();
+      slices = command()!.slices;
+      expect(slices.map((s: any) => [s.id, s.senderName ?? null, s.ndiName ?? null])).toEqual([
+        ['left', null, 'ghostArcade-Left'], ['right', null, 'ghostArcade-Right'], ['syphon', 'ghostArcade-Syphon', null],
+      ]);
+
+      coreNdiScreensActive.set(false);
+      sync.pushSliceOutputs();
+      expect(command()!.slices.map((s: any) => s.id)).toEqual(['syphon']);
+    } finally {
+      submit.mockRestore();
+      coreSliceSendersActive.set(false);
+      coreNdiScreensActive.set(false);
+      settings.update(s => ({ ...s, output: original }));
+    }
+  });
+});
+
 describe('screen output rejection feedback', () => {
   it('shows rejected changes and clears the message after an accepted update', async () => {
     const api = await import('../api/native-renderer');

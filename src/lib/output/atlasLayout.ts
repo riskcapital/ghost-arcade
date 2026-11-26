@@ -56,6 +56,13 @@ export function isAtlasSenderSlice(slice: OutputSlice): boolean {
   return out === 'spout' || out === 'syphon';
 }
 
+/** An enabled sender Screen whose transport is NDI. */
+export function isNdiSenderSlice(slice: OutputSlice): boolean {
+  if (slice.enabled === false) return false;
+  if ((slice.targetType ?? 'sender') !== 'sender') return false;
+  return slice.outputType === 'ndi';
+}
+
 /**
  * Shelf-pack sender slices into an atlas. Preserves input order for
  * stable layouts (so adding one slice doesn't reshuffle the rest). Wraps

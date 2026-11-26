@@ -26,6 +26,7 @@
 import { derived, get, writable } from 'svelte/store';
 import { showToast } from './errorToast';
 import { getNdiBridge } from '../bridge';
+import { coreNdiScreensActive } from './screenOutputStatus';
 import {
   settings,
   createDefaultSlice,
@@ -572,9 +573,9 @@ export function hydrateScreensFromProject(
 }
 
 // ── Composite NDI output engagement ──────────────────────────────────
-// The main process owns the NDI composite pump (electron/main.js
-// startNdiOutputPump): it taps the native renderer's IOSurface output
-// at full rate and streams it as ONE NDI sender. This module-level
+// The main process owns NDI output (electron/main.js startNdiOutput):
+// the render core sends the composite itself, or main's addon pump taps
+// the core's output at full rate, as ONE NDI sender. This module-level
 // subscription is the single engagement point: whenever ANY sender-
 // targeted screen selects the 'ndi' transport, start the pump under
 // that screen's sender name; when none do, stop it. Renamed screens
@@ -602,7 +603,10 @@ if (typeof window !== 'undefined') {
           ? await bridge.outputStart!({ name: wanted })
           : await bridge.outputStop?.();
         if (change !== ndiOutputChange) return;
-        const status = result as { ok?: boolean; reason?: string; error?: string } | undefined;
+        const status = result as { ok?: boolean; reason?: string; error?: string; screens?: boolean } | undefined;
+        // Per-Screen NDI from the core: each NDI Screen goes to the core
+        // with its own sender name (nativeRendererSync pushSliceOutputs).
+        coreNdiScreensActive.set(!!wanted && status?.ok !== false && status?.screens === true);
         if (status?.ok === false) {
           showToast(`NDI output: ${status.reason || status.error || 'Could not change output state.'}`, 'error');
         }

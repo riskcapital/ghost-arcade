@@ -17,8 +17,8 @@ import { vjGroupSourceId, buildVJGroupedMixGraph, type VJGroupedMixOptions } fro
 import { cubeLutHandle } from '../color/cubeLutAssets';
 import { nativeVideoLaunchTime, nativeVideoAnchorRate, nativeVideoMetadataPatch } from '../media/nativeTransport';
 import { get } from 'svelte/store';
-import { isAtlasSenderSlice, sliceOutputSize } from '../output/atlasLayout';
-import { coreSliceSendersActive, screenOutputError, screenAlignmentAids, screenPatternFrames, openScreenOutputList, screenRegion, autoMapTargets, mainOutputRaster, MAIN_OUTPUT_ID, type OpenScreenOutput } from '../stores/screenOutputStatus';
+import { isAtlasSenderSlice, isNdiSenderSlice, sliceOutputSize } from '../output/atlasLayout';
+import { coreNdiScreensActive, coreSliceSendersActive, screenOutputError, screenAlignmentAids, screenPatternFrames, openScreenOutputList, screenRegion, autoMapTargets, mainOutputRaster, MAIN_OUTPUT_ID, type OpenScreenOutput } from '../stores/screenOutputStatus';
 import { createLayer } from '$lib/types';
 import {
   buildVJClipTransitionGraph,
@@ -9650,16 +9650,22 @@ export class NativeRendererSync {
     // Sender Screens the core publishes itself (Syphon / Spout): rendered at
     // the size the slice-atlas path sent them at, their share of the master
     // canvas, so receivers see the same resolution under the same name.
-    const senders = new Map<string, { width: number; height: number; name: string }>();
-    if (get(coreSliceSendersActive)) {
+    // NDI Screens the core sends one by one (per-Screen NDI) go the same
+    // way, under their NDI names.
+    const senders = new Map<string, { width: number; height: number; name: string; ndi: boolean }>();
+    const syphonSenders = get(coreSliceSendersActive);
+    const ndiSenders = get(coreNdiScreensActive);
+    if (syphonSenders || ndiSenders) {
       const masterW = out?.masterCanvasWidth ?? 1920;
       const masterH = out?.masterCanvasHeight ?? 1080;
       for (const s of (out?.slices ?? []) as any[]) {
-        if (!s?.id || !isAtlasSenderSlice(s) || open.has(s.id)) continue;
+        if (!s?.id || open.has(s.id)) continue;
+        const ndi = isNdiSenderSlice(s);
+        if (ndi ? !ndiSenders : !(syphonSenders && isAtlasSenderSlice(s))) continue;
         const name = String(s.spoutName ?? '').trim();
         if (!name) continue;
         const { w, h } = sliceOutputSize(s, masterW, masterH);
-        senders.set(String(s.id), { width: Math.max(16, w), height: Math.max(16, h), name });
+        senders.set(String(s.id), { width: Math.max(16, w), height: Math.max(16, h), name, ndi });
       }
     }
     const aids = get(screenAlignmentAids);
@@ -9683,7 +9689,7 @@ export class NativeRendererSync {
         id: String(s.id),
         width: sender?.width ?? Math.round((display?.width ?? out?.masterCanvasWidth ?? 1920) * scale),
         height: sender?.height ?? Math.round((display?.height ?? out?.masterCanvasHeight ?? 1080) * scale),
-        ...(sender ? { senderName: sender.name } : {}),
+        ...(sender ? (sender.ndi ? { ndiName: sender.name } : { senderName: sender.name }) : {}),
         cropX: s.cropX ?? 0,
         cropY: nativeOutputCropY(s.cropY ?? 0, s.cropH ?? 1),
         cropW: s.cropW ?? 1,
@@ -9940,6 +9946,7 @@ export class NativeRendererSync {
     this.outputStateUnsubs.push(settings.subscribe(() => this.pushSliceOutputs()));
     this.outputStateUnsubs.push(recordingScreenIds.subscribe(() => this.pushSliceOutputs()));
     this.outputStateUnsubs.push(coreSliceSendersActive.subscribe(() => this.pushSliceOutputs()));
+    this.outputStateUnsubs.push(coreNdiScreensActive.subscribe(() => this.pushSliceOutputs()));
     this.outputStateUnsubs.push(screenAlignmentAids.subscribe(() => this.pushSliceOutputs()));
     this.outputStateUnsubs.push(screenPatternFrames.subscribe(() => { this.pushSliceOutputs(); this.pushOutputStage(); }));
     this.outputStateUnsubs.push(mainOutputRaster.subscribe(() => { this.pushSliceOutputs(); this.pushOutputStage(); }));

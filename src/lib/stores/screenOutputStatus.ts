@@ -8,6 +8,11 @@ export const screenOutputError = writable<string | null>(null);
  *  then sends those Screens to the core with their sender names. */
 export const coreSliceSendersActive = writable(false);
 
+/** The render core sends each NDI Screen's own picture under its own name
+ *  (main reports it when NDI output starts with per-Screen senders): the
+ *  native sync then sends those Screens to the core with their NDI names. */
+export const coreNdiScreensActive = writable(false);
+
 /** Alignment aids the render core draws on a Screen's own output instead of
  *  its picture: 'grid' is the numbered composition grid, 'identify' the
  *  Screen's number. Session-only on purpose, so a saved project or an undo

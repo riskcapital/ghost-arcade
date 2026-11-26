@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { packAtlas, sliceOutputSize, isAtlasSenderSlice, atlasLayoutSignature } from './atlasLayout';
+import { packAtlas, sliceOutputSize, isAtlasSenderSlice, isNdiSenderSlice, atlasLayoutSignature } from './atlasLayout';
 import type { OutputSlice } from '../stores/settings';
 
 function slice(over: Partial<OutputSlice>): OutputSlice {
@@ -20,6 +20,15 @@ describe('sliceOutputSize', () => {
   it('swaps w/h for 90 and 270', () => {
     expect(sliceOutputSize(slice({ cropW: 0.5, cropH: 1, rotation: 90 }), 1920, 1080)).toEqual({ w: 1080, h: 960 });
     expect(sliceOutputSize(slice({ cropW: 0.5, cropH: 1, rotation: 270 }), 1920, 1080)).toEqual({ w: 1080, h: 960 });
+  });
+});
+
+describe('isNdiSenderSlice', () => {
+  it('is an enabled sender Screen on the NDI transport', () => {
+    expect(isNdiSenderSlice(slice({ outputType: 'ndi' }))).toBe(true);
+    expect(isNdiSenderSlice(slice({ outputType: 'syphon' }))).toBe(false);
+    expect(isNdiSenderSlice(slice({ outputType: 'ndi', enabled: false }))).toBe(false);
+    expect(isNdiSenderSlice(slice({ outputType: 'ndi', targetType: 'display' }))).toBe(false);
   });
 });
 

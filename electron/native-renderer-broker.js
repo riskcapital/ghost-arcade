@@ -367,6 +367,12 @@ const RENDERER_COMMANDS = [
   'native_renderer_live_capture_stop',
   'native_renderer_live_capture_state',
   'native_renderer_live_capture_list_cameras',
+  // NDI senders from the core: the program, and one per NDI sender Screen.
+  'native_renderer_ndi_send_start',
+  'native_renderer_ndi_send_stop',
+  'native_renderer_ndi_slices_start',
+  'native_renderer_ndi_slices_stop',
+  'native_renderer_ndi_state',
   // How a video file will play: hardware, HAP, software (and why), or not at all.
   'native_renderer_probe_video',
   'native_renderer_set_stage3d_scene',
@@ -897,6 +903,17 @@ class NativeRendererBroker {
         return this.sendIfRunning('live_capture_state', args, { fallback: null });
       case 'native_renderer_live_capture_list_cameras':
         return this.sendIfRunning('live_capture_list_cameras', args, { fallback: null });
+      case 'native_renderer_ndi_send_start':
+        return this.sendIfRunning('ndi_send_start', args, { fallback: null, timeoutMs: 5000 });
+      case 'native_renderer_ndi_send_stop':
+        return this.sendIfRunning('ndi_send_stop', args, { fallback: null, timeoutMs: 5000 });
+      case 'native_renderer_ndi_slices_start':
+        return this.sendIfRunning('ndi_slices_start', args, { fallback: null, timeoutMs: 5000 });
+      case 'native_renderer_ndi_slices_stop':
+        return this.sendIfRunning('ndi_slices_stop', args, { fallback: null, timeoutMs: 5000 });
+      case 'native_renderer_ndi_state':
+        // A probe opens the NDI runtime the first time, which can take a moment.
+        return this.sendIfRunning('ndi_state', args, { fallback: null, timeoutMs: 5000 });
       case 'native_renderer_probe_video':
         // Opens a decoder (and on Windows decodes a frame); ffmpeg's check
         // alone may take up to 10 s on a slow disk.

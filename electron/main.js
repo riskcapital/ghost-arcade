@@ -285,6 +285,8 @@ const nativeRendererBroker = createNativeRendererBroker({
     }
     // Cameras and screen captures the core ran, likewise.
     restartCoreCaptures();
+    // And NDI.
+    if (coreNdi) void askCoreNdi(coreNdi);
   },
 });
 
@@ -5116,6 +5118,228 @@ function ndiOutputPumpStatus() {
   };
 }
 
+// ── NDI sent by the render core ──────────────────────────────────────────────
+// The core sends the program over NDI itself (native-renderer/src/ndi_out.rs):
+// it reads its own output texture back into a small ring and hands the frames
+// to NDI on a thread of its own, so no pixels pass through this process and
+// the pump above does not run. The core opens the NDI runtime at run time,
+// so this works wherever the runtime is installed, with or without the addon.
+// Same sender name, so receivers keep their connections.
+// macOS: on whenever the running core says it can; GA_CORE_NDI=0 keeps the
+// addon pump. Windows: opt in with GA_CORE_NDI=1 until it has been checked
+// against receivers on a Windows machine. A core that cannot open the runtime
+// or the sender hands it back to the addon pump.
+// GA_CORE_NDI_SCREENS=1 sends each NDI Screen's own picture (its crop, warp
+// and grade) under its own name, instead of the full composition under the
+// first NDI Screen's name.
+const CORE_NDI_ALLOWED = isMac ? process.env.GA_CORE_NDI !== '0' : isWin && process.env.GA_CORE_NDI === '1';
+const CORE_NDI_SCREENS = CORE_NDI_ALLOWED && process.env.GA_CORE_NDI_SCREENS === '1';
+const CORE_NDI_CHECK_MS = 2000;
+const CORE_NDI_PROMOTE_MS = 1000;
+const CORE_NDI_PROMOTE_TRIES = 60;
+/** What the app asked for, whoever sends it: { name, fps }. */
+let ndiOutputWanted = null;
+/** The core sends it: { name, fps, screens }. */
+let coreNdi = null;
+let coreNdiState = null;
+let coreNdiLastError = null;
+let coreNdiWatchdog = null;
+let coreNdiCheckInFlight = false;
+let coreNdiPromoteTimer = null;
+
+function coreNdiSupported() {
+  if (!CORE_NDI_ALLOWED || !nativeRendererBroker?.coreCapabilitiesConfirmed) return false;
+  const methods = nativeRendererBroker.capabilities?.implemented_methods;
+  return Array.isArray(methods) && methods.includes(CORE_NDI_SCREENS ? 'ndi_slices_start' : 'ndi_send_start');
+}
+
+async function askCoreNdi(wanted) {
+  return CORE_NDI_SCREENS
+    ? nativeRendererBroker.invoke('native_renderer_ndi_slices_start', { fps: wanted.fps }).catch(() => null)
+    : nativeRendererBroker.invoke('native_renderer_ndi_send_start', { name: wanted.name, fps: wanted.fps }).catch(() => null);
+}
+
+async function startCoreNdi(wanted) {
+  if (!coreNdiSupported()) return false;
+  const state = await askCoreNdi(wanted);
+  const accepted = CORE_NDI_SCREENS ? state?.slices_enabled === true : state?.wanted === wanted.name;
+  if (!state || !accepted || state.available === false) {
+    // The start is refused with the reason (no runtime, say); the state says it.
+    const probe = await nativeRendererBroker.invoke('native_renderer_ndi_state', { probe: true }).catch(() => null);
+    coreNdiLastError = probe?.runtime_error || state?.last_error || 'The render core could not start the NDI sender';
+    console.warn(`[NDI Core] core cannot send; using the addon path: ${coreNdiLastError}`);
+    return false;
+  }
+  coreNdi = { ...wanted, screens: CORE_NDI_SCREENS };
+  coreNdiState = state;
+  coreNdiLastError = null;
+  startCoreNdiWatchdog();
+  console.log(`[NDI Core] render core sends ${CORE_NDI_SCREENS ? 'the NDI Screens' : `"${wanted.name}"`} @ ${wanted.fps} fps`);
+  return true;
+}
+
+/** Resolves once the core has closed its sender, so the addon can open one
+ *  under the same name without two senders advertising it. */
+function stopCoreNdi() {
+  const was = coreNdi;
+  coreNdi = null;
+  coreNdiState = null;
+  if (coreNdiWatchdog) {
+    clearInterval(coreNdiWatchdog);
+    coreNdiWatchdog = null;
+  }
+  if (!was) return Promise.resolve();
+  return nativeRendererBroker.invoke(was.screens ? 'native_renderer_ndi_slices_stop' : 'native_renderer_ndi_send_stop', {}).catch(() => null);
+}
+
+// The core sends on its own; this notices a restarted core (and asks the new
+// one) or a sender the core could not open or keep (and hands NDI back to
+// the addon pump).
+function startCoreNdiWatchdog() {
+  if (coreNdiWatchdog) return;
+  coreNdiWatchdog = setInterval(async () => {
+    if (!coreNdi || coreNdiCheckInFlight) return;
+    coreNdiCheckInFlight = true;
+    try {
+      const state = await nativeRendererBroker.invoke('native_renderer_ndi_state', {}).catch(() => null);
+      if (!coreNdi || !state) return;
+      coreNdiState = state;
+      const errors = Array.isArray(state.slice_errors) ? state.slice_errors : [];
+      const failed = coreNdi.screens
+        ? (errors.length > 0 ? `Screen sender "${errors[0]?.name}": ${errors[0]?.error}` : null)
+        : (!state.wanted && state.last_error ? state.last_error : null);
+      if (failed) {
+        console.warn(`[NDI Core] core sender failed (${failed}); using the addon path`);
+        coreNdiLastError = failed;
+        await fallBackFromCoreNdi();
+        return;
+      }
+      const asked = coreNdi.screens ? state.slices_enabled === true : state.wanted === coreNdi.name;
+      // A fresh core (restart) has no sender yet.
+      if (!asked && coreNdiSupported()) await askCoreNdi(coreNdi);
+    } finally {
+      coreNdiCheckInFlight = false;
+    }
+  }, CORE_NDI_CHECK_MS);
+}
+
+async function fallBackFromCoreNdi() {
+  const wanted = ndiOutputWanted;
+  await stopCoreNdi();
+  if (!wanted || ndiOutputWanted !== wanted || coreNdi) return;
+  const result = startNdiOutputPump(wanted);
+  if (!result.ok) ndiOutputPumpLastError = result.reason || 'Could not start NDI output';
+}
+
+function stopCoreNdiPromotion() {
+  if (coreNdiPromoteTimer) {
+    clearInterval(coreNdiPromoteTimer);
+    coreNdiPromoteTimer = null;
+  }
+}
+
+// NDI asked for before the core could take it (it was still starting): try
+// the core once it says what it can do, then stop the addon pump if it runs.
+function startCoreNdiPromotion() {
+  if (coreNdiPromoteTimer || !CORE_NDI_ALLOWED) return;
+  let tries = 0;
+  let inFlight = false;
+  coreNdiPromoteTimer = setInterval(async () => {
+    if (inFlight) return;
+    if (++tries > CORE_NDI_PROMOTE_TRIES || !ndiOutputWanted || coreNdi) {
+      stopCoreNdiPromotion();
+      return;
+    }
+    if (!nativeRendererBroker?.coreCapabilitiesConfirmed) return;
+    stopCoreNdiPromotion();
+    if (!coreNdiSupported()) return;
+    inFlight = true;
+    try {
+      const wanted = ndiOutputWanted;
+      // The addon's sender closes first: one sender per name at a time.
+      const pumpWasRunning = !!ndiOutputPumpTimer;
+      stopNdiOutputPump();
+      if (await startCoreNdi(wanted)) {
+        ndiOutputPumpLastError = null;
+        if (ndiOutputWanted !== wanted) {
+          // Stopped or changed while the core was being asked.
+          await stopCoreNdi();
+          if (ndiOutputWanted) void startNdiOutput(ndiOutputWanted);
+        }
+      } else if (pumpWasRunning && ndiOutputWanted === wanted) {
+        startNdiOutputPump(wanted);
+      }
+    } finally {
+      inFlight = false;
+    }
+  }, CORE_NDI_PROMOTE_MS);
+}
+
+/** Start NDI out: from the core when it can, otherwise the addon pump. */
+async function startNdiOutput({ name, fps } = {}) {
+  const senderName = String(name || 'Ghost Arcade').trim() || 'Ghost Arcade';
+  const rate = Math.max(1, Math.min(60, Number(fps) || OSR_PAINT_FPS || 60));
+  const wanted = { name: senderName, fps: rate };
+  ndiOutputWanted = wanted;
+  stopCoreNdiPromotion();
+  if (coreNdi && coreNdi.name === senderName && coreNdi.fps === rate) {
+    return { ok: true, active: true, name: senderName, fps: rate, publisher: 'core', screens: coreNdi.screens };
+  }
+  if (coreNdiSupported()) {
+    // The addon's sender closes first: one sender per name at a time.
+    stopNdiOutputPump();
+    if (await startCoreNdi(wanted)) {
+      if (ndiOutputWanted !== wanted) return { ok: true, active: false, name: senderName, fps: rate };
+      return { ok: true, active: true, name: senderName, fps: rate, publisher: 'core', screens: CORE_NDI_SCREENS };
+    }
+  }
+  if (coreNdi) await stopCoreNdi();
+  const result = startNdiOutputPump(wanted);
+  // The core may just not be ready yet; it takes over once it is. Until then
+  // a missing addon is not reported as a failure.
+  const coreLater = CORE_NDI_ALLOWED && !nativeRendererBroker?.coreCapabilitiesConfirmed;
+  if (coreLater) startCoreNdiPromotion();
+  if (!result.ok && coreLater) return { ok: true, active: false, pending: true, name: senderName, fps: rate };
+  return { ...result, publisher: result.ok ? 'addon' : null };
+}
+
+function stopNdiOutput() {
+  ndiOutputWanted = null;
+  stopCoreNdiPromotion();
+  stopCoreNdi();
+  stopNdiOutputPump();
+}
+
+async function ndiOutputStatus() {
+  if (coreNdi) {
+    const state = coreNdiState || {};
+    const program = coreNdi.screens ? null : state;
+    return {
+      available: true,
+      active: true,
+      publisher: 'core',
+      screens: coreNdi.screens,
+      name: coreNdi.name,
+      fps: coreNdi.fps,
+      framesSent: program ? Number(program.frames_sent ?? 0) : undefined,
+      framesSkipped: program ? Number(program.frames_skipped ?? 0) : undefined,
+      sendFps: program ? Number(program.fps ?? 0) : undefined,
+      connections: program ? Number(program.connections ?? 0) : undefined,
+      senders: coreNdi.screens ? (Array.isArray(state.slices) ? state.slices.map(s => s.name) : []) : undefined,
+    };
+  }
+  const pump = ndiOutputPumpStatus();
+  if (pump.available || !coreNdiSupported()) {
+    return { ...pump, publisher: pump.active ? 'addon' : null, lastError: pump.lastError || coreNdiLastError || undefined };
+  }
+  // No addon here, but the core opens the runtime itself.
+  const probe = await nativeRendererBroker.invoke('native_renderer_ndi_state', { probe: true }).catch(() => null);
+  if (probe?.available === true) {
+    return { available: true, active: false, name: null, fps: null, publisher: null, lastError: coreNdiLastError || undefined };
+  }
+  return { ...pump, reason: probe?.runtime_error || pump.reason, lastError: pump.lastError || coreNdiLastError || undefined };
+}
+
 // Ableton Link — main-process singleton (Link spawns its own network
 // threads; one session per app). Lazily created on first link_enable.
 // GPLv2 vendor — commercial distribution needs Ableton's no-cost Link
@@ -7536,9 +7760,9 @@ function registerIpcHandlers() {
   });
   // Composite NDI output — pump the native renderer's full-frame
   // composite over NDI (macOS IOSurface CPU tap; see startNdiOutputPump).
-  ipcMain.handle('ndi_output_start', (_, args) => {
+  ipcMain.handle('ndi_output_start', async (_, args) => {
     try {
-      const result = startNdiOutputPump(args || {});
+      const result = await startNdiOutput(args || {});
       if (!result.ok) ndiOutputPumpLastError = result.reason || 'Could not start NDI output';
       return result;
     } catch (err) {
@@ -7547,11 +7771,11 @@ function registerIpcHandlers() {
     }
   });
   ipcMain.handle('ndi_output_stop', () => {
-    try { stopNdiOutputPump(); return { ok: true, active: false }; }
+    try { stopNdiOutput(); return { ok: true, active: false }; }
     catch (err) { return { ok: false, error: String(err?.message || err) }; }
   });
-  ipcMain.handle('ndi_output_status', () => {
-    try { return ndiOutputPumpStatus(); }
+  ipcMain.handle('ndi_output_status', async () => {
+    try { return await ndiOutputStatus(); }
     catch (err) { return { available: false, active: false, reason: String(err?.message || err) }; }
   });
 
@@ -11888,7 +12112,7 @@ function scheduleHardExit(delayMs) {
 function destroyNdiSenders() {
   // Stop the composite output pump first — it owns one of the senders
   // and would otherwise keep sending into a destroyed instance.
-  try { stopNdiOutputPump(); } catch { /* best effort on quit */ }
+  try { stopNdiOutput(); } catch { /* best effort on quit */ }
   if (!ndiAddon || ndiSenders.size === 0) return;
   for (const name of Array.from(ndiSenders)) {
     runCleanupStep(`NDI sender ${name}`, () => ndiAddon.destroySender({ name }));
