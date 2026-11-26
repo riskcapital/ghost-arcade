@@ -1188,8 +1188,10 @@ struct CoreStatus {
     gpu_frames_submitted: u64,
     gpu_frames_completed: u64,
     gpu_backpressure_skips: u64,
-    /// Frames the CPU may queue ahead of the GPU (frames_in_flight.rs).
+    /// Most frames the CPU may queue ahead of the GPU (frames_in_flight.rs).
     max_frames_in_flight: u64,
+    /// How many it may queue right now, and why.
+    frames_in_flight: frames_in_flight::AdaptiveGateReport,
     /// Start of a frame's CPU work to the end of its GPU work.
     gpu_frame_latency: frames_in_flight::FrameLatencyReport,
     frames_presented: u64,
@@ -5230,8 +5232,8 @@ struct RenderState {
     gpu_frames_submitted: u64,
     gpu_frames_completed: Arc<AtomicU64>,
     gpu_fault: bool,
-    gpu_completion_tx: Sender<(wgpu::SubmissionIndex, Instant)>,
-    max_frames_in_flight: u64,
+    gpu_completion_tx: Sender<(wgpu::SubmissionIndex, Instant, Instant)>,
+    frames_in_flight: frames_in_flight::AdaptiveGate,
     gpu_frame_latency: Arc<frames_in_flight::FrameLatency>,
     last_frame_error: Option<String>,
 }
@@ -6974,7 +6976,10 @@ impl App {
             gpu_frames_completed,
             gpu_backpressure_skips: self.stats.gpu_backpressure_skips,
             max_frames_in_flight: self.renderer.as_ref()
-                .map_or_else(frames_in_flight::from_env, |renderer| renderer.max_frames_in_flight),
+                .map_or_else(frames_in_flight::from_env, |renderer| renderer.frames_in_flight.report().cap),
+            frames_in_flight: self.renderer.as_ref()
+                .map(|renderer| renderer.frames_in_flight.report())
+                .unwrap_or_default(),
             gpu_frame_latency: self.renderer.as_ref()
                 .map(|renderer| renderer.gpu_frame_latency.report())
                 .unwrap_or_default(),
@@ -14003,8 +14008,10 @@ impl App {
     }
 
     fn sync_gpu_frame_stats(&mut self) {
+        let budget = self.frame_duration();
         if let Some(renderer) = self.renderer.as_mut() {
             renderer.poll_gpu_timing();
+            renderer.update_frames_in_flight(budget);
             self.stats.gpu_frames_submitted = renderer.gpu_frames_submitted;
             self.stats.gpu_frames_completed = renderer.gpu_frames_completed();
             self.stats.frames_presented = self.stats.gpu_frames_completed;
@@ -23082,7 +23089,7 @@ impl RenderState {
                 )
             });
         let gpu_frames_completed = Arc::new(AtomicU64::new(0));
-        let (gpu_completion_tx, gpu_completion_rx) = mpsc::channel::<(wgpu::SubmissionIndex, Instant)>();
+        let (gpu_completion_tx, gpu_completion_rx) = mpsc::channel::<(wgpu::SubmissionIndex, Instant, Instant)>();
         let completion_device = device.clone();
         let completion_counter = Arc::clone(&gpu_frames_completed);
         let gpu_frame_latency = Arc::new(frames_in_flight::FrameLatency::default());
@@ -23114,7 +23121,8 @@ impl RenderState {
                 // -- which is a hang, not a heavy frame.
                 const GPU_COMPLETION_WAIT_SLICE: Duration = Duration::from_secs(2);
                 const GPU_COMPLETION_HARD_LIMIT: Duration = Duration::from_secs(60);
-                'completion: while let Ok((submission, frame_started)) = gpu_completion_rx.recv() {
+                let mut previous_done: Option<Instant> = None;
+                'completion: while let Ok((submission, frame_started, submitted_at)) = gpu_completion_rx.recv() {
                     // This thread lives for the whole session and polls the
                     // device every frame: without a pool of its own, what
                     // the poll autoreleases is never released.
@@ -23150,7 +23158,9 @@ impl RenderState {
                             }
                         }
                     }
-                    completion_latency.record(frame_started);
+                    let done = Instant::now();
+                    completion_latency.record_completion(frame_started, submitted_at, done, previous_done);
+                    previous_done = Some(done);
                     let _completed = completion_counter.fetch_add(1, Ordering::Release) + 1;
                     #[cfg(target_os = "windows")]
                     if let Some(counter) = frame_counter.as_ref() {
@@ -23295,7 +23305,7 @@ impl RenderState {
             gpu_frames_completed,
             gpu_fault: false,
             gpu_completion_tx,
-            max_frames_in_flight: frames_in_flight::from_env(),
+            frames_in_flight: frames_in_flight::AdaptiveGate::new(frames_in_flight::from_env()),
             gpu_frame_latency,
             last_frame_error: None,
         })
@@ -24971,10 +24981,28 @@ impl RenderState {
         self.gpu_frames_completed.load(Ordering::Acquire)
     }
 
-    /// No room for another frame: the GPU still has `max_frames_in_flight`
-    /// of ours queued. At 1 this is the old "any frame in flight" gate.
+    /// No room for another frame: the GPU still has as many of ours queued
+    /// as the gate allows now. At 1 this is the old "any frame in flight" gate.
     fn frame_in_flight(&self) -> bool {
-        frames_in_flight::slots_full(self.gpu_frames_submitted, self.gpu_frames_completed(), self.max_frames_in_flight)
+        frames_in_flight::slots_full(self.gpu_frames_submitted, self.gpu_frames_completed(), self.frames_in_flight.allowed())
+    }
+
+    /// Feed completed frames to the frames-in-flight gate.
+    fn update_frames_in_flight(&mut self, budget: Duration) {
+        // The Windows recorder reads the export right behind a frame's
+        // completion (a GPU fence), so the next frame must not be queued
+        // behind it already: one at a time while it records.
+        #[cfg(target_os = "windows")]
+        let force_single = self.native_recorder.is_some();
+        #[cfg(not(target_os = "windows"))]
+        let force_single = false;
+        let budget_ms = budget.as_secs_f64() * 1000.0;
+        for sample in self.gpu_frame_latency.take_samples() {
+            self.frames_in_flight.observe(sample, budget_ms, force_single);
+        }
+        if force_single {
+            self.frames_in_flight.observe_force_single();
+        }
     }
 
     fn submit_frame(&mut self, encoder: wgpu::CommandEncoder) {
@@ -24986,7 +25014,7 @@ impl RenderState {
         // Fence after program, confidence monitors and slices, not just program.
         let submission = self.queue.submit(std::iter::empty());
         self.gpu_frames_submitted = self.gpu_frames_submitted.saturating_add(1);
-        let _ = self.gpu_completion_tx.send((submission, frame_started));
+        let _ = self.gpu_completion_tx.send((submission, frame_started, Instant::now()));
     }
 
     fn last_render_gpu_ms(&self) -> Option<f64> {
