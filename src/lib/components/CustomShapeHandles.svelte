@@ -1,5 +1,9 @@
 <script lang="ts">
   import { selectedLayer, project } from '../stores/layers';
+  import { get } from 'svelte/store';
+  import { beginGesture, endGesture, runAsOneStep } from '../stores/historyHooks';
+  import { isTypingTarget } from '../utils/studioModalKeys';
+  import { penModeForKey } from '../utils/customShapePenKeys';
   import type { Point2D, BezierPoint } from '../types';
   import { onDestroy } from 'svelte';
   import { layerOutlineMeshGrid } from '../utils/meshWarp';
@@ -60,6 +64,7 @@
     edgeIndex: number;
   } | null;
   let penDraft: PenDraft = null;
+  let containerEl: HTMLDivElement | null = null;
 
   // Layer corners for bilinear warp
   $: corners = $selectedLayer?.corners ?? {
@@ -197,7 +202,7 @@
     if (e.button !== 0) return;
     // Don't intercept clicks that originate on a vertex / control-handle.
     const target = e.target as Element;
-    if (target.closest('.vertex-dot, .cp-dot')) return;
+    if (target.closest('.vertex-handle, .cp-handle')) return;
 
     const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
     const px = (e.clientX - rect.left) / zoom;
@@ -250,10 +255,8 @@
   }
 
   function handlePenDraftMove(e: MouseEvent) {
-    if (!penDraft) return;
-    const container = document.querySelector('.custom-shape-handles') as HTMLElement;
-    if (!container) return;
-    const rect = container.getBoundingClientRect();
+    if (!penDraft || !containerEl) return;
+    const rect = containerEl.getBoundingClientRect();
     const px = (e.clientX - rect.left) / zoom;
     const py = (e.clientY - rect.top) / zoom;
     penDraft.dragPx = { x: px, y: py };
@@ -276,33 +279,37 @@
 
     const layerId = $selectedLayer.id;
 
-    if (draft.insertOnEdge) {
-      // The selected vertex keeps its selection past the new one.
-      if (selectedVertexIndex > draft.edgeIndex) selectVertex(selectedVertexIndex + 1, selectedHandle ?? undefined);
-      project.insertCustomShapePoint(layerId, draft.edgeIndex, draft.anchor);
-      if (draft.isCurve) {
-        const newIdx = draft.edgeIndex + 1;
-        const cpOutNorm = toNormalized(draft.dragPx.x, draft.dragPx.y);
-        const cpInNorm: Point2D = {
-          x: 2 * draft.anchor.x - cpOutNorm.x,
-          y: 2 * draft.anchor.y - cpOutNorm.y,
-        };
-        project.updateCustomShapeHandle(layerId, newIdx, 'cpOut', cpOutNorm);
-        project.updateCustomShapeHandle(layerId, newIdx, 'cpIn', cpInNorm);
+    // One placed or inserted point is one undo step, its curve handles
+    // included (they used to land as a second step).
+    runAsOneStep(() => {
+      if (draft.insertOnEdge) {
+        // The selected vertex keeps its selection past the new one.
+        if (selectedVertexIndex > draft.edgeIndex) selectVertex(selectedVertexIndex + 1, selectedHandle ?? undefined);
+        project.insertCustomShapePoint(layerId, draft.edgeIndex, draft.anchor);
+        if (draft.isCurve) setDraftHandles(layerId, draft.edgeIndex + 1, draft);
+      } else {
+        project.addCustomShapePoint(layerId, draft.anchor);
+        // The new point is the last one in the store now.
+        if (draft.isCurve) setDraftHandles(layerId, layerPointCount(layerId) - 1, draft);
       }
-    } else {
-      project.addCustomShapePoint(layerId, draft.anchor);
-      if (draft.isCurve) {
-        const newIdx = customPoints.length; // index of just-added point (before any further updates)
-        const cpOutNorm = toNormalized(draft.dragPx.x, draft.dragPx.y);
-        const cpInNorm: Point2D = {
-          x: 2 * draft.anchor.x - cpOutNorm.x,
-          y: 2 * draft.anchor.y - cpOutNorm.y,
-        };
-        project.updateCustomShapeHandle(layerId, newIdx, 'cpOut', cpOutNorm);
-        project.updateCustomShapeHandle(layerId, newIdx, 'cpIn', cpInNorm);
-      }
-    }
+    });
+  }
+
+  function layerPointCount(layerId: string): number {
+    const layer = get(project).layers.find(l => l.id === layerId);
+    return layer?.layerShape?.params.customPoints?.length ?? 0;
+  }
+
+  /** Smooth point: cpOut where the drag ended, cpIn mirrored. */
+  function setDraftHandles(layerId: string, index: number, draft: NonNullable<PenDraft>) {
+    if (index < 0) return;
+    const cpOutNorm = toNormalized(draft.dragPx.x, draft.dragPx.y);
+    const cpInNorm: Point2D = {
+      x: 2 * draft.anchor.x - cpOutNorm.x,
+      y: 2 * draft.anchor.y - cpOutNorm.y,
+    };
+    project.updateCustomShapeHandle(layerId, index, 'cpOut', cpOutNorm);
+    project.updateCustomShapeHandle(layerId, index, 'cpIn', cpInNorm);
   }
 
   // Handle right-click: close shape in draw mode
@@ -356,8 +363,15 @@
     dragging = 'vertex';
     dragVertexIndex = index;
     beginPointDrag(index, 'vertex', e.clientX, e.clientY);
+    listenPointDrag();
+  }
+
+  /** A vertex or curve-handle drag is one undo step from press to release. */
+  function listenPointDrag() {
+    beginGesture();
     window.addEventListener('mousemove', handleMouseMove);
     window.addEventListener('mouseup', handleMouseUp);
+    window.addEventListener('blur', handleMouseUp);
   }
 
   function beginPointDrag(index: number, target: Exclude<DragTarget, null>, clientX: number, clientY: number) {
@@ -382,8 +396,7 @@
     dragging = handleType;
     dragVertexIndex = index;
     beginPointDrag(index, handleType, e.clientX, e.clientY);
-    window.addEventListener('mousemove', handleMouseMove);
-    window.addEventListener('mouseup', handleMouseUp);
+    listenPointDrag();
   }
 
   function handleMouseMove(e: MouseEvent) {
@@ -421,15 +434,16 @@
   }
 
   function handleMouseUp() {
-    if (dragging) {
-      dragging = null;
-      dragVertexIndex = -1;
-    }
+    const wasListening = dragging !== null || dragStartPoint !== null;
+    dragging = null;
+    dragVertexIndex = -1;
     dragStartPoint = null;
     dragStartCanvas = null;
     dragTravel = null;
     window.removeEventListener('mousemove', handleMouseMove);
     window.removeEventListener('mouseup', handleMouseUp);
+    window.removeEventListener('blur', handleMouseUp);
+    if (wasListening) endGesture(true);
   }
 
   // Track mouse for preview line + edge hover
@@ -473,10 +487,22 @@
     penMode = 'edit';
   }
 
-  // Cleanup on destroy
+  // Pen tool shortcuts, as the toolbar tooltips say: V select & move,
+  // + add point, - remove point. Only while a closed shape's toolbar shows.
+  function handleKeyDown(e: KeyboardEvent) {
+    if (!isClosed || !$selectedLayer || $selectedLayer.locked) return;
+    if (e.defaultPrevented || isTypingTarget(e.target)) return;
+    const next = penModeForKey(e);
+    if (!next) return;
+    penMode = next;
+    e.preventDefault();
+  }
+
+  // Cleanup on destroy: end a drag or a pen draft still in progress.
   onDestroy(() => {
-    window.removeEventListener('mousemove', handleMouseMove);
-    window.removeEventListener('mouseup', handleMouseUp);
+    handleMouseUp();
+    window.removeEventListener('mousemove', handlePenDraftMove);
+    window.removeEventListener('mouseup', handlePenDraftUp);
   });
 
   // Hover insert point for add mode
@@ -503,8 +529,11 @@
   })();
 </script>
 
+<svelte:window on:keydown={handleKeyDown} />
+
 <!-- svelte-ignore a11y-no-static-element-interactions -->
 <div data-help-page="projection-mapping"
+  bind:this={containerEl}
   class="custom-shape-handles"
   class:draw-mode={isCustom && !isClosed}
   class:remove-mode={isClosed && penMode === 'remove'}
@@ -745,7 +774,11 @@
     top: 0;
     left: 0;
     pointer-events: none;
-    z-index: 15;
+    /* Above the layer's warp grips (50) and mesh handles (51-52): a shape
+       vertex next to the move / rotate / scale grip or a mesh point is
+       still the vertex, and while placing, adding or removing points the
+       pen owns the canvas. */
+    z-index: 55;
   }
 
   .custom-shape-handles.draw-mode {

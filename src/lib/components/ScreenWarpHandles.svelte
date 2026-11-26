@@ -567,6 +567,10 @@
   let maskCanvas: HTMLCanvasElement | null = $state(null);
   const MASK_SHADE_MAX_DIM = 480;
   let maskShadeFrame = 0;
+  // What the last shade was drawn from. Screen edits replace only the
+  // edited screen's object, so dragging an unmasked screen leaves every
+  // masked one as it was and the per-pixel pass is skipped.
+  let lastShade: { canvas: HTMLCanvasElement; w: number; h: number; masked: OutputSlice[] } | null = null;
 
   function drawMaskShade() {
     maskShadeFrame = 0;
@@ -575,12 +579,17 @@
     const scale = Math.min(1, MASK_SHADE_MAX_DIM / Math.max(1, containerWidth, containerHeight));
     const w = Math.max(1, Math.round(containerWidth * scale));
     const h = Math.max(1, Math.round(containerHeight * scale));
+    const masked = $screens.filter(s => s.enabled && (s.masks ?? []).some(screenMaskIsActive));
+    if (
+      lastShade && lastShade.canvas === canvas && lastShade.w === w && lastShade.h === h
+      && lastShade.masked.length === masked.length && lastShade.masked.every((s, i) => s === masked[i])
+    ) return;
     if (canvas.width !== w) canvas.width = w;
     if (canvas.height !== h) canvas.height = h;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
+    lastShade = { canvas, w, h, masked };
     ctx.clearRect(0, 0, w, h);
-    const masked = $screens.filter(s => s.enabled && (s.masks ?? []).some(screenMaskIsActive));
     if (masked.length === 0) return;
     const image = ctx.createImageData(w, h);
     const data = image.data;

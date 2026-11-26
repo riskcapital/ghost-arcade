@@ -2,6 +2,7 @@
   import { selectedLayer, project, layers, selectedLayerIds, recordDiscreteAction } from '../stores/layers';
   import { settings } from '../stores/settings';
   import { get } from 'svelte/store';
+  import { onDestroy } from 'svelte';
   import type { WarpCorners, Point2D, Layer } from '../types';
   import {
     advanceDragTravel,
@@ -20,7 +21,7 @@
     type SnapView,
   } from '../utils/mappingSnap';
   import { EDGE_CORNERS, dragEdge, dragPoint, rigidDragDelta, translateCorners, type PixelGrid, type WarpEdge } from '../utils/warpDrag';
-  import { warpDragStepPixels, warpNudgeStepPixels } from '../utils/warpNudge';
+  import { fineTuneNudgedPoint, warpDragStepPixels, type FineTuneArrow } from '../utils/warpNudge';
   import { scheduleHistorySnapshot } from '../stores/historyHooks';
   import { clearMappingPointSelection, mappingPointSelection, selectMappingPoint } from '../stores/mappingPointSelection';
   import { releaseFormControlFocus } from '../utils/formFocus';
@@ -30,6 +31,8 @@
     type SelectionBounds,
     type SelectionEdge,
   } from '../utils/selectionEdgeScale';
+  import { cornersCentroid, rotateCornersOnScreen, scaleCornersAround } from '../utils/warpTransform';
+  import { createFrameCoalescer } from '../utils/frameCoalescer';
 
   // Container dimensions (set by parent)
   export let containerWidth: number = 800;
@@ -91,67 +94,51 @@
     return allLayers.filter(l => ids.includes(l.id) && !l.locked && (includePrimary || l.id !== $selectedLayer?.id));
   }
 
-  // Apply a corner delta to all batch-selected layers
-  function applyBatchDelta(dx: number, dy: number) {
+  // Multi-layer transforms. Each returns the new corners of every
+  // batch layer, written to the project in ONE update (setCornersBatch):
+  // four setCorner calls per layer per pointer move ran the whole store
+  // cascade dozens of times per frame on a big selection.
+
+  /** Every batch layer moved by the same delta. */
+  function batchDelta(dx: number, dy: number): Map<string, WarpCorners> {
+    const out = new Map<string, WarpCorners>();
     for (const [layerId, initial] of batchInitialCorners) {
-      project.setCorner(layerId, 'topLeft', { x: initial.topLeft.x + dx, y: initial.topLeft.y + dy });
-      project.setCorner(layerId, 'topRight', { x: initial.topRight.x + dx, y: initial.topRight.y + dy });
-      project.setCorner(layerId, 'bottomLeft', { x: initial.bottomLeft.x + dx, y: initial.bottomLeft.y + dy });
-      project.setCorner(layerId, 'bottomRight', { x: initial.bottomRight.x + dx, y: initial.bottomRight.y + dy });
+      out.set(layerId, translateCorners(initial, { x: dx, y: dy }));
     }
+    return out;
   }
 
-  // Apply scale to all batch-selected layers. For the multi-select scale
-  // handle we scale around the shared selection center, preserving spacing
-  // between layers. Legacy single-layer companion scaling can still pass no
-  // center to scale each layer around itself.
-  function applyBatchScale(scaleFactor: number, sharedCenter: Point2D | null = null) {
+  /** Every batch layer scaled round the shared selection centre, which
+   *  keeps the spacing between layers. */
+  function batchScale(scaleFactor: number, sharedCenter: Point2D): Map<string, WarpCorners> {
+    const out = new Map<string, WarpCorners>();
     for (const [layerId, initial] of batchInitialCorners) {
-      const cx = sharedCenter?.x ?? (initial.topLeft.x + initial.topRight.x + initial.bottomLeft.x + initial.bottomRight.x) / 4;
-      const cy = sharedCenter?.y ?? (initial.topLeft.y + initial.topRight.y + initial.bottomLeft.y + initial.bottomRight.y) / 4;
-      project.setCorner(layerId, 'topLeft', { x: cx + (initial.topLeft.x - cx) * scaleFactor, y: cy + (initial.topLeft.y - cy) * scaleFactor });
-      project.setCorner(layerId, 'topRight', { x: cx + (initial.topRight.x - cx) * scaleFactor, y: cy + (initial.topRight.y - cy) * scaleFactor });
-      project.setCorner(layerId, 'bottomLeft', { x: cx + (initial.bottomLeft.x - cx) * scaleFactor, y: cy + (initial.bottomLeft.y - cy) * scaleFactor });
-      project.setCorner(layerId, 'bottomRight', { x: cx + (initial.bottomRight.x - cx) * scaleFactor, y: cy + (initial.bottomRight.y - cy) * scaleFactor });
+      out.set(layerId, scaleCornersAround(initial, sharedCenter, scaleFactor));
     }
+    return out;
   }
 
   // Stretch every selected layer from a shared selection edge — dragging the
   // top edge of a multi-selection scales all layers vertically from the
   // selection's bottom edge, preserving relative placement.
-  function applyBatchEdgeScale(edge: SelectionEdge, deltaX: number, deltaY: number) {
-    if (!batchEdgeBounds) return;
+  function batchEdgeScale(edge: SelectionEdge, deltaX: number, deltaY: number): Map<string, WarpCorners> {
+    const out = new Map<string, WarpCorners>();
+    if (!batchEdgeBounds) return out;
     for (const [layerId, initial] of batchInitialCorners) {
-      const next = scaleWarpCornersFromSelectionEdge(
-        initial,
-        batchEdgeBounds,
-        edge,
-        deltaX,
-        deltaY,
-      );
-      project.setCorner(layerId, 'topLeft', next.topLeft);
-      project.setCorner(layerId, 'topRight', next.topRight);
-      project.setCorner(layerId, 'bottomLeft', next.bottomLeft);
-      project.setCorner(layerId, 'bottomRight', next.bottomRight);
+      out.set(layerId, scaleWarpCornersFromSelectionEdge(initial, batchEdgeBounds, edge, deltaX, deltaY));
     }
+    return out;
   }
 
-  // Apply rotation to all batch-selected layers around their own centers
-  function applyBatchRotate(deltaAngle: number) {
-    const cos = Math.cos(deltaAngle);
-    const sin = Math.sin(deltaAngle);
+  /** Every batch layer turned round one shared pivot (the selection
+   *  centre), so the selection turns as one piece. */
+  function batchRotate(screenAngle: number, pivot: Point2D): Map<string, WarpCorners> {
+    const out = new Map<string, WarpCorners>();
+    const frame = { width: containerWidth, height: containerHeight };
     for (const [layerId, initial] of batchInitialCorners) {
-      const cx = (initial.topLeft.x + initial.topRight.x + initial.bottomLeft.x + initial.bottomRight.x) / 4;
-      const cy = (initial.topLeft.y + initial.topRight.y + initial.bottomLeft.y + initial.bottomRight.y) / 4;
-      function rot(p: Point2D): Point2D {
-        const dx = p.x - cx; const dy = p.y - cy;
-        return { x: cx + dx * cos - dy * sin, y: cy + dx * sin + dy * cos };
-      }
-      project.setCorner(layerId, 'topLeft', rot(initial.topLeft));
-      project.setCorner(layerId, 'topRight', rot(initial.topRight));
-      project.setCorner(layerId, 'bottomLeft', rot(initial.bottomLeft));
-      project.setCorner(layerId, 'bottomRight', rot(initial.bottomRight));
+      out.set(layerId, rotateCornersOnScreen(initial, pivot, screenAngle, frame));
     }
+    return out;
   }
 
   // Capture initial corners for all batch layers (+ children of group layers)
@@ -176,13 +163,21 @@
     for (const layer of getBatchLayers(includePrimary)) {
       batchInitialCorners.set(layer.id, structuredClone(layer.corners));
     }
-    // If the selected layer is a group, also capture children so they move with it
+    // If the selected layer is a group, also capture children so they move
+    // with it. Transforms that work on the whole set (edge, scale, rotate)
+    // take the group's own corners too, so the group and its children
+    // change together whatever the number of children.
     if ($selectedLayer?.type === 'group') {
       const allLayers = get(layers);
+      let children = 0;
       for (const child of allLayers) {
         if (child.parentGroupId === $selectedLayer.id && child.corners && !child.locked) {
           batchInitialCorners.set(child.id, structuredClone(child.corners));
+          children += 1;
         }
+      }
+      if (includePrimary && children > 0 && $selectedLayer.corners) {
+        batchInitialCorners.set($selectedLayer.id, structuredClone($selectedLayer.corners));
       }
     }
     const bounds = getCornersBounds(batchInitialCorners.values());
@@ -289,8 +284,7 @@
     dragTarget = corner;
     if ($selectedLayer) selectMappingPoint({ kind: 'corner', layerId: $selectedLayer.id, corner });
     beginCornerDrag(corner, e.clientX, e.clientY);
-    window.addEventListener('mousemove', handleMouseMove);
-    window.addEventListener('mouseup', handleMouseUp);
+    listenMouseDrag();
   }
 
   /** A corner drag starts from where the corner is, not from the pointer:
@@ -334,8 +328,7 @@
     const snapsCorners = !!initialCorners && !batchEdgeBounds && !hideCorners && !nonRectShape;
     startSnap(snapsCorners && initialCorners ? [initialCorners[a], initialCorners[b]] : null);
 
-    window.addEventListener('mousemove', handleMouseMove);
-    window.addEventListener('mouseup', handleMouseUp);
+    listenMouseDrag();
   }
 
   // Handle move (center handle)
@@ -349,8 +342,7 @@
     clearMappingPointSelection();
     beginMoveDrag(e.clientX, e.clientY);
 
-    window.addEventListener('mousemove', handleMouseMove);
-    window.addEventListener('mouseup', handleMouseUp);
+    listenMouseDrag();
   }
 
   // Handle rotation
@@ -366,10 +358,11 @@
     // Account for zoom when storing initial position
     dragStartPos = { x: (e.clientX - rect.left) / zoom, y: (e.clientY - rect.top) / zoom };
     initialCorners = $selectedLayer ? structuredClone($selectedLayer.corners) : null;
-    captureBatchInitial();
+    // A multi-selection (or a group with its children) turns round its
+    // shared centre, so the primary layer is part of the set.
+    captureBatchInitial(true);
 
-    window.addEventListener('mousemove', handleMouseMove);
-    window.addEventListener('mouseup', handleMouseUp);
+    listenMouseDrag();
   }
 
   // Handle uniform scale
@@ -387,8 +380,7 @@
     initialCorners = scaleInitialCorners;
     captureBatchInitial(true);
 
-    window.addEventListener('mousemove', handleMouseMove);
-    window.addEventListener('mouseup', handleMouseUp);
+    listenMouseDrag();
   }
 
   /** Corner, edge and move drags: start position plus pointer travel,
@@ -403,7 +395,7 @@
     } else if (dragging === 'edge' && dragTarget && initialCorners) {
       const edge = dragTarget as WarpEdge;
       if (batchEdgeBounds && batchInitialCorners.size > 1) {
-        applyBatchEdgeScale(edge, travel.offset.x, travel.offset.y);
+        project.setCornersBatch(batchEdgeScale(edge, travel.offset.x, travel.offset.y));
         return;
       }
       const { corners, hit } = dragEdge(snapSession, initialCorners, edge, travel.offset, travel.px, bypass, pixelGrid(), fine);
@@ -413,92 +405,67 @@
       // The layer moves as one piece; so does the rest of a multi-selection.
       const { delta, hit } = rigidDragDelta(snapSession, moveSnapPoints, travel.offset, travel.px, bypass, pixelGrid(), fine);
       activeSnapHit = hit;
-      project.setCorners($selectedLayer.id, translateCorners(initialCorners, delta));
-      applyBatchDelta(delta.x, delta.y);
+      const updates = batchDelta(delta.x, delta.y);
+      updates.set($selectedLayer.id, translateCorners(initialCorners, delta));
+      project.setCornersBatch(updates);
     }
   }
 
+  // Pointer moves are applied once per frame with the latest position.
+  type PointerSample = { clientX: number; clientY: number; fine: boolean; bypass: boolean };
+  const pointerFrame = createFrameCoalescer((p: PointerSample) => applyPointerMove(p));
+
   function handleMouseMove(e: MouseEvent) {
+    if (!dragging) return;
+    pointerFrame.schedule({ clientX: e.clientX, clientY: e.clientY, fine: e.shiftKey, bypass: snapBypassed(e) });
+  }
+
+  function applyPointerMove(p: PointerSample) {
     if (!dragging || !$selectedLayer || !containerEl) return;
 
     if (dragging === 'corner' || dragging === 'edge' || dragging === 'move') {
-      dragTo(e.clientX, e.clientY, e.shiftKey, snapBypassed(e));
+      dragTo(p.clientX, p.clientY, p.fine, p.bypass);
       return;
     }
 
     const rect = containerEl.getBoundingClientRect();
     // Account for zoom transform when converting mouse position
-    const x = (e.clientX - rect.left) / zoom;
-    const y = (e.clientY - rect.top) / zoom;
+    const x = (p.clientX - rect.left) / zoom;
+    const y = (p.clientY - rect.top) / zoom;
 
     if (dragging === 'rotate' && dragStartPos && initialCorners) {
-      // Calculate rotation based on angle from center
-      const center = getCenter(initialCorners);
-      const centerPixel = toPixel(center);
+      // A multi-selection (or a group) turns round its shared centre; a
+      // single layer round its own.
+      const shared = batchInitialCorners.size > 1 && batchScaleCenter;
+      const pivot = shared ? batchScaleCenter! : cornersCentroid(initialCorners);
+      const pivotPixel = toPixel(pivot);
 
-      const startAngle = Math.atan2(dragStartPos.y - centerPixel.y, dragStartPos.x - centerPixel.x);
-      const currentAngle = Math.atan2(y - centerPixel.y, x - centerPixel.x);
+      // Screen angle (y down): positive is clockwise, as the pointer turns.
+      const startAngle = Math.atan2(dragStartPos.y - pivotPixel.y, dragStartPos.x - pivotPixel.x);
+      const currentAngle = Math.atan2(y - pivotPixel.y, x - pivotPixel.x);
       const deltaAngle = currentAngle - startAngle;
 
-      // Rotate all corners around center
-      const cos = Math.cos(deltaAngle);
-      const sin = Math.sin(deltaAngle);
-
-      function rotatePoint(p: Point2D, cx: number, cy: number): Point2D {
-        const dx = p.x - cx;
-        const dy = p.y - cy;
-        return {
-          x: cx + dx * cos - dy * sin,
-          y: cy + dx * sin + dy * cos,
-        };
+      if (shared) {
+        project.setCornersBatch(batchRotate(deltaAngle, pivot));
+      } else {
+        project.setCorners(
+          $selectedLayer.id,
+          rotateCornersOnScreen(initialCorners, pivot, deltaAngle, { width: containerWidth, height: containerHeight }),
+        );
       }
-
-      const newCorners: WarpCorners = {
-        topLeft: rotatePoint(initialCorners.topLeft, center.x, center.y),
-        topRight: rotatePoint(initialCorners.topRight, center.x, center.y),
-        bottomLeft: rotatePoint(initialCorners.bottomLeft, center.x, center.y),
-        bottomRight: rotatePoint(initialCorners.bottomRight, center.x, center.y),
-      };
-
-      project.setCorner($selectedLayer.id, 'topLeft', newCorners.topLeft);
-      project.setCorner($selectedLayer.id, 'topRight', newCorners.topRight);
-      project.setCorner($selectedLayer.id, 'bottomLeft', newCorners.bottomLeft);
-      project.setCorner($selectedLayer.id, 'bottomRight', newCorners.bottomRight);
-
-      // Batch rotate: apply same angle to all other selected layers
-      applyBatchRotate(deltaAngle);
     } else if (dragging === 'scale' && scaleInitialCorners) {
       // Uniform scale: drag up to enlarge, down to shrink
       const deltaY = scaleStartY - y; // positive = up = bigger
       const sensitivity = 0.005;
       const scaleFactor = Math.max(0.05, Math.min(10, 1 + deltaY * sensitivity));
       if (batchInitialCorners.size > 1 && batchScaleCenter) {
-        applyBatchScale(scaleFactor, batchScaleCenter);
+        project.setCornersBatch(batchScale(scaleFactor, batchScaleCenter));
         return;
       }
-      const center = getCenter(scaleInitialCorners);
-
-      function scalePoint(p: Point2D, cx: number, cy: number): Point2D {
-        return {
-          x: cx + (p.x - cx) * scaleFactor,
-          y: cy + (p.y - cy) * scaleFactor,
-        };
-      }
-
-      const newCorners: WarpCorners = {
-        topLeft: scalePoint(scaleInitialCorners.topLeft, center.x, center.y),
-        topRight: scalePoint(scaleInitialCorners.topRight, center.x, center.y),
-        bottomLeft: scalePoint(scaleInitialCorners.bottomLeft, center.x, center.y),
-        bottomRight: scalePoint(scaleInitialCorners.bottomRight, center.x, center.y),
-      };
-
-      project.setCorner($selectedLayer.id, 'topLeft', newCorners.topLeft);
-      project.setCorner($selectedLayer.id, 'topRight', newCorners.topRight);
-      project.setCorner($selectedLayer.id, 'bottomLeft', newCorners.bottomLeft);
-      project.setCorner($selectedLayer.id, 'bottomRight', newCorners.bottomRight);
-
-      // Batch scale: apply same factor to all other selected layers
-      applyBatchScale(scaleFactor);
+      project.setCorners(
+        $selectedLayer.id,
+        scaleCornersAround(scaleInitialCorners, cornersCentroid(scaleInitialCorners), scaleFactor),
+      );
     }
   }
 
@@ -511,7 +478,17 @@
     activeSnapHit = null;
   }
 
+  function listenMouseDrag() {
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
+    // Focus leaving the window mid-drag (Cmd-Tab, a dialog) never sends
+    // the mouseup: end the drag there instead of leaving it attached.
+    window.addEventListener('blur', handleMouseUp);
+  }
+
   function handleMouseUp() {
+    // The last move waiting for its frame lands before the undo step.
+    pointerFrame.flush();
     if (dragging) recordDiscreteAction();
     dragging = null;
     dragTarget = null;
@@ -525,6 +502,7 @@
     batchInitialCorners.clear();
     window.removeEventListener('mousemove', handleMouseMove);
     window.removeEventListener('mouseup', handleMouseUp);
+    window.removeEventListener('blur', handleMouseUp);
   }
 
   // Touch events
@@ -568,26 +546,17 @@
     if ($selectedLayer) selectMappingPoint({ kind: 'corner', layerId: $selectedLayer.id, corner });
     const touch = e.touches[0];
     beginCornerDrag(corner, touch.clientX, touch.clientY);
-    window.addEventListener('touchmove', handleTouchMove, { passive: false });
-    window.addEventListener('touchend', handleTouchEnd);
+    listenTouchDrag();
   }
 
   /** Move the fine-tune corner by exactly one project-pixel step in
    *  the given direction. Honors warpDragGranularity so a user who
    *  sets the snap to 5px gets 5px nudges from the arrows too. */
-  function nudgeFineTune(dxPx: number, dyPx: number) {
+  function nudgeFineTune(arrow: FineTuneArrow) {
     if (!fineTuneCorner || !$selectedLayer || $selectedLayer.locked) return;
-    const step = warpNudgeStepPixels(get(settings).ui.warpDragGranularity);
     const proj = get(project);
-    const pw = Math.max(1, proj.width);
-    const ph = Math.max(1, proj.height);
     const cur = $selectedLayer.corners[fineTuneCorner];
-    // Warp Y goes UP (1=top); arrow "up" should decrease canvas Y
-    // pixel coordinate which means INCREASE the corner Y. Sign flip.
-    const next = {
-      x: cur.x + (dxPx * step) / pw,
-      y: cur.y - (dyPx * step) / ph,
-    };
+    const next = fineTuneNudgedPoint(cur, arrow, proj.width, proj.height, get(settings).ui.warpDragGranularity);
     project.setCorner($selectedLayer.id, fineTuneCorner, next);
     scheduleHistorySnapshot();
   }
@@ -607,8 +576,14 @@
     const touch = e.touches[0];
     beginMoveDrag(touch.clientX, touch.clientY);
 
+    listenTouchDrag();
+  }
+
+  function listenTouchDrag() {
     window.addEventListener('touchmove', handleTouchMove, { passive: false });
     window.addEventListener('touchend', handleTouchEnd);
+    window.addEventListener('touchcancel', handleTouchEnd);
+    window.addEventListener('blur', handleTouchEnd);
   }
 
   function handleTouchMove(e: TouchEvent) {
@@ -616,10 +591,11 @@
     e.preventDefault();
     const touch = e.touches[0];
     if (!touch) return;
-    dragTo(touch.clientX, touch.clientY, false, false);
+    pointerFrame.schedule({ clientX: touch.clientX, clientY: touch.clientY, fine: false, bypass: false });
   }
 
   function handleTouchEnd() {
+    pointerFrame.flush();
     if (dragging) recordDiscreteAction();
     dragging = null;
     dragTarget = null;
@@ -630,7 +606,16 @@
     batchInitialCorners.clear();
     window.removeEventListener('touchmove', handleTouchMove);
     window.removeEventListener('touchend', handleTouchEnd);
+    window.removeEventListener('touchcancel', handleTouchEnd);
+    window.removeEventListener('blur', handleTouchEnd);
   }
+
+  // Unmounted mid-drag (the layer was deselected, the tab changed): end
+  // the drag so no window listener outlives the component.
+  onDestroy(() => {
+    handleMouseUp();
+    handleTouchEnd();
+  });
 
   // Corner handle positions.
   //
@@ -962,11 +947,11 @@
         aria-label="Fine-tune {fineTuneCorner}"
       >
         <div class="ft-label">{fineTuneCorner.replace(/([A-Z])/g, ' $1').trim()}</div>
-        <button class="ft-btn ft-up"    onclick={() => nudgeFineTune(0, 1)}  aria-label="Up">▲</button>
-        <button class="ft-btn ft-left"  onclick={() => nudgeFineTune(-1, 0)} aria-label="Left">◀</button>
+        <button class="ft-btn ft-up"    onclick={() => nudgeFineTune('up')}    aria-label="Up">▲</button>
+        <button class="ft-btn ft-left"  onclick={() => nudgeFineTune('left')}  aria-label="Left">◀</button>
         <button class="ft-btn ft-exit"  onclick={exitFineTune}                aria-label="Exit fine-tune">×</button>
-        <button class="ft-btn ft-right" onclick={() => nudgeFineTune(1, 0)}  aria-label="Right">▶</button>
-        <button class="ft-btn ft-down"  onclick={() => nudgeFineTune(0, -1)} aria-label="Down">▼</button>
+        <button class="ft-btn ft-right" onclick={() => nudgeFineTune('right')} aria-label="Right">▶</button>
+        <button class="ft-btn ft-down"  onclick={() => nudgeFineTune('down')}  aria-label="Down">▼</button>
       </div>
     {/if}
 

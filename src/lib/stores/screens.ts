@@ -136,6 +136,39 @@ function clamp01(value: number): number {
   return Math.max(0, Math.min(1, Number.isFinite(value) ? value : 0));
 }
 
+const TILE_EPS = 1e-4;
+
+function keepsOwnCrop(sc: OutputSlice): boolean {
+  return !!(sc.projectorCalibration?.enabled || sc.overlapBand?.enabled);
+}
+
+/** True while the screens still sit in the automatic layout: equal-width
+ *  columns side by side, full height, in list order. Only then do adding
+ *  and removing a screen re-tile the others; a layout the operator has
+ *  set up by hand is left exactly as it is. Calibrated screens (projector
+ *  calibration, overlap band) keep their crop either way. */
+export function isAutoTiledLayout(slices: readonly OutputSlice[]): boolean {
+  const count = slices.length;
+  return slices.every((sc, i) => keepsOwnCrop(sc) || (
+    Math.abs(sc.cropX - i / count) < TILE_EPS
+    && Math.abs(sc.cropW - 1 / count) < TILE_EPS
+    && Math.abs(sc.cropY) < TILE_EPS
+    && Math.abs(sc.cropH - 1) < TILE_EPS
+  ));
+}
+
+function retile(slices: OutputSlice[]): OutputSlice[] {
+  const count = slices.length;
+  return slices.map((sc, i) => keepsOwnCrop(sc) ? sc : ({ ...sc, cropX: i / count, cropW: 1 / count }));
+}
+
+/** A copy's crop: nudged down-right so it shows, but kept on the canvas. */
+export function duplicateCropOffset(src: Pick<OutputSlice, 'cropX' | 'cropY' | 'cropW' | 'cropH'>): { cropX: number; cropY: number } {
+  const OFFSET = 0.05;
+  const fit = (start: number, size: number) => Math.max(0, Math.min(Math.max(0, 1 - size), start + OFFSET));
+  return { cropX: fit(src.cropX, src.cropW), cropY: fit(src.cropY, src.cropH) };
+}
+
 // ─── Lifecycle ─────────────────────────────────────────────────────────
 export const screenActions = {
   /** Add a new screen. Defaults to a full-canvas rectangle; the operator
@@ -150,13 +183,13 @@ export const screenActions = {
       const names = ['Left', 'Center', 'Right', 'Top', 'Bottom', 'Aux-1', 'Aux-2', 'Aux-3'];
       const name = names[idx] || `Screen ${idx + 1}`;
       id = generateId();
-      // Distribute new screen horizontally; existing screens shrink
-      // proportionally — matches the convention from the old settings
-      // panel so users coming from v1.6 don't see a jarring layout flip.
+      // While the screens are still in the automatic side-by-side layout,
+      // the new one joins it and the others shrink to make room (the
+      // convention from the old settings panel). A layout set up by hand
+      // is kept; the new screen then starts as the full canvas.
+      if (!isAutoTiledLayout(slices)) return [...slices, createDefaultSlice(id, name, name)];
       const count = slices.length + 1;
-      const resized = slices.map((sc, i) => sc.projectorCalibration?.enabled || sc.overlapBand?.enabled ? sc : ({ ...sc, cropX: i / count, cropW: 1 / count }));
-      resized.push(createDefaultSlice(id, name, name, (count - 1) / count, 1 / count));
-      return resized;
+      return retile([...slices, createDefaultSlice(id, name, name, (count - 1) / count, 1 / count)]);
     });
     recordDiscreteAction();
     return id;
@@ -165,12 +198,9 @@ export const screenActions = {
   remove(screenId: string) {
     update(slices => {
       const filtered = slices.filter(s => s.id !== screenId);
-      // Re-distribute crop regions so the operator's existing layout
-      // stays visually balanced.
-      const count = filtered.length;
-      return count > 0
-        ? filtered.map((sc, i) => sc.projectorCalibration?.enabled || sc.overlapBand?.enabled ? sc : ({ ...sc, cropX: i / count, cropW: 1 / count }))
-        : [];
+      // Screens in the automatic layout re-tile to fill the gap; a layout
+      // set up by hand keeps every other screen's crop.
+      return isAutoTiledLayout(slices) ? retile(filtered) : filtered;
     });
     recordDiscreteAction();
     const sel = get(selectedScreenId);
@@ -190,9 +220,9 @@ export const screenActions = {
         id,
         name: `${src.name} copy`,
         spoutName: `${src.spoutName}-copy`,
-        // Offset crop slightly so the dupe is visible.
-        cropX: src.projectorCalibration?.enabled || src.overlapBand?.enabled ? src.cropX : Math.min(0.9, src.cropX + 0.05),
-        cropY: src.projectorCalibration?.enabled || src.overlapBand?.enabled ? src.cropY : Math.min(0.9, src.cropY + 0.05),
+        // Offset crop slightly so the dupe is visible, but never past the
+        // canvas edge.
+        ...(keepsOwnCrop(src) ? { cropX: src.cropX, cropY: src.cropY } : duplicateCropOffset(src)),
         // Masks are edited in place, so the copy needs its own vertices.
         masks: cloneMasks(src.masks, true),
       };

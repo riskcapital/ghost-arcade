@@ -269,3 +269,49 @@ describe('Screen source', () => {
    expect(get(settingsModule.settings).output.slices[0].cropX).toBe(.12);
    expect(get(settingsModule.settings).output.slices[0].cropW).toBe(.6);
  });
+
+describe('adding, removing and duplicating screens keeps the layout', () => {
+  const slicesNow = () => get(settingsModule.settings).output.slices;
+  const setSlices = (slices: import('./settings').OutputSlice[]) =>
+    settingsModule.settings.update(s => ({ ...s, output: { ...s.output, slices } }));
+
+  it('re-tiles screens that are still in the automatic side-by-side layout', () => {
+    // beforeEach leaves one full-canvas screen.
+    screensModule.screenActions.add();
+    expect(slicesNow().map(s => [s.cropX, s.cropW])).toEqual([[0, 0.5], [0.5, 0.5]]);
+    screensModule.screenActions.add();
+    const thirds = slicesNow().map(s => s.cropX);
+    expect(thirds[1]).toBeCloseTo(1 / 3);
+    screensModule.screenActions.remove(slicesNow()[2].id);
+    expect(slicesNow().map(s => [s.cropX, s.cropW])).toEqual([[0, 0.5], [0.5, 0.5]]);
+  });
+
+  it('keeps crops set up by hand when a screen is added or removed', () => {
+    const { createDefaultSlice } = settingsModule;
+    setSlices([
+      { ...createDefaultSlice('l', 'L', 'L'), cropX: 0, cropW: 0.4, cropY: 0.1, cropH: 0.8 },
+      { ...createDefaultSlice('r', 'R', 'R'), cropX: 0.55, cropW: 0.45 },
+    ]);
+    const before = slicesNow().map(s => ({ x: s.cropX, y: s.cropY, w: s.cropW, h: s.cropH }));
+    const added = screensModule.screenActions.add()!;
+    const after = slicesNow();
+    expect(after.slice(0, 2).map(s => ({ x: s.cropX, y: s.cropY, w: s.cropW, h: s.cropH }))).toEqual(before);
+    const fresh = after.find(s => s.id === added)!;
+    expect([fresh.cropX, fresh.cropW]).toEqual([0, 1]);
+    screensModule.screenActions.remove('l');
+    expect(slicesNow().find(s => s.id === 'r')!.cropX).toBe(0.55);
+    expect(slicesNow().find(s => s.id === 'r')!.cropW).toBe(0.45);
+  });
+
+  it('a duplicate stays on the canvas', () => {
+    const { createDefaultSlice } = settingsModule;
+    setSlices([{ ...createDefaultSlice('wide', 'W', 'W'), cropX: 0.5, cropW: 0.5, cropY: 0.6, cropH: 0.4 }]);
+    const id = screensModule.screenActions.duplicate('wide')!;
+    const copy = slicesNow().find(s => s.id === id)!;
+    expect(copy.cropX + copy.cropW).toBeLessThanOrEqual(1);
+    expect(copy.cropY + copy.cropH).toBeLessThanOrEqual(1);
+    const nudged = screensModule.duplicateCropOffset({ cropX: 0.1, cropY: 0, cropW: 0.3, cropH: 0.5 });
+    expect(nudged.cropX).toBeCloseTo(0.15);
+    expect(nudged.cropY).toBeCloseTo(0.05);
+  });
+});
