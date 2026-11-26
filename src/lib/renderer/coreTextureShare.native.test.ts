@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { resolve } from 'node:path';
 import { createInterface } from 'node:readline';
 import { describe, expect, it } from 'vitest';
 import { closeNativeTestCore, gpuTestPlatform as platform } from './nativeHardwareTestPlatform';
@@ -10,7 +11,10 @@ import { closeNativeTestCore, gpuTestPlatform as platform } from './nativeHardwa
  */
 type Command = Record<string, unknown>;
 function core() {
-  const child = spawn(platform.binary, [], { stdio: ['pipe', 'pipe', 'pipe'] });
+  // Point the core at the repo's Syphon.framework: a dev core finds it from
+  // its own path, which fails when target/ is a symlink elsewhere.
+  const env = { ...process.env, GA_SYPHON_FRAMEWORK: process.env.GA_SYPHON_FRAMEWORK ?? resolve('electron/native/vendor/Syphon.framework') };
+  const child = spawn(platform.binary, [], { stdio: ['pipe', 'pipe', 'pipe'], env });
   let nextId = 0;
   const pending = new Map<number, { resolve(value: any): void; reject(error: Error): void }>();
   createInterface({ input: child.stdout }).on('line', line => {
