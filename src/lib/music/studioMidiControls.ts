@@ -33,7 +33,6 @@ import {
   stopTrack,
   listenForKey,
   lockToKey,
-  playAll,
   playNote,
   prepareBand,
   pushOutsideNote,
@@ -43,13 +42,13 @@ import {
   setBandThrow,
   setBandWash,
   startLiveInput,
-  stopAll,
   stopLiveInput,
   strikeBowl,
   toggleFreeze,
   triggerShot,
 } from './musicRuntime';
 import { musicStudio, type MusicStudioState } from './musicStudioStore';
+import { studioPlay, studioStop } from './linkStartStop';
 import { DUCK_RELEASE_MAX, DUCK_RELEASE_MIN, type BandFxSettings } from './soundSlots';
 import { MAX_LIVE_INPUTS, type LiveInputSettings } from './mixer';
 import { registerStudioControls, releaseStudioControls, type StudioControl } from './studioControls';
@@ -205,8 +204,8 @@ function togglePlay(): void {
     });
     return;
   }
-  if (studioPlaying(s)) stopAll();
-  else if (s.isOpen) playAll();
+  if (studioPlaying(s)) studioStop();
+  else if (s.isOpen) studioPlay();
 }
 
 // ── The controls ────────────────────────────────────────────────────────

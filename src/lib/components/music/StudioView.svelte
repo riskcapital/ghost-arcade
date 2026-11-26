@@ -24,12 +24,11 @@
     captureCurrentScene,
     killAll,
     launchScene,
-    playAll,
-    stopAll,
     recordingElapsed,
     startRecording,
     stopRecording,
   } from '../../music/musicRuntime';
+  import { installLinkStartStop, studioPlay, studioStop } from '../../music/linkStartStop';
   import './studioTokens.css';
   import StudioModule from './StudioModule.svelte';
   import ShowUnderneathBanner from '../show/ShowUnderneathBanner.svelte';
@@ -184,6 +183,7 @@
   const playing = $derived(s.liveControl ? $abletonBridge.playing : s.sequencerPlaying || $machineTransport.playing || $loopStationView.tracks.some((t) => t.phase === 'play' || t.phase === 'overdub') || Object.keys(s.playingLoops).length > 0 || Object.keys(s.queuedLoops).length > 0 || !!s.playingTakeId || !!$musicTransport.sustaining);
 
   ensureLiveFeed();
+  installLinkStartStop();
 
   async function toggleLiveControl() {
     const on = !s.liveControl;
@@ -199,8 +199,8 @@
       else abletonBridge.play();
       return;
     }
-    if (playing) stopAll();
-    else playAll();
+    if (playing) studioStop();
+    else studioPlay();
   }
 
   function toggleRecord() {

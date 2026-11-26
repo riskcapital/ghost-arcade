@@ -2413,6 +2413,21 @@
                   aria-label="Audio Lab output trim in milliseconds"
                   onchange={(e) => { const el = e.target as HTMLInputElement; el.value = String(abletonLink.setOffsetMs(Number(el.value))); }} />
               </div>
+
+              <div class="setting-row sub-row">
+                <div class="setting-label">
+                  <span class="label-text">Audio Lab Start/Stop Sync</span>
+                  <span class="label-hint">Starting your other Link app starts Audio Lab on the same bar, and stopping it stops Audio Lab. Audio Lab's Play and Stop start and stop the session too.</span>
+                </div>
+                <label class="toggle">
+                  <input type="checkbox"
+                    checked={$abletonLink.startStopSync}
+                    aria-label="Audio Lab Start/Stop Sync"
+                    onchange={(e) => abletonLink.setStartStopSync((e.target as HTMLInputElement).checked)}
+                  />
+                  <span class="toggle-slider"></span>
+                </label>
+              </div>
             {/if}
             {#if $abletonLink.error}
               <div class="setting-row sub-row">

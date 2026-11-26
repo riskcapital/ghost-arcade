@@ -15,12 +15,11 @@
   import {
     ensureMusicRuntime,
     killAll,
-    playAll,
-    stopAll,
     recordingElapsed,
     startRecording,
     stopRecording,
   } from '../../music/musicRuntime';
+  import { installLinkStartStop, studioPlay, studioStop } from '../../music/linkStartStop';
   import { installAudioLabUndoKeys } from '../../music/audioLabHistory';
   import './studioTokens.css';
   import StudioModule from './StudioModule.svelte';
@@ -61,6 +60,7 @@
 
   onMount(() => {
     ensureMusicRuntime();
+    installLinkStartStop();
     // One undo history for Audio Lab's edits, on Cmd/Ctrl+Z while Audio Lab is being worked on.
     installAudioLabUndoKeys();
   });
@@ -74,8 +74,8 @@
   const playing = $derived(s.sequencerPlaying || Object.keys(s.playingLoops).length > 0 || Object.keys(s.queuedLoops).length > 0 || !!s.playingTakeId || !!$musicTransport.sustaining);
 
   function toggleAll() {
-    if (playing) stopAll();
-    else playAll();
+    if (playing) studioStop();
+    else studioPlay();
   }
 
   function toggleRecord() {
