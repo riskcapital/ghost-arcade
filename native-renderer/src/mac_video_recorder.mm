@@ -57,6 +57,9 @@ struct GhostMacVideoRecorder {
     // every rendered frame at 1/fps would play the take back in slow motion.
     CFAbsoluteTime started = 0;
     bool has_started = false;
+    // Last slot handed out by claim (pacing) and last slot actually written
+    // (duration). They differ when the writer drops a claimed frame.
+    int64_t last_claimed = -1;
     int64_t last_index = -1;
     bool finished = false;
 };
@@ -146,23 +149,32 @@ GhostMacVideoRecorder *ghost_mac_recorder_open(const char *path, uint32_t width,
     }
 }
 
+int64_t ghost_mac_recorder_claim(GhostMacVideoRecorder *recorder) {
+    if (!recorder || recorder->finished) return -1;
+    // Which output frame does *now* belong to? Renders landing inside a slot
+    // already claimed are dropped, so the file stays in step with real time
+    // however fast the core happens to run. Claimed when the frame is
+    // rendered, not when it is appended, so GPU latency does not shift it.
+    const CFAbsoluteTime now = CFAbsoluteTimeGetCurrent();
+    if (!recorder->has_started) {
+        recorder->started = now;
+        recorder->has_started = true;
+    }
+    const double elapsed = now - recorder->started;
+    const int64_t index = static_cast<int64_t>(std::max(0.0, elapsed) * recorder->fps);
+    if (index <= recorder->last_claimed) return -1;
+    recorder->last_claimed = index;
+    return index;
+}
+
 int ghost_mac_recorder_append(GhostMacVideoRecorder *recorder, uint32_t iosurface_id,
-                              char *error, size_t error_capacity) {
+                              int64_t index, char *error, size_t error_capacity) {
     @autoreleasepool {
         if (!recorder || recorder->finished) {
             set_error(error, error_capacity, "native recording: recorder is not running");
             return -1;
         }
-        // Which output frame does *now* belong to? Renders landing inside a
-        // slot already written are dropped, so the file stays in step with
-        // real time however fast the core happens to run.
-        const CFAbsoluteTime now = CFAbsoluteTimeGetCurrent();
-        if (!recorder->has_started) {
-            recorder->started = now;
-            recorder->has_started = true;
-        }
-        const double elapsed = now - recorder->started;
-        const int64_t index = static_cast<int64_t>(std::max(0.0, elapsed) * recorder->fps);
+        // Timestamps must only move forward.
         if (index <= recorder->last_index) return 0;
 
         // The writer applies backpressure; dropping here is correct, because
@@ -171,7 +183,7 @@ int ghost_mac_recorder_append(GhostMacVideoRecorder *recorder, uint32_t iosurfac
 
         IOSurfaceRef surface = IOSurfaceLookup(iosurface_id);
         if (!surface) {
-            set_error(error, error_capacity, "native recording: output IOSurface went away");
+            set_error(error, error_capacity, "native recording: capture IOSurface went away");
             return -1;
         }
         CVPixelBufferRef pixels = nullptr;
@@ -180,7 +192,7 @@ int ghost_mac_recorder_append(GhostMacVideoRecorder *recorder, uint32_t iosurfac
         CFRelease(surface);
         if (created != kCVReturnSuccess || !pixels) {
             set_error(error, error_capacity,
-                      "native recording: could not wrap the composite IOSurface");
+                      "native recording: could not wrap the captured IOSurface");
             return -1;
         }
 
