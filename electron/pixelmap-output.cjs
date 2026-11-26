@@ -336,6 +336,62 @@ function createPixelMapOutput({
     return { ok: true, terminated, stats: snapshot() };
   }
 
+  /**
+   * Stop without the black frame or sACN termination, because another
+   * sender (the render core) carries on from here: its sequence numbers and
+   * the universes it is sending. Releases the socket.
+   */
+  function handOver() {
+    const handover = {
+      sequences: [...sequences.entries()],
+      active: [...active.values()].map(({ key, protocol, host, universe, length }) => ({ key, protocol, host, universe, length })),
+    };
+    active = new Map();
+    sequences.clear();
+    lastFrameAt = -Infinity;
+    rateCredit = 1;
+    artSyncActive = false;
+    recentFrames.length = 0;
+    const sock = socket;
+    if (sock) {
+      socket = null;
+      socketReady = null;
+      closeWhenDrained(sock);
+    }
+    return handover;
+  }
+
+  /**
+   * Carry on from another sender's state (see handOver). A universe it was
+   * sending that the next frame here leaves out gets its black frame then,
+   * with `sacn` for the termination packets.
+   */
+  function takeOver(handover, sacn) {
+    for (const entry of handover?.sequences ?? []) {
+      if (Array.isArray(entry) && typeof entry[0] === 'string' && Number.isInteger(entry[1]) && entry[1] >= 0 && entry[1] <= 255) {
+        sequences.set(entry[0], entry[1]);
+      }
+    }
+    for (const target of handover?.active ?? []) {
+      if (!target || typeof target.key !== 'string') continue;
+      if (target.protocol !== 'artnet' && target.protocol !== 'sacn') continue;
+      if (!Number.isInteger(target.length) || target.length < 1 || target.length > packets.DMX_SLOTS) continue;
+      if (target.protocol === 'artnet' && !isValidHost(target.host)) continue;
+      active.set(target.key, {
+        key: target.key,
+        protocol: target.protocol,
+        host: target.host ?? null,
+        universe: target.universe,
+        length: target.length,
+        sacn: {
+          priority: sacn?.priority ?? packets.SACN_DEFAULT_PRIORITY,
+          sourceName: sacn?.sourceName ?? 'Ghost Arcade',
+          cid: sacn?.cid ?? null,
+        },
+      });
+    }
+  }
+
   /** UDP port the output socket sends (or last sent) from, or null. DMX
    *  input uses it to ignore this app's own Art-Net and sACN traffic. */
   function localPort() {
@@ -345,6 +401,8 @@ function createPixelMapOutput({
   return {
     sendFrame,
     stop,
+    handOver,
+    takeOver,
     stats: snapshot,
     localPort,
   };

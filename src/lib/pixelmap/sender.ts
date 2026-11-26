@@ -17,6 +17,12 @@
  *   global output blackout) and teardown call pixelmap_stop, which sends one
  *   black frame to every universe and terminates sACN streams.
  * - Test patterns (solid, chase, LED order) run without a composite frame.
+ * - When the render core can, it does all of this itself: the plan
+ *   (corePlan.ts) goes to the main process on every change and the core
+ *   samples its own program output, packs and sends on its own clock, so
+ *   the timer and the mirror here stop. Fixtures an LED FX reaches, an old
+ *   core, GA_CORE_PIXELMAP=0 or any failure keep or put output back on this
+ *   path; the main process hands the sequence numbers over both ways.
  * - LED FX (project.wledEffects) run on fixtures exactly as on WLED
  *   controllers: a fixture is a valid effect target and LED group member,
  *   and beat-synced effects follow the manual or detected BPM. Effects run
@@ -44,6 +50,7 @@ import {
   normalizePixelMapConfig,
   resolveFixtureMapping,
 } from './fixtures';
+import { buildCorePixelMapPlan, corePixelMapEligible } from './corePlan';
 
 export interface PixelMapStats {
   framesSent: number;
@@ -58,6 +65,8 @@ export interface PixelMapStats {
   sending: boolean;
   /** Ticks skipped in the renderer because the previous frame was still in flight. */
   skippedInFlight: number;
+  /** The render core samples and sends (else this page and the main process). */
+  core?: boolean;
 }
 
 export const pixelMapStats = writable<PixelMapStats | null>(null);
@@ -108,6 +117,22 @@ let lastStatsAt = 0;
 let lastErrorLogAt = 0;
 let unsubscribers: Array<() => void> = [];
 const fixtureStates = new Map<string, FixtureState>();
+// Render core output: the plan it is sending from (JSON), the plan it
+// refused (not asked again until the plan changes), and the stats poll.
+let coreActive = false;
+let corePlanJson: string | null = null;
+let coreRefusedJson: string | null = null;
+let coreInFlight = false;
+let coreDirty = false;
+let coreEligible = false;
+let corePoll: ReturnType<typeof setInterval> | null = null;
+let corePollInFlight = false;
+let previewFixtureId: string | null = null;
+// The picture's aspect as last seen here (custom maps fall back to a grid
+// that follows it); kept while the core sends and no mirror runs.
+let knownAspect = 16 / 9;
+let corePreview: { id: string; rgb: Uint8Array } | null = null;
+const CORE_POLL_MS = 250;
 // Each fixture's mapping object as stored in the project. Normalizing makes
 // new objects on every edit; these stay the same for untouched fixtures.
 let rawMappings = new Map<string, unknown>();
@@ -140,10 +165,15 @@ function publishStats(result: Partial<PixelMapStats> | undefined, force = false)
     universes: result?.universes ?? 0,
     sending: result?.sending ?? false,
     skippedInFlight,
+    core: coreActive,
   });
 }
 
 function stopSending() {
+  stopCorePoll();
+  coreActive = false;
+  corePlanJson = null;
+  corePreview = null;
   if (!sending) return;
   sending = false;
   invoke('pixelmap_stop', {})
@@ -162,19 +192,21 @@ function releaseMirror() {
 /** Start, re-time or stop the timer and the snapshot mirror to match the config. */
 function reconcile() {
   const wanted = outputWanted();
+  if (wanted) requestCore();
+  const local = wanted && !coreActive;
   const fps = config?.fps ?? 40;
-  if (wanted && (!timer || timerFps !== fps)) {
+  if (local && (!timer || timerFps !== fps)) {
     if (timer) clearInterval(timer);
     timerFps = fps;
     timer = setInterval(tick, Math.round(1000 / fps));
-  } else if (!wanted && timer) {
+  } else if (!local && timer) {
     clearInterval(timer);
     timer = null;
     timerFps = 0;
   }
   if (!wanted) stopSending();
 
-  if (contentWanted()) {
+  if (local && contentWanted()) {
     if (!mirror || mirrorFps !== fps) {
       releaseMirror();
       mirrorFps = fps;
@@ -248,7 +280,101 @@ function ensureFixtureState(fixture: PixelMapFixture, aspect: number): FixtureSt
 
 /** Latest pixels sent for a fixture (RGB, physical order), for previews. */
 export function getPixelMapFixturePixels(fixtureId: string): Uint8Array | undefined {
+  if (coreActive) {
+    previewFixtureId = fixtureId;
+    return corePreview?.id === fixtureId ? corePreview.rgb : undefined;
+  }
   return sending ? fixtureStates.get(fixtureId)?.rgb : undefined;
+}
+
+function corePlanWanted(): string | null {
+  if (!config || !outputWanted() || !coreEligible) return null;
+  if (latestFrame && latestFrame.height > 0) knownAspect = latestFrame.width / latestFrame.height;
+  // The tick's own cache of resolved maps: a big custom map is not resolved twice.
+  return JSON.stringify(buildCorePixelMapPlan(config, knownAspect, ensureFixtureState));
+}
+
+/** Hand output to the render core, or give it the changed plan. */
+function requestCore() {
+  if (coreInFlight) {
+    coreDirty = true;
+    return;
+  }
+  const json = corePlanWanted();
+  if (!json) {
+    if (coreActive) {
+      // Back to this path (an LED FX now reaches a fixture): the main
+      // process takes the output back at the first frame sent from here.
+      coreActive = false;
+      corePlanJson = null;
+      stopCorePoll();
+    }
+    return;
+  }
+  if (json === corePlanJson || json === coreRefusedJson) return;
+  coreInFlight = true;
+  coreDirty = false;
+  invoke('pixelmap_core_configure', JSON.parse(json))
+    .then((result: { ok?: boolean; reason?: string } | undefined) => {
+      coreInFlight = false;
+      if (!outputWanted()) return;
+      if (result?.ok === true) {
+        coreActive = true;
+        corePlanJson = json;
+        coreRefusedJson = null;
+        sending = true;
+        startCorePoll();
+      } else {
+        if (coreActive) console.warn('[PixelMap] render core output stopped:', result?.reason);
+        coreActive = false;
+        corePlanJson = null;
+        coreRefusedJson = json;
+        stopCorePoll();
+      }
+      reconcile();
+      if (coreDirty) requestCore();
+    })
+    .catch(() => {
+      coreInFlight = false;
+      coreActive = false;
+      corePlanJson = null;
+      coreRefusedJson = json;
+      reconcile();
+    });
+}
+
+function startCorePoll() {
+  if (corePoll) return;
+  corePoll = setInterval(() => {
+    if (corePollInFlight || !coreActive) return;
+    corePollInFlight = true;
+    invoke('pixelmap_get_stats', previewFixtureId ? { fixtureId: previewFixtureId } : {})
+      .then((result: (Partial<PixelMapStats> & { coreLost?: boolean; fixtureId?: string; fixturePixels?: number[] }) | undefined) => {
+        corePollInFlight = false;
+        if (!coreActive) return;
+        if (result?.core !== true) {
+          // The core stopped (or restarted without the plan): send from here.
+          console.warn('[PixelMap] render core output lost; sending from the app');
+          coreActive = false;
+          coreRefusedJson = corePlanJson;
+          corePlanJson = null;
+          stopCorePoll();
+          reconcile();
+          return;
+        }
+        if (result.fixtureId && Array.isArray(result.fixturePixels)) {
+          corePreview = { id: result.fixtureId, rgb: Uint8Array.from(result.fixturePixels) };
+        }
+        publishStats(result, true);
+      })
+      .catch(() => { corePollInFlight = false; });
+  }, CORE_POLL_MS);
+}
+
+function stopCorePoll() {
+  if (corePoll) clearInterval(corePoll);
+  corePoll = null;
+  corePollInFlight = false;
 }
 
 function tick() {
@@ -324,13 +450,22 @@ export function startPixelMapOutput(): () => void {
       ledGroups = current.wledGroups ?? [];
       ledEffects = current.wledEffects ?? [];
       ledAutomation = current.wledEffectAutomation;
-      if (current.pixelMap === rawConfig) return;
+      if (current.pixelMap === rawConfig) {
+        // LED FX changes decide whether the core may send.
+        const eligible = !!config && corePixelMapEligible(config, ledGroups, ledEffects, ledAutomation);
+        if (eligible !== coreEligible) {
+          coreEligible = eligible;
+          reconcile();
+        }
+        return;
+      }
       rawConfig = current.pixelMap;
       config = rawConfig ? normalizePixelMapConfig(rawConfig) : null;
       rawMappings = new Map();
       for (const fixture of rawConfig?.fixtures ?? []) {
         if (fixture?.id && fixture.mapping) rawMappings.set(fixture.id, fixture.mapping);
       }
+      coreEligible = !!config && corePixelMapEligible(config, ledGroups, ledEffects, ledAutomation);
       reconcile();
     }),
     settings.subscribe(current => {
@@ -366,4 +501,7 @@ function shutdown() {
   inFlight = false;
   tapCanvas = null;
   tapContext = null;
+  coreRefusedJson = null;
+  coreEligible = false;
+  previewFixtureId = null;
 }

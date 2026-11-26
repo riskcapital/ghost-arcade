@@ -358,6 +358,10 @@ const RENDERER_COMMANDS = [
   // One sender per sender Screen, from the Screen's own core target.
   'native_renderer_texture_share_slices_start',
   'native_renderer_texture_share_slices_stop',
+  // Art-Net / sACN output sampled and sent by the core (main process only).
+  'native_renderer_pixelmap_configure',
+  'native_renderer_pixelmap_stop',
+  'native_renderer_pixelmap_state',
   // How a video file will play: hardware, HAP, software (and why), or not at all.
   'native_renderer_probe_video',
   'native_renderer_set_stage3d_scene',
@@ -872,6 +876,14 @@ class NativeRendererBroker {
         return this.sendIfRunning('texture_share_slices_start', args, { fallback: null, timeoutMs: 5000 });
       case 'native_renderer_texture_share_slices_stop':
         return this.sendIfRunning('texture_share_slices_stop', args, { fallback: null, timeoutMs: 5000 });
+      // Pixel-map output from the core: a null answer puts the app's own
+      // sender back in charge (pixelmap-route.cjs).
+      case 'native_renderer_pixelmap_configure':
+        return this.sendIfRunning('pixelmap_configure', args, { fallback: null, timeoutMs: 5000 });
+      case 'native_renderer_pixelmap_stop':
+        return this.sendIfRunning('pixelmap_stop', args, { fallback: null, timeoutMs: 5000 });
+      case 'native_renderer_pixelmap_state':
+        return this.sendIfRunning('pixelmap_state', args, { fallback: null, timeoutMs: 2500 });
       case 'native_renderer_probe_video':
         // Opens a decoder (and on Windows decodes a frame); ffmpeg's check
         // alone may take up to 10 s on a slow disk.
