@@ -656,6 +656,9 @@ impl App {
             .unwrap_or(SOURCE_FRAME_SIZE_DEFAULT as f64)
             .round()
             .clamp(1.0, SOURCE_FRAME_SIZE_INSANE as f64) as usize;
+        // The editor feeding the source itself (a capture that fell back to
+        // the addon path) replaces the core's own capture of it.
+        self.live_capture.unbind(&source_id);
         let transport = source_frame_transport_from_command(command);
         if transport == SourceFrameTransport::SharedTexture {
             self.apply_shared_texture_source_frame(source_id, seq, command, width, height);

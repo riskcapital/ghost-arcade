@@ -587,6 +587,7 @@ impl App {
             "shared_texture_upload": shared_texture_media_transport,
             "shared_texture_output_export": output_shared_texture_export_ready,
             "native_texture_share_sender": texture_share::implemented(),
+            "native_live_capture": live_capture::implemented(),
             "native_editor_preview_frame_source": output_shared_texture_export_ready,
             "native_media_decode": true,
             "media_prefetch": true,

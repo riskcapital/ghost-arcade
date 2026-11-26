@@ -425,6 +425,7 @@ impl App {
         self.deferred_source_releases.remove(source_id);
         self.native_video_streams.remove(source_id);
         self.native_video_scrub_requests.remove(source_id);
+        self.live_capture.unbind(source_id);
         self.release_source_frame_slot(source_id);
         self.source_frames.remove(source_id);
         self.source_frame_signatures.remove(source_id);
