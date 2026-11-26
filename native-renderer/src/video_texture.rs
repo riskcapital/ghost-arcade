@@ -58,6 +58,18 @@ struct ColorConversion {
     flags: [u32; 4],
 }
 
+/// Matrices `ColorConversion` distinguishes, in uniform-table order.
+const MATRICES: [u32; 3] = [1, 3, 2];
+const LAYOUTS: [PixelLayout; 3] = [PixelLayout::Nv12, PixelLayout::P010, PixelLayout::Bgra];
+
+/// Position of a conversion in the converter's uniform table. Matrix codes
+/// other than BT.601 and BT.2020 decode as BT.709, so they share its entry.
+fn conversion_index(layout: PixelLayout, color_matrix: u32, full_range: bool) -> usize {
+    let layout = LAYOUTS.iter().position(|l| *l == layout).unwrap_or(0);
+    let matrix = match color_matrix { 1 => 0, 3 => 1, _ => 2 };
+    (layout * MATRICES.len() + matrix) * 2 + usize::from(full_range)
+}
+
 impl ColorConversion {
     fn new(layout: PixelLayout, color_matrix: u32, full_range: bool) -> Self {
         // Matrix coefficients act on Y', Cb and Cr. Keep the result in the same
@@ -108,6 +120,11 @@ pub struct GpuVideoConverter {
     pipeline: wgpu::RenderPipeline,
     bind_group_layout: wgpu::BindGroupLayout,
     sampler: wgpu::Sampler,
+    /// One read-only uniform per layout/matrix/range, made once: a frame
+    /// picks its entry instead of allocating a buffer per decoded frame, and
+    /// videos encoded in the same submission still never share a writable
+    /// uniform.
+    uniforms: Vec<wgpu::Buffer>,
 }
 
 impl GpuVideoConverter {
@@ -189,10 +206,24 @@ impl GpuVideoConverter {
             multiview_mask: None,
             cache: None,
         });
+        let mut uniforms = Vec::with_capacity(LAYOUTS.len() * MATRICES.len() * 2);
+        for layout in LAYOUTS {
+            for matrix in MATRICES {
+                for full_range in [false, true] {
+                    debug_assert_eq!(conversion_index(layout, matrix, full_range), uniforms.len());
+                    uniforms.push(device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                        label: Some("Native Video Color Uniform"),
+                        contents: bytemuck::bytes_of(&ColorConversion::new(layout, matrix, full_range)),
+                        usage: wgpu::BufferUsages::UNIFORM,
+                    }));
+                }
+            }
+        }
         Self {
             pipeline,
             bind_group_layout,
             sampler,
+            uniforms,
         }
     }
 
@@ -242,14 +273,7 @@ impl GpuVideoConverter {
         let chroma_view = chroma
             .as_ref()
             .map(|texture| texture.create_view(&wgpu::TextureViewDescriptor::default()));
-        let conversion = ColorConversion::new(layout, frame.color_matrix, frame.full_range);
-        // A distinct uniform for each encoding prevents later videos encoded in
-        // the same submission from overwriting an earlier video's matrix.
-        let uniform = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Native Video Color Uniform"),
-            contents: bytemuck::bytes_of(&conversion),
-            usage: wgpu::BufferUsages::UNIFORM,
-        });
+        let uniform = &self.uniforms[conversion_index(layout, frame.color_matrix, frame.full_range)];
         let bindings = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("Native Video Plane Bindings"),
             layout: &self.bind_group_layout,
@@ -503,6 +527,24 @@ mod tests {
             convert(matrix, y(0.0722), c(0.5), c(-0.04584709)),
             [0.0, 0.0, 1.0],
         );
+    }
+
+    #[test]
+    fn every_conversion_has_its_own_precomputed_uniform() {
+        let mut seen = std::collections::HashSet::new();
+        for layout in LAYOUTS {
+            for matrix in MATRICES {
+                for full in [false, true] {
+                    let index = conversion_index(layout, matrix, full);
+                    assert!(index < LAYOUTS.len() * MATRICES.len() * 2);
+                    assert!(seen.insert(index));
+                }
+            }
+        }
+        // Unknown matrix codes decode as BT.709 and share its uniform.
+        assert_eq!(conversion_index(PixelLayout::Nv12, 0, false), conversion_index(PixelLayout::Nv12, 2, false));
+        assert_eq!(conversion_index(PixelLayout::P010, 9, true), conversion_index(PixelLayout::P010, 2, true));
+        assert!(ColorConversion::new(PixelLayout::Nv12, 0, false).red == ColorConversion::new(PixelLayout::Nv12, 2, false).red);
     }
 
     #[test]
