@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { importPhoneServer, type PhoneServer } from './phoneServerUnderTest';
 import { WebSocket } from 'ws';
 import { createHash } from 'node:crypto';
 import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
@@ -23,7 +24,7 @@ const { scanMessageAllowed } = require('../../../server/remote-access.cjs');
 
 const TOKEN = 'ABCD0EFGH1JKMN2P';
 const HOST = 'host-secret-'.repeat(6);
-let server: typeof import('../../../server/ws-server.js');
+let server: PhoneServer;
 let wsPort = 0;
 let dir = '';
 let store: ReturnType<typeof createPhoneScanStore>;
@@ -60,10 +61,10 @@ beforeAll(async () => {
   vi.stubEnv('GA_PAIRING_TOKEN', '');
   quiet.push(vi.spyOn(console, 'log').mockImplementation(() => {}));
   quiet.push(vi.spyOn(console, 'warn').mockImplementation(() => {}));
-  server = await import('../../../server/ws-server.js');
+  server = await importPhoneServer();
   ({ wsPort } = await server.listening);
-  server.setDesktopCredential(HOST);
-  server.setPairingToken(TOKEN);
+  await server.setDesktopCredential(HOST);
+  await server.setPairingToken(TOKEN);
   dir = mkdtempSync(path.join(tmpdir(), 'ga-phone-scans-'));
   store = createPhoneScanStore(dir);
   const sink: ScanSink = {
