@@ -291,6 +291,59 @@ describe('core texture cache key', () => {
   });
 });
 
+describe('a capture the render core runs itself', () => {
+  function coreInfo(generation: number, imports = 0) {
+    return {
+      available: true, platform: 'core', coreSessionId: 'session-usb', coreImports: imports, label: 'Webcam',
+      width: 1280, height: 720, format: 80, frame: generation, handle: `core:session-usb:${generation}`,
+      handleEncoding: 'core', handleByteLength: 0,
+    };
+  }
+
+  it('binds the source once, sends no frames, and binds again after a restart', () => {
+    const sync = makeSync();
+    vi.spyOn(sync, 'queueSharedTextureInfoRefresh').mockImplementation(() => {});
+    const src = camera();
+    const key = sync.sharedTextureInfoKey(src, 'live:webcam');
+    sync.sharedTextureInfoCache.set(key, { info: coreInfo(1), updatedAt: 0, revision: 1 });
+    const commands: any[] = [];
+    for (let frame = 0; frame < 30; frame += 1) {
+      sync.appendSharedTextureSourceFrameCommand(commands, src, 'live:webcam', frame * 16, false, null);
+      // A full answer from main (before the first import) bumps the revision.
+      sync.sharedTextureInfoCache.get(key).revision += 1;
+    }
+    expect(commands).toEqual([{ type: 'bind_live_capture_source', source_id: 'camera:usb', session_id: 'session-usb', seq: 1 }]);
+    // A restarted core: the session comes back under a new generation.
+    sync.sharedTextureInfoCache.set(key, { info: coreInfo(2), updatedAt: 0, revision: 99 });
+    sync.appendSharedTextureSourceFrameCommand(commands, src, 'live:webcam', 1000, false, null);
+    expect(commands).toHaveLength(2);
+    expect(commands[1]).toMatchObject({ type: 'bind_live_capture_source', seq: 2 });
+  });
+
+  it('is polled twice a second, not at frame rate, and reads Live once the core imports', async () => {
+    const { liveCaptureImportStates } = await import('../renderer/liveCaptureImportState');
+    const { get } = await import('svelte/store');
+    const sync = makeSync();
+    const src = camera('core');
+    h.reply = { ...coreInfo(1, 0), coreSessionId: 'session-core' };
+    sync.queueSharedTextureInfoRefresh(src, 'live:webcam', 0);
+    await flushAsync();
+    // Known to be the core's from here on: the next check is 500 ms away.
+    sync.queueSharedTextureInfoRefresh(src, 'live:webcam', 20);
+    await flushAsync();
+    expect(h.calls).toHaveLength(2);
+    sync.queueSharedTextureInfoRefresh(src, 'live:webcam', 300);
+    await flushAsync();
+    expect(h.calls).toHaveLength(2);
+    h.reply = { ...coreInfo(1, 3), coreSessionId: 'session-core' };
+    sync.queueSharedTextureInfoRefresh(src, 'live:webcam', 600);
+    await flushAsync();
+    expect(h.calls).toHaveLength(3);
+    expect(h.calls[2].args).toEqual({ sessionId: 'session-core', sinceFrame: 1 });
+    expect(get(liveCaptureImportStates).get('session-core')).toEqual({ state: 'imported' });
+  });
+});
+
 describe('backoff schedule', () => {
   it('starts at 1 s, doubles for the same texture, caps, and restarts for a new one', () => {
     const sent = { handle: 'h', width: 640, height: 480 };

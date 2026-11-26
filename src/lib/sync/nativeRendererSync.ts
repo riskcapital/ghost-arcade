@@ -370,6 +370,9 @@ type SharedTextureRejectBackoff = {
 const SHARED_TEXTURE_REJECT_RETRY_MIN_MS = 1000;
 /** While backed off, how often to check whether its texture changed. */
 const SHARED_TEXTURE_REJECT_POLL_MS = 1000;
+/** A camera or screen capture the render core runs itself: how often the
+ *  editor checks it is still the core's (restart, fallback to the addon). */
+const CORE_CAPTURE_POLL_MS = 500;
 /** Backed-off sources remembered at once; the oldest is dropped first. */
 const SHARED_TEXTURE_REJECT_BACKOFF_MAX = 64;
 
@@ -5737,6 +5740,20 @@ function isNativeSharedTextureSource(
     sourceType === 'syphon' ||
     isSharedTextureUri(src.src)
   );
+}
+
+/** Feed a layer source from a capture the render core runs itself. */
+export function buildNativeLiveCaptureBindCommand(args: {
+  sourceId: string;
+  sessionId: string;
+  seq: number;
+}): RendererCommand {
+  return {
+    type: 'bind_live_capture_source',
+    source_id: args.sourceId,
+    session_id: args.sessionId,
+    seq: args.seq,
+  };
 }
 
 export function buildNativeSharedTextureSourceFrameCommand(args: {
@@ -12338,7 +12355,12 @@ export class NativeRendererSync {
     // A source the core rejected is only checked for a changed texture while
     // it is backed off, not at frame rate.
     const backedOff = (this.sharedTextureRejectBackoff.get(key)?.until ?? 0) > now;
-    this.sharedTextureInfoNextPollAt.set(key, now + (backedOff ? SHARED_TEXTURE_REJECT_POLL_MS : 16));
+    // A capture the core runs itself has no frames to fetch here; the poll
+    // only notices a restart or a fallback to the addon.
+    const coreCapture = this.sharedTextureInfoCache.get(key)?.info.platform === 'core';
+    this.sharedTextureInfoNextPollAt.set(key, now + (backedOff
+      ? SHARED_TEXTURE_REJECT_POLL_MS
+      : coreCapture ? CORE_CAPTURE_POLL_MS : 16));
     this.sharedTextureInfoInFlight.add(key);
     void (async () => {
       try {
@@ -12369,6 +12391,9 @@ export class NativeRendererSync {
             : await receiveSpoutTextureInfo();
         if ((info as any)?.unchanged) return;
         if (!info?.available || !info.handle || !info.width || !info.height) return;
+        if (info.platform === 'core' && identity && Number(info.coreImports ?? 0) > 0) {
+          noteLiveCaptureImported(identity);
+        }
         if (liveCapture && previous && sinceFrame > 0 && Number(info.frame ?? 0) === sinceFrame
           && previous.info.handle === info.handle) return;
         if (liveSourceType === 'syphon' && senderName && info.senderName && info.senderName !== senderName) return;
@@ -12428,6 +12453,19 @@ export class NativeRendererSync {
     }
 
     const sourceKey = this.sourceCacheKey(src.id, src.src);
+    if (info.platform === 'core') {
+      // The render core captures this source itself: bind it to the
+      // session once (again after a restart, which bumps info.frame).
+      const sessionId = info.coreSessionId || nativeLiveSourceIdentity(src);
+      const signature = `core:${sessionId}:${info.frame ?? 0}`;
+      if (!force && this.sourcePreviewSig.get(sourceKey) === signature) return true;
+      const seq = (this.sourcePreviewSeq.get(sourceKey) ?? 0) + 1;
+      this.sourcePreviewSeq.set(sourceKey, seq);
+      this.sourcePreviewSig.set(sourceKey, signature);
+      commands.push(buildNativeLiveCaptureBindCommand({ sourceId: src.id, sessionId, seq }));
+      if (sessionId) noteLiveCaptureSent(sessionId);
+      return true;
+    }
     const signature = [
       'shared',
       info.platform,

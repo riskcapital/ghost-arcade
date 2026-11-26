@@ -283,6 +283,8 @@ const nativeRendererBroker = createNativeRendererBroker({
     if (coreSliceSendersActive) {
       void nativeRendererBroker.invoke('native_renderer_texture_share_slices_start', coreTextureShareRequest(null)).catch(() => null);
     }
+    // Cameras and screen captures the core ran, likewise.
+    restartCoreCaptures();
   },
 });
 
@@ -3112,6 +3114,161 @@ function logLiveCaptureSessionAdapter(addon, sessionId, what) {
   } catch {
     // Logging only.
   }
+}
+
+// ============================================================
+// Live capture run by the render core
+// ============================================================
+// The core can open a camera or screen/window capture itself and import
+// each frame into the source's picture slot (native-renderer/src/
+// live_capture.rs), so captured frames never pass through this process or
+// the editor. This process still asks for the system permission and
+// decides what to capture; the editor binds the layer source to the
+// session once. Same session ids, same start/stop/info IPC.
+//
+// macOS only. Any failure -- an older core, a refused permission, a
+// session that errors or shows no frame -- hands the session to the addon
+// path below with the same arguments.
+const CORE_CAPTURE_ALLOWED = isMac && process.env.GA_CORE_CAPTURE === '1';
+// No first frame from the core within this long: use the addon instead.
+const CORE_CAPTURE_FIRST_FRAME_MS = 5000;
+/** sessionId -> { request, addonStart, generation, startedAt, state } */
+const coreCaptureSessions = new Map();
+let coreCaptureGeneration = 0;
+
+function coreCaptureSupported() {
+  if (!CORE_CAPTURE_ALLOWED || !nativeRendererBroker?.coreCapabilitiesConfirmed) return false;
+  const methods = nativeRendererBroker.capabilities?.implemented_methods;
+  return Array.isArray(methods) && methods.includes('live_capture_start');
+}
+
+/** Start a capture in the core. False when the core cannot (the caller
+ *  then starts the addon session). */
+async function startCoreCapture(sessionId, request, addonStart) {
+  if (!sessionId || !CORE_CAPTURE_ALLOWED) return false;
+  if (!nativeRendererBroker?.coreCapabilitiesConfirmed) {
+    // Nothing may have asked a freshly started core yet, and a busy one can
+    // take a few seconds to answer.
+    await nativeRendererBroker?.refreshCapabilities?.({ requireCore: true }).catch(() => null);
+  }
+  if (!coreCaptureSupported()) {
+    console.log(`[LiveCapture Core] the running core cannot capture (${nativeRendererBroker?.coreCapabilitiesConfirmed ? 'no live_capture_start' : 'capabilities not confirmed yet'}); using the addon`);
+    return false;
+  }
+  const result = await nativeRendererBroker.invoke('native_renderer_live_capture_start', { session_id: sessionId, ...request })
+    .catch(() => null);
+  const session = result?.session;
+  if (!session || session.failed) {
+    console.warn(`[LiveCapture Core] core could not start ${request.kind} ${sessionId}${session?.error ? `: ${session.error}` : ''}; using the addon`);
+    return false;
+  }
+  coreCaptureSessions.set(sessionId, {
+    request,
+    addonStart,
+    generation: ++coreCaptureGeneration,
+    startedAt: Date.now(),
+    state: session,
+  });
+  console.log(`[LiveCapture Core] render core captures ${request.kind} ${sessionId}`);
+  return true;
+}
+
+function stopCoreCapture(sessionId) {
+  if (!coreCaptureSessions.delete(sessionId)) return false;
+  void nativeRendererBroker.invoke('native_renderer_live_capture_stop', { session_id: sessionId }).catch(() => null);
+  return true;
+}
+
+/** Give a core session to the addon: same session id, same arguments. */
+function fallBackFromCoreCapture(sessionId, reason) {
+  const entry = coreCaptureSessions.get(sessionId);
+  if (!entry) return false;
+  stopCoreCapture(sessionId);
+  console.warn(`[LiveCapture Core] ${entry.request.kind} ${sessionId}: ${reason}; using the addon`);
+  const addon = loadLiveCaptureAddon();
+  if (!addon) return false;
+  try { return !!entry.addonStart(addon); }
+  catch (err) {
+    console.warn('[LiveCapture Core] addon fallback failed:', err?.message || err);
+    return false;
+  }
+}
+
+// A restarted core has none of the sessions; ask it again. The new
+// generation makes the editor bind its sources to them again.
+function restartCoreCaptures() {
+  for (const [sessionId, entry] of [...coreCaptureSessions]) {
+    coreCaptureSessions.delete(sessionId);
+    void startCoreCapture(sessionId, entry.request, entry.addonStart).then((ok) => {
+      if (!ok) {
+        coreCaptureSessions.set(sessionId, entry);
+        fallBackFromCoreCapture(sessionId, 'the restarted core could not start it');
+      }
+    });
+  }
+}
+
+/** The texture info the editor polls, for a session the core runs. The
+ *  editor needs no handle: it binds the source to the session (platform
+ *  'core') and the core feeds it from then on. `frame` is the binding's
+ *  generation, so a poll answers `unchanged` until the session is
+ *  restarted. Null when the session went to the addon. */
+async function coreCaptureTextureInfo(sessionId, sinceFrame) {
+  const entry = coreCaptureSessions.get(sessionId);
+  if (!entry) return null;
+  const result = await nativeRendererBroker.invoke('native_renderer_live_capture_state', { session_id: sessionId })
+    .catch(() => null);
+  if (!coreCaptureSessions.has(sessionId)) return null;
+  const session = result?.session;
+  if (result && !session) {
+    // The core no longer has it (restarted before onCoreStarted ran).
+    if (coreCaptureSupported()) {
+      coreCaptureSessions.delete(sessionId);
+      if (await startCoreCapture(sessionId, entry.request, entry.addonStart)) {
+        return { available: false, reason: 'restarting', frame: 0 };
+      }
+      coreCaptureSessions.set(sessionId, entry);
+    }
+    fallBackFromCoreCapture(sessionId, 'the core lost the session');
+    return null;
+  }
+  if (session) entry.state = session;
+  const state = entry.state || {};
+  const frames = Number(state.frames || 0);
+  if (frames === 0) {
+    if (state.failed) {
+      fallBackFromCoreCapture(sessionId, state.error || 'the capture failed');
+      return null;
+    }
+    if (Date.now() - entry.startedAt > CORE_CAPTURE_FIRST_FRAME_MS) {
+      fallBackFromCoreCapture(sessionId, `no frame within ${CORE_CAPTURE_FIRST_FRAME_MS} ms`);
+      return null;
+    }
+    return { available: false, reason: state.error || 'waiting-for-first-frame', frame: 0 };
+  }
+  const imports = (Array.isArray(state.sources) ? state.sources : [])
+    .reduce((sum, source) => sum + Number(source?.imports || 0), 0);
+  // Until the core has shown a frame, keep answering in full so the editor
+  // sees the imports start.
+  if (imports > 0 && Number.isFinite(sinceFrame) && sinceFrame > 0 && sinceFrame === entry.generation) {
+    return { available: true, unchanged: true, frame: entry.generation };
+  }
+  return {
+    available: true,
+    platform: 'core',
+    coreSessionId: sessionId,
+    coreImports: imports,
+    label: entry.request.kind === 'camera' ? 'Webcam' : 'Capture',
+    width: Number(state.width || 0),
+    height: Number(state.height || 0),
+    format: 80,
+    frame: entry.generation,
+    updated: true,
+    isNewFrame: true,
+    handle: `core:${sessionId}:${entry.generation}`,
+    handleEncoding: 'core',
+    handleByteLength: 0,
+  };
 }
 
 function loadLiveCaptureAddon() {
@@ -8109,6 +8266,9 @@ function registerIpcHandlers() {
 
   ipcMain.handle('native_live_capture_available', () => {
     const addon = loadLiveCaptureAddon();
+    if (!addon && coreCaptureSupported()) {
+      return { available: true, webcam: true, capture: true, transport: 'core' };
+    }
     if (!addon) return { available: false, error: liveCaptureAddonLoadError };
     try {
       return { ...addon.available(), addonPath: liveCaptureAddonLoadPath };
@@ -8117,8 +8277,12 @@ function registerIpcHandlers() {
     }
   });
 
-  ipcMain.handle('native_live_capture_list_cameras', () => {
+  ipcMain.handle('native_live_capture_list_cameras', async () => {
     const addon = loadLiveCaptureAddon();
+    if (!addon && coreCaptureSupported()) {
+      const cameras = await nativeRendererBroker.invoke('native_renderer_live_capture_list_cameras', {}).catch(() => null);
+      return Array.isArray(cameras) ? cameras : [];
+    }
     if (!addon) return [];
     try { return addon.listCameras(); }
     catch (err) {
@@ -8144,7 +8308,7 @@ function registerIpcHandlers() {
 
   ipcMain.handle('native_live_capture_start_camera', async (_event, args = {}) => {
     const addon = loadLiveCaptureAddon();
-    if (!addon) return { ok: false, error: liveCaptureAddonLoadError || 'native capture unavailable' };
+    if (!addon && !coreCaptureSupported()) return { ok: false, error: liveCaptureAddonLoadError || 'native capture unavailable' };
     // Ask through Electron before handing off to the addon. Capture moved
     // into the main process (AVFoundation) where a raw
     // requestAccessForMediaType can stall without ever drawing the TCC
@@ -8194,11 +8358,14 @@ function registerIpcHandlers() {
     }
     try {
       const sessionId = String(args.sessionId || '');
-      const ok = !!addon.startCamera({
-        sessionId,
-        deviceId: String(args.deviceId || ''),
-        ...(await liveCaptureAdapterArgs(addon)),
-      });
+      const deviceId = String(args.deviceId || '');
+      const adapterArgs = await liveCaptureAdapterArgs(addon);
+      const startAddon = (captureAddon) => captureAddon.startCamera({ sessionId, deviceId, ...adapterArgs });
+      if (await startCoreCapture(sessionId, { kind: 'camera', device_id: deviceId }, startAddon)) {
+        return { ok: true, error: null, owner: 'core' };
+      }
+      if (!addon) return { ok: false, error: liveCaptureAddonLoadError || 'native capture unavailable' };
+      const ok = !!startAddon(addon);
       if (ok) logLiveCaptureSessionAdapter(addon, sessionId, 'camera');
       return { ok, error: ok ? null : 'camera did not start' };
     } catch (err) {
@@ -8208,7 +8375,7 @@ function registerIpcHandlers() {
 
   ipcMain.handle('native_live_capture_start_screen', async (_event, args = {}) => {
     const addon = loadLiveCaptureAddon();
-    if (!addon) return { ok: false, error: liveCaptureAddonLoadError || 'native capture unavailable' };
+    if (!addon && !coreCaptureSupported()) return { ok: false, error: liveCaptureAddonLoadError || 'native capture unavailable' };
     try {
       const adapterArgs = await liveCaptureAdapterArgs(addon);
       // Chromium's `display_id` (from desktopCapturer.getSources) is Chromium's
@@ -8226,11 +8393,13 @@ function registerIpcHandlers() {
         }
       }
       const sessionId = String(args.sessionId || '');
-      const ok = !!addon.startScreen({
+      const sourceId = String(args.sourceId || '');
+      const kind = args.kind === 'screen' ? 'screen' : 'window';
+      const startAddon = (captureAddon) => captureAddon.startScreen({
         sessionId,
-        sourceId: String(args.sourceId || ''),
+        sourceId,
         displayId,
-        kind: args.kind === 'screen' ? 'screen' : 'window',
+        kind,
         boundsLeft: bounds?.left ?? 0,
         boundsTop: bounds?.top ?? 0,
         boundsRight: bounds?.right ?? 0,
@@ -8238,6 +8407,11 @@ function registerIpcHandlers() {
         hasBounds: !!bounds,
         ...adapterArgs,
       });
+      if (await startCoreCapture(sessionId, { kind, source_id: sourceId, display_id: displayId }, startAddon)) {
+        return { ok: true, error: null, owner: 'core' };
+      }
+      if (!addon) return { ok: false, error: liveCaptureAddonLoadError || 'native capture unavailable' };
+      const ok = !!startAddon(addon);
       if (ok) logLiveCaptureSessionAdapter(addon, sessionId, 'screen capture');
       return { ok, error: ok ? null : 'screen capture did not start' };
     } catch (err) {
@@ -8246,13 +8420,20 @@ function registerIpcHandlers() {
   });
 
   ipcMain.handle('native_live_capture_stop', (_event, args = {}) => {
+    if (stopCoreCapture(String(args.sessionId || ''))) return { ok: true };
     const addon = loadLiveCaptureAddon();
     if (!addon) return { ok: false };
     try { return { ok: !!addon.stop({ sessionId: String(args.sessionId || '') }) }; }
     catch (err) { return { ok: false, error: err?.message || String(err) }; }
   });
 
-  ipcMain.handle('native_live_capture_texture_info', (_event, args = {}) => {
+  ipcMain.handle('native_live_capture_texture_info', async (_event, args = {}) => {
+    const coreSessionId = String(args.sessionId || '');
+    if (coreCaptureSessions.has(coreSessionId)) {
+      const info = await coreCaptureTextureInfo(coreSessionId, Number(args.sinceFrame));
+      if (info) return info;
+      // Fell back to the addon: answer from it below.
+    }
     const addon = loadLiveCaptureAddon();
     if (!addon) return { available: false, reason: liveCaptureAddonLoadError || 'native capture unavailable' };
     try {
