@@ -63,7 +63,9 @@ mod projector_view;
 mod shared_texture;
 mod source_frames;
 
-// -- split modules --
+// The core itself, split by area. Each module brings the crate root into
+// scope (`use crate::*`) and the root re-imports what they define, so code
+// in one area names code in another without paths.
 mod ipc;
 mod status;
 mod gpu;
@@ -99,7 +101,6 @@ use pacing::*;
 use snapshots::*;
 use source_previews::*;
 use util::*;
-// -- end split modules --
 
 use std::{
     borrow::Cow,
