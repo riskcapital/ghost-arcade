@@ -303,7 +303,7 @@ const installMode = createInstallMode({
   isPowerBlockerActive: () => powerSaveBlockerId !== null && powerSaveBlocker.isStarted(powerSaveBlockerId),
   getOutputWindows: () => [outputWindow, ...sliceWindows.values()].filter(Boolean),
 });
-ipcMain.handle('install_status', () => ({ ...installMode.status(), wled: wledLinks.list() }));
+ipcMain.handle('install_status', () => ({ ...installMode.status(), wled: wledRoute.list() }));
 ipcMain.handle('install_heartbeat', (_, payload) => installMode.heartbeat(payload));
 ipcMain.handle('install_log', (_, { kind, message } = {}) => { installMode.log(String(kind || 'info').slice(0, 16), String(message ?? '').slice(0, 2000)); return true; });
 ipcMain.handle('install_leave', () => installMode.pause('settings'));
@@ -690,6 +690,19 @@ const { buildWLEDRealtimePacket } = require('./wled-packet.cjs');
 // One connected UDP socket per controller, reconnecting on its own
 // (electron/wled-link.cjs). Drops and returns go to the install health log.
 const wledLinks = require('./wled-link.cjs').createWledLinks({
+  onChange: (info) => wledRoute.linkChange(info),
+});
+// The render core samples and sends WLED output itself for every controller
+// it can drive alone; wledLinks stays the fallback (electron/wled-route.cjs).
+// Link changes from either side are reported here once.
+const wledRoute = require('./wled-route.cjs').createWledRoute({
+  links: wledLinks,
+  invokeCore: (command, args) => nativeRendererBroker.invoke(`native_renderer_${command}`, args),
+  coreSupported: () => {
+    if (!nativeRendererBroker?.coreCapabilitiesConfirmed) return false;
+    const methods = nativeRendererBroker.capabilities?.implemented_methods;
+    return Array.isArray(methods) && methods.includes('wled_configure');
+  },
   onChange: (info) => {
     const who = `${info.name || info.controllerId} (${info.ip}:${info.port})`;
     if (info.state === 'down') {
@@ -2517,6 +2530,7 @@ function closeAuxiliaryWindows() {
 }
 
 function closeAllWledSockets() {
+  wledRoute.dispose();
   wledLinks.closeAll();
 }
 
@@ -7171,16 +7185,22 @@ function registerIpcHandlers() {
     catch (error) { return { ok: false, error: error.message }; }
     const udpPort = port ?? 21324;
     if (!Number.isInteger(udpPort) || udpPort < 1 || udpPort > 65535) return { ok: false, error: 'Invalid WLED UDP port' };
-    // Backpressure, reconnection and drop detection live in wled-link.cjs.
-    return wledLinks.send({ controllerId: String(controllerId), ip: String(ip), port: udpPort, name: typeof name === 'string' ? name : undefined, packet });
+    // Backpressure, reconnection and drop detection live in wled-link.cjs;
+    // a controller the render core was sending is taken back first.
+    return wledRoute.send({ controllerId: String(controllerId), ip: String(ip), port: udpPort, name: typeof name === 'string' ? name : undefined, packet });
   });
 
   ipcMain.handle('wled_close_socket', async (_, { controllerId }) => {
-    wledLinks.close(String(controllerId));
+    wledRoute.close(String(controllerId));
     return { ok: true };
   });
 
-  ipcMain.handle('wled_link_status', () => wledLinks.list());
+  ipcMain.handle('wled_link_status', () => wledRoute.list());
+  // The render core samples and sends the controllers the editor offers it
+  // (src/lib/wled/corePlan.ts); wled-route.cjs decides and hands back.
+  ipcMain.handle('wled_core_configure', async (_, plan) => wledRoute.configure(plan));
+  ipcMain.handle('wled_core_stop', async () => wledRoute.stop());
+  ipcMain.handle('wled_get_stats', async () => wledRoute.stats());
 
   // --- Art-Net / sACN pixel mapping ---
   // The renderer packs whole DMX universes; pixelmap-output.cjs validates

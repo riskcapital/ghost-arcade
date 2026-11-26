@@ -24,9 +24,22 @@ export interface LedTimelineState {
 }
 
 let current: LedTimelineState | null = null;
+const listeners = new Set<() => void>();
 
 export function publishLedTimeline(state: LedTimelineState | null): void {
-  current = state && (state.clips.length || state.allDriven) ? state : null;
+  const next = state && (state.clips.length || state.allDriven) ? state : null;
+  if (next === current) return;
+  current = next;
+  for (const listener of listeners) {
+    try { listener(); } catch (error) { console.warn('[LedTimeline] listener failed:', error); }
+  }
+}
+
+/** Called after every publish that changes the state (each frame while
+ *  playing): keep it cheap. Returns the unsubscribe. */
+export function onLedTimelineChange(listener: () => void): () => void {
+  listeners.add(listener);
+  return () => { listeners.delete(listener); };
 }
 
 export function currentLedTimeline(): LedTimelineState | null {

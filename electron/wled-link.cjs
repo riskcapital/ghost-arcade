@@ -168,6 +168,22 @@ function createWledLinks({ dgram = nodeDgram, now = () => Date.now(), onChange =
     });
   }
 
+  /**
+   * Carry on from another sender's link (the render core's, see
+   * wled-route.cjs): its state, counters and when it went down, without a
+   * change of its own to report. A socket is opened as for a new link.
+   */
+  function seed({ controllerId, ip, port, name, state, downSince, lastOkAt, lastError, errors, sent }) {
+    const link = ensure(controllerId, ip, port, name);
+    if (link.state === 'unknown' && (state === 'up' || state === 'down')) link.state = state;
+    if (link.state === 'down' && state === 'down' && Number.isFinite(downSince) && downSince > 0) link.downSince = downSince;
+    if (Number.isFinite(lastOkAt) && lastOkAt > link.lastOkAt) link.lastOkAt = lastOkAt;
+    if (!link.lastError && typeof lastError === 'string') link.lastError = lastError;
+    if (Number.isFinite(errors)) link.errors += errors;
+    if (Number.isFinite(sent)) link.sent += sent;
+    return link;
+  }
+
   function close(controllerId) {
     const link = links.get(controllerId);
     if (!link) return;
@@ -195,7 +211,7 @@ function createWledLinks({ dgram = nodeDgram, now = () => Date.now(), onChange =
     }));
   }
 
-  return { send, close, closeAll, list, size: () => links.size };
+  return { send, seed, close, closeAll, list, size: () => links.size };
 }
 
 module.exports = { createWledLinks, BACKOFF_MS };

@@ -191,7 +191,7 @@ const ALLOWED_IPC_COMMANDS = new Set([
   'native_renderer_get_slice_output_state',
   'native_viewport_set_layer_interaction',
   // WLED — UDP DRGB packets to LED controllers on the LAN
-  'wled_send_frame', 'wled_close_socket',
+  'wled_send_frame', 'wled_close_socket', 'wled_core_configure', 'wled_core_stop', 'wled_get_stats',
   // Art-Net / sACN pixel mapping — DMX universes over UDP
   'pixelmap_send_frame', 'pixelmap_stop', 'pixelmap_get_stats', 'pixelmap_core_configure',
   // PJLink projector control — power, shutter, input and status over TCP 4352
