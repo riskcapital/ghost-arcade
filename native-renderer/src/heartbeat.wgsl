@@ -261,8 +261,15 @@ const POOL_EDGE_PTS: u32 = 484u;
 fn pool_shape(li: u32, at: u32) -> vec4<f32> { return layer_pool[layers[li].pool.x + at]; }
 fn pool_fx(li: u32, at: u32) -> vec4<f32> { return layer_pool[layers[li].pool.y + at]; }
 fn pool_mask(li: u32, at: u32) -> vec4<f32> { return layer_pool[layers[li].pool.z + at]; }
+// Mesh reads are unclamped: layer_mesh_uv bounds rows and cols to 16, so
+// a point index stays inside its arrays, and these sit in the per-pixel
+// cell search.
 fn pool_mesh(li: u32, at: u32) -> vec4<f32> { return layer_pool[layers[li].pool.w + at]; }
 fn pool_edge(li: u32, at: u32) -> vec4<f32> { return layer_pool[layers[li].pool2.x + at]; }
+// Inside the Edge Effects code: the record of the layer being drawn, its
+// start read once (apply_native_edge_effects) instead of per point.
+var<private> edge_base: u32;
+fn pool_edge_at(at: u32) -> vec4<f32> { return layer_pool[edge_base + at]; }
 const LAYER_TILES_HEADER: u32 = 4u;
 // Mesh cell bounds after the bins (main.rs MESH_CELL_BOUNDS_BASE): one word
 // per layer slot, where its cell boxes start (0 = none), then per meshed
@@ -617,19 +624,33 @@ fn quad_local_uv(p: vec2<f32>, tl: vec2<f32>, tr: vec2<f32>, br: vec2<f32>, bl: 
 // quad (tl, tr, br, bl), inverted at p. A flat face seen at a slant lands
 // exactly, straight lines stay straight, and nothing is meshed.
 fn quad_local_uv_perspective(p: vec2<f32>, tl: vec2<f32>, tr: vec2<f32>, br: vec2<f32>, bl: vec2<f32>) -> vec3<f32> {
-  let raw = quad_perspective_raw(p, tl, tr, br, bl);
-  if (raw.z < 0.0) { return quad_local_uv(p, tl, tr, br, bl); }
-  if (raw.z < 0.5) { return vec3<f32>(0.0); }
-  let uv = raw.xy;
+  // Square -> quad (Heckbert): x = (a u + b v + c) / (g u + h v + 1), likewise y.
+  let s = tl - tr + br - bl;
+  let d1 = tr - br;
+  let d2 = bl - br;
+  let den = cross2(d1, d2);
+  if (abs(den) < 1e-12) { return quad_local_uv(p, tl, tr, br, bl); }
+  let g = cross2(s, d2) / den;
+  let h = cross2(d1, s) / den;
+  let m = mat3x3<f32>(
+    vec3<f32>(tr.x - tl.x + g * tr.x, tr.y - tl.y + g * tr.y, g),
+    vec3<f32>(bl.x - tl.x + h * bl.x, bl.y - tl.y + h * bl.y, h),
+    vec3<f32>(tl.x, tl.y, 1.0));
+  // Invert by the adjugate (scale does not matter for a projective map).
+  let c0 = m[0]; let c1 = m[1]; let c2 = m[2];
+  let r0 = cross(c1, c2); let r1 = cross(c2, c0); let r2 = cross(c0, c1);
+  let q = vec3<f32>(dot(r0, vec3<f32>(p, 1.0)), dot(r1, vec3<f32>(p, 1.0)), dot(r2, vec3<f32>(p, 1.0)));
+  if (abs(q.z) < 1e-12) { return vec3<f32>(0.0); }
+  let uv = q.xy / q.z;
   if (all(uv >= vec2<f32>(-0.0005)) && all(uv <= vec2<f32>(1.0005))) {
     return vec3<f32>(1.0, clamp(uv, vec2<f32>(0.0), vec2<f32>(1.0)));
   }
   return vec3<f32>(0.0);
 }
 
-// The perspective corner pin's inverse at p, unclamped: (u, v, ok) where ok
-// is 1 when solved, 0 at the horizon and -1 for a degenerate quad (whose
-// caller falls back to the bilinear map).
+// The perspective corner pin's inverse at p, unclamped (source mips only):
+// (u, v, ok) where ok is 1 when solved, 0 at the horizon and -1 for a
+// degenerate quad (whose caller falls back to the bilinear map).
 fn quad_perspective_raw(p: vec2<f32>, tl: vec2<f32>, tr: vec2<f32>, br: vec2<f32>, bl: vec2<f32>) -> vec3<f32> {
   // Square -> quad (Heckbert): x = (a u + b v + c) / (g u + h v + 1), likewise y.
   let s = tl - tr + br - bl;
@@ -774,12 +795,12 @@ fn inverse_bilinear(p: vec2<f32>, a: vec2<f32>, b: vec2<f32>, c: vec2<f32>, d: v
 }
 
 fn layer_mesh_point(layer_index: u32, index: u32) -> vec2<f32> {
-  let packed = pool_mesh(layer_index, POOL_MESH_POINTS + min(u32(index / 2u), 127u));
+  let packed = pool_mesh(layer_index, POOL_MESH_POINTS + index / 2u);
   return select(packed.zw, packed.xy, (index & 1u) == 0u);
 }
 
 fn layer_mesh_rest_point(layer_index: u32, index: u32) -> vec2<f32> {
-  let packed = pool_mesh(layer_index, POOL_MESH_REST + min(u32(index / 2u), 127u));
+  let packed = pool_mesh(layer_index, POOL_MESH_REST + index / 2u);
   return select(packed.zw, packed.xy, (index & 1u) == 0u);
 }
 
@@ -805,7 +826,7 @@ const MESH_TANGENT_LEFT: u32 = 2u;
 const MESH_TANGENT_UP: u32 = 3u;
 
 fn layer_mesh_tangent(layer_index: u32, index: u32, side: u32) -> vec2<f32> {
-  let packed = pool_mesh(layer_index, POOL_MESH_TANGENTS + min(u32(index * 2u + (side >> 1u)), 511u));
+  let packed = pool_mesh(layer_index, POOL_MESH_TANGENTS + index * 2u + (side >> 1u));
   return select(packed.zw, packed.xy, (side & 1u) == 0u);
 }
 
@@ -1025,7 +1046,7 @@ fn layer_mesh_bezier_cell(local_uv: vec2<f32>, layer_index: u32, row: u32, col: 
   if (!mesh_patch_contains_bounds(mesh_cell, local_uv)) { return vec3<f32>(0.0); }
   let cell = mesh_patch_uv(local_uv, mesh_cell);
   if (cell.x > 0.5) {
-    mesh_hit = vec4<f32>(f32(row), f32(col), cell.yz);
+    if (SOURCE_MIPS) { mesh_hit = vec4<f32>(f32(row), f32(col), cell.yz); }
     return vec3<f32>(1.0, layer_mesh_rest_uv(layer_index, row, col, cols, cell.yz));
   }
   return vec3<f32>(0.0);
@@ -1044,7 +1065,7 @@ fn layer_mesh_straight_cell(local_uv: vec2<f32>, layer_index: u32, row: u32, col
   // than turning an unsolved bilinear inverse into transparent pixels.
   let cell = mesh_cell_uv(local_uv, a, b, c, d);
   if (cell.x > 0.5) {
-    mesh_hit = vec4<f32>(f32(row), f32(col), cell.yz);
+    if (SOURCE_MIPS) { mesh_hit = vec4<f32>(f32(row), f32(col), cell.yz); }
     return vec3<f32>(1.0, layer_mesh_rest_uv(layer_index, row, col, cols, cell.yz));
   }
   return vec3<f32>(0.0);
@@ -1087,7 +1108,7 @@ fn layer_mesh_rest_step(layer_index: u32, rest_uv: vec2<f32>, d_local: vec2<f32>
 }
 
 fn layer_mesh_uv(local_uv: vec2<f32>, layer_index: u32) -> vec3<f32> {
-  mesh_hit = vec4<f32>(0.0);
+  if (SOURCE_MIPS) { mesh_hit = vec4<f32>(0.0); }
   let rows = u32(clamp(floor(layers[layer_index].style.z + 0.5), 0.0, 16.0));
   let cols = u32(clamp(floor(layers[layer_index].style.w + 0.5), 0.0, 16.0));
   if (rows < 2u || cols < 2u) {
@@ -1297,8 +1318,22 @@ fn layer_local_step(p: vec2<f32>, step: vec2<f32>, local_uv: vec2<f32>, layer_in
 fn layer_source_lod(layer_index: u32, p: vec2<f32>, step_x: vec2<f32>, step_y: vec2<f32>,
     local_uv: vec2<f32>, rest_uv: vec2<f32>, sample_uv: vec2<f32>,
     tl: vec2<f32>, tr: vec2<f32>, br: vec2<f32>, bl: vec2<f32>) -> f32 {
-  let local_x = layer_local_step(p, step_x, local_uv, layer_index, tl, tr, br, bl);
-  let local_y = layer_local_step(p, step_y, local_uv, layer_index, tl, tr, br, bl);
+  var local_x: vec2<f32>;
+  var local_y: vec2<f32>;
+  if ((layers[layer_index].fast_flags.w & 2u) != 0u) {
+    local_x = layer_local_step(p, step_x, local_uv, layer_index, tl, tr, br, bl);
+    local_y = layer_local_step(p, step_y, local_uv, layer_index, tl, tr, br, bl);
+  } else {
+    // The bilinear corner map (and a Bezier mesh's continuation of it):
+    // its inverse Jacobian at local_uv, rather than two more inversions.
+    let g = tl - tr + br - bl;
+    let du = tr - tl + g * local_uv.y;
+    let dv = bl - tl + g * local_uv.x;
+    let det = cross2(du, dv);
+    if (abs(det) < 1e-12) { return 0.0; }
+    local_x = vec2<f32>(cross2(step_x, dv), cross2(du, step_x)) / det;
+    local_y = vec2<f32>(cross2(step_y, dv), cross2(du, step_y)) / det;
+  }
   let rest_x = rest_uv + layer_mesh_rest_step(layer_index, rest_uv, local_x);
   let rest_y = rest_uv + layer_mesh_rest_step(layer_index, rest_uv, local_y);
   let duv_x = layer_sample_uv(rest_x, layer_index).xy - sample_uv;
@@ -2822,7 +2857,7 @@ fn edge_cov(sd: f32, aa: f32) -> f32 {
 }
 
 fn edge_pt(li: u32, i: i32) -> vec4<f32> {
-  return pool_edge(li, POOL_EDGE_PTS + min(u32(i), 511u));
+  return pool_edge_at(POOL_EDGE_PTS + min(u32(i), 511u));
 }
 
 struct EdgeHit {
@@ -2844,7 +2879,7 @@ fn edge_hit(li: u32, p: vec2<f32>, count: i32) -> EdgeHit {
   let chunk_count = (count + 15) / 16;
   for (var c: i32 = 0; c < 32; c = c + 1) {
     if (c >= chunk_count) { break; }
-    let bb = pool_edge(li, POOL_EDGE_CHUNKS + min(u32(c), 31u));
+    let bb = pool_edge_at(POOL_EDGE_CHUNKS + min(u32(c), 31u));
     let q = max(max(bb.xy - p, p - bb.zw), vec2<f32>(0.0));
     let box_d2 = dot(q, q);
     let ray_hits = p.y >= bb.y && p.y < bb.w && p.x <= bb.z;
@@ -3364,7 +3399,7 @@ fn edge_pattern(q: vec2<f32>, kind: i32, scale: f32, line_w: f32, aa: f32) -> f3
 // ---------- one edge effect ----------
 
 fn edge_fx(li: u32, e: i32, k: i32) -> vec4<f32> {
-  return pool_edge(li, POOL_EDGE_EFFECTS + min(u32(e), 15u) * 22u + min(u32(k), 21u));
+  return pool_edge_at(POOL_EDGE_EFFECTS + min(u32(e), 15u) * 22u + min(u32(k), 21u));
 }
 
 /// One edge effect at output pixel `p`, as premultiplied colour.
@@ -3542,7 +3577,7 @@ fn edge_effect_fragment(li: u32, e: i32, p: vec2<f32>, base: EdgeHit, ctx: EdgeC
       region = (1.0 - prog) * ctx.inradius + d;
     } else if (fill_type == 12) {
       let ci = clamp(i32(floor(fa.x + 0.5)), 0, max(ctx.corner_count - 1, 0));
-      let corner = select(center, pool_edge(li, POOL_EDGE_CORNERS + min(u32(ci), 63u)).xy, ctx.corner_count > 0);
+      let corner = select(center, pool_edge_at(POOL_EDGE_CORNERS + min(u32(ci), 63u)).xy, ctx.corner_count > 0);
       region = max(d, length(fill_px - corner) - prog * edge_far_corner(ctx.bbox, corner));
     } else if (fill_type == 13 || fill_type == 14) {
       let dir = vec2<f32>(cos(fa.x), sin(fa.x));
@@ -3596,7 +3631,7 @@ fn edge_effect_fragment(li: u32, e: i32, p: vec2<f32>, base: EdgeHit, ctx: EdgeC
         var best = 1.0e9;
         for (var i: i32 = 0; i < 64; i = i + 1) {
           if (i >= n) { break; }
-          let ca = pool_edge(li, POOL_EDGE_CORNERS + min(u32(i), 63u)).xy - center;
+          let ca = pool_edge_at(POOL_EDGE_CORNERS + min(u32(i), 63u)).xy - center;
           let da = edge_mod(ang - atan2(ca.y, ca.x), EDGE_TAU);
           if (da < best) { best = da; facet = f32(i); }
         }
@@ -3774,7 +3809,7 @@ fn edge_effect_fragment(li: u32, e: i32, p: vec2<f32>, base: EdgeHit, ctx: EdgeC
       var along = 1.0e6;
       for (var i: i32 = 0; i < 64; i = i + 1) {
         if (i >= ctx.corner_count) { break; }
-        let sc = pool_edge(li, POOL_EDGE_CORNERS + min(u32(i), 63u)).z;
+        let sc = pool_edge_at(POOL_EDGE_CORNERS + min(u32(i), 63u)).z;
         let du = abs(edge_mod(s_arc - sc + total * 0.5, total) - total * 0.5);
         along = min(along, du - max(sb.x, 0.0));
       }
@@ -3788,7 +3823,7 @@ fn edge_effect_fragment(li: u32, e: i32, p: vec2<f32>, base: EdgeHit, ctx: EdgeC
       var ring = 1.0e6;
       for (var i: i32 = 0; i < 64; i = i + 1) {
         if (i >= ctx.corner_count) { break; }
-        let dist = length(q - pool_edge(li, POOL_EDGE_CORNERS + min(u32(i), 63u)).xy);
+        let dist = length(q - pool_edge_at(POOL_EDGE_CORNERS + min(u32(i), 63u)).xy);
         dot_sd = min(dot_sd, dist - r);
         ring = min(ring, abs(dist - r0 * (1.0 + 3.0 * max(sb.y, 0.0) * beat)));
       }
@@ -3803,7 +3838,7 @@ fn edge_effect_fragment(li: u32, e: i32, p: vec2<f32>, base: EdgeHit, ctx: EdgeC
       if (sb.x > 0.5) {
         for (var i: i32 = 0; i < 64; i = i + 1) {
           if (i >= n) { break; }
-          let a = pool_edge(li, POOL_EDGE_CORNERS + min(u32(i), 63u)).xy;
+          let a = pool_edge_at(POOL_EDGE_CORNERS + min(u32(i), 63u)).xy;
           let pa = q - center;
           let ba = a - center;
           let h = clamp(dot(pa, ba) / max(dot(ba, ba), 1e-9), 0.0, 1.0);
@@ -3813,10 +3848,10 @@ fn edge_effect_fragment(li: u32, e: i32, p: vec2<f32>, base: EdgeHit, ctx: EdgeC
       if (sb.y > 0.5) {
         for (var i: i32 = 0; i < 64; i = i + 1) {
           if (i >= ctx.diag_count) { break; }
-          let pair = pool_edge(li, POOL_EDGE_DIAGS + min(u32(i / 2), 31u));
+          let pair = pool_edge_at(POOL_EDGE_DIAGS + min(u32(i / 2), 31u));
           let ij = select(pair.zw, pair.xy, (i % 2) == 0);
-          let a = pool_edge(li, POOL_EDGE_CORNERS + min(u32(i32(ij.x)), 63u)).xy;
-          let b = pool_edge(li, POOL_EDGE_CORNERS + min(u32(i32(ij.y)), 63u)).xy;
+          let a = pool_edge_at(POOL_EDGE_CORNERS + min(u32(i32(ij.x)), 63u)).xy;
+          let b = pool_edge_at(POOL_EDGE_CORNERS + min(u32(i32(ij.y)), 63u)).xy;
           let pa = q - a;
           let ba = b - a;
           let h = clamp(dot(pa, ba) / max(dot(ba, ba), 1e-9), 0.0, 1.0);
@@ -4023,21 +4058,22 @@ fn edge_react(rx: vec4<f32>, rc: vec4<f32>) -> vec4<f32> {
 /// (W3C compositing), then the layer goes on with its own blend and opacity.
 /// `layer` is straight colour and coverage; so is the result.
 fn apply_native_edge_effects(layer: vec4<f32>, p_uv: vec2<f32>, li: u32, aa: f32) -> vec4<f32> {
-  let info = pool_edge(li, 0u);
+  edge_base = layers[li].pool2.x;
+  let info = pool_edge_at(0u);
   var ctx: EdgeCtx;
   ctx.count = min(i32(floor(info.x + 0.5)), 512);
   let effect_count = min(i32(floor(info.y + 0.5)), 16);
   if (ctx.count < 3 || effect_count < 1) { return layer; }
   ctx.corner_count = min(i32(floor(info.z + 0.5)), 64);
   ctx.diag_count = min(i32(floor(info.w + 0.5)), 64);
-  let geom = pool_edge(li, 1u);
+  let geom = pool_edge_at(1u);
   ctx.centroid = geom.xy;
   ctx.total = max(geom.z, 1.0);
   ctx.inradius = geom.w;
   ctx.aa = aa;
   ctx.res = u.resolution;
   ctx.seed = layers[li].edge_extra.x;
-  ctx.bbox = pool_edge(li, 2u);
+  ctx.bbox = pool_edge_at(2u);
   let p = p_uv * u.resolution;
   var base: EdgeHit;
   var base_ready = false;
@@ -4047,22 +4083,22 @@ fn apply_native_edge_effects(layer: vec4<f32>, p_uv: vec2<f32>, li: u32, aa: f32
     if (e >= effect_count) { break; }
     // Cull per effect: outside its own rectangle, or (for effects that keep
     // the outline still) farther from the centerline than it can reach.
-    let rect = pool_edge(li, POOL_EDGE_EFFECTS + min(u32(e), 15u) * 22u + min(u32(19), 21u));
+    let rect = pool_edge_at(POOL_EDGE_EFFECTS + min(u32(e), 15u) * 22u + min(u32(19), 21u));
     if (any(p_uv < rect.xy) || any(p_uv > rect.zw)) { continue; }
     if (!base_ready) {
       base = edge_hit(li, p, ctx.count);
       base_ready = true;
     }
-    let cull = pool_edge(li, POOL_EDGE_EFFECTS + min(u32(e), 15u) * 22u + min(u32(20), 21u));
+    let cull = pool_edge_at(POOL_EDGE_EFFECTS + min(u32(e), 15u) * 22u + min(u32(20), 21u));
     if (base.d > cull.x || (cull.y < 0.5 && -base.d > cull.x)) { continue; }
-    let head = pool_edge(li, POOL_EDGE_EFFECTS + min(u32(e), 15u) * 22u + min(u32(0), 21u));
+    let head = pool_edge_at(POOL_EDGE_EFFECTS + min(u32(e), 15u) * 22u + min(u32(0), 21u));
     // Premultiplied effect colour.
     let frag = edge_effect_fragment(li, e, p, base, ctx);
     var src_a = clamp(frag.a, 0.0, 1.0) * clamp(head.y, 0.0, 1.0);
     var src_c = clamp(frag.rgb / max(frag.a, 1e-6), vec3<f32>(0.0), vec3<f32>(1.0));
-    let react_mode = pool_edge(li, POOL_EDGE_EFFECTS + min(u32(e), 15u) * 22u + min(u32(21), 21u));
+    let react_mode = pool_edge_at(POOL_EDGE_EFFECTS + min(u32(e), 15u) * 22u + min(u32(21), 21u));
     if (react_mode.x > 0.5) {
-      let r = edge_react(react_mode, pool_edge(li, POOL_EDGE_EFFECTS + min(u32(e), 15u) * 22u + min(u32(12), 21u)));
+      let r = edge_react(react_mode, pool_edge_at(POOL_EDGE_EFFECTS + min(u32(e), 15u) * 22u + min(u32(12), 21u)));
       src_a = clamp(src_a * r.x, 0.0, 1.0);
       if (r.z != 0.0) { src_c = edge_hue_rotate(src_c, r.z); }
       src_c = mix(src_c, vec3<f32>(1.0), clamp(r.y, 0.0, 1.0));
@@ -4152,8 +4188,14 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
   let edge_aa = clamp(max(length(dpdx(canvas_px)), length(dpdy(canvas_px))), 0.25, 8.0);
   // One output pixel's step in canvas UV, for the mip level of minified
   // pictures (layer_source_lod). Taken here, where control flow is uniform.
-  let canvas_step_x = dpdx(canvas_uv);
-  let canvas_step_y = dpdy(canvas_uv);
+  // SOURCE_MIPS is a constant (main.rs heartbeat_wgsl): the build without
+  // source mips has none of this code, so it costs those frames nothing.
+  var canvas_step_x = vec2<f32>(0.0);
+  var canvas_step_y = vec2<f32>(0.0);
+  if (SOURCE_MIPS) {
+    canvas_step_x = dpdx(canvas_uv);
+    canvas_step_y = dpdy(canvas_uv);
+  }
   // The dome pass (draw instance 1) paints only the layers placed on the
   // dome, into a square dome picture the output stage lays over the dome
   // reprojection of everything else. Each pixel is a direction on the dome;
@@ -4162,8 +4204,12 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
   let dome_pass = in.pass_kind == 1u;
   let dome_m = in.uv * 2.0 - vec2<f32>(1.0);
   let dome_dir = dome_direction(dome_m, u.dlayer.y, u.dlayer.z);
-  let dome_dir_step_x = dpdx(dome_dir);
-  let dome_dir_step_y = dpdy(dome_dir);
+  var dome_dir_step_x = vec3<f32>(0.0);
+  var dome_dir_step_y = vec3<f32>(0.0);
+  if (SOURCE_MIPS) {
+    dome_dir_step_x = dpdx(dome_dir);
+    dome_dir_step_y = dpdy(dome_dir);
+  }
   let dome_in = select(1.0, step(length(dome_m), 1.0), dome_pass);
   let t = u.time;
   let audio = ghost_audio_scene();
@@ -4379,7 +4425,7 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
           // is current): a minified picture reads the level its footprint
           // asks for instead of aliasing level zero.
           var lod = 0.0;
-          if ((layers[layer_index].fast_flags.w & 4u) != 0u) {
+          if (SOURCE_MIPS && (layers[layer_index].fast_flags.w & 4u) != 0u) {
             var step_x = canvas_step_x;
             var step_y = canvas_step_y;
             if (dome_pass) {

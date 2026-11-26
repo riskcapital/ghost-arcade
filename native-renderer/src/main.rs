@@ -1760,6 +1760,12 @@ fn changed_ranges(new: &[u8], last: &[u8], chunk: usize) -> Vec<(usize, usize)> 
     ranges
 }
 
+/// Some layer reads its picture's mips (the compositor build with source
+/// mips draws them).
+fn layers_want_mips(layers: &[LayerGpu]) -> bool {
+    layers.iter().any(|layer| layer.fast_flags[3] & 4 != 0)
+}
+
 /// A pool buffer of `capacity` vec4s.
 fn create_layer_pool_buffer(device: &wgpu::Device, capacity: usize, label: &str) -> wgpu::Buffer {
     device.create_buffer(&wgpu::BufferDescriptor {
@@ -1958,6 +1964,8 @@ struct CompositeView {
     layers: Option<CompositeViewLayers>,
     /// Scene bind group 0 over this view's buffers.
     bind_group: wgpu::BindGroup,
+    /// Its own layers read a minified picture's mips.
+    wants_mips: bool,
     scene_bindings_generation: u64,
     used_epoch: u64,
 }
@@ -5407,6 +5415,11 @@ struct RenderState {
     config: wgpu::SurfaceConfiguration,
     supported_present_modes: Vec<wgpu::PresentMode>,
     pipeline: wgpu::RenderPipeline,
+    /// The compositor built with source mips (see `heartbeat_wgsl`), once
+    /// its worker has made it.
+    mips_pipeline: Arc<std::sync::OnceLock<wgpu::RenderPipeline>>,
+    /// Some program layer reads a minified picture's mips (fast_flags.w bit 2).
+    program_wants_mips: bool,
     uniform_buffer: wgpu::Buffer,
     native_shader_uniform_buffer: wgpu::Buffer,
     layer_buffer: wgpu::Buffer,
@@ -6696,6 +6709,9 @@ impl App {
             "source_frame_upload": true,
             "source_frame_file_handoff": true,
             "source_frame_mips": self.renderer.as_ref().is_some_and(|renderer| renderer.source_frame_mip_levels > 1),
+            // The compositor build that reads minified pictures' mips is made
+            // on a worker after start; until then frames read level zero.
+            "compositor_source_mips_ready": self.renderer.as_ref().is_some_and(|renderer| renderer.mips_pipeline.get().is_some()),
             "source_frame_hdr": self.renderer.as_ref().is_some_and(|renderer| renderer.source_frame_format == SOURCE_FRAME_FORMAT_HDR),
             "native_static_image_decode": true,
             "native_static_image_prefetch": true,
@@ -23125,7 +23141,7 @@ impl RenderState {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Ghost Render Core Heartbeat"),
             source: wgpu::ShaderSource::Wgsl(
-                heartbeat_wgsl(source_frame_mode, source_frame_bindings).into(),
+                heartbeat_wgsl(source_frame_mode, source_frame_bindings, false).into(),
             ),
         });
         let native_shader_vertex_module =
@@ -23419,31 +23435,22 @@ impl RenderState {
             bind_group_layouts: &[Some(&bind_group_layout), Some(&source_frames_bind_group_layout)],
             immediate_size: 0,
         });
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("Ghost Render Core Pipeline"),
-            layout: Some(&pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: Some("vs_main"),
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-                buffers: &[],
-            },
-            primitive: wgpu::PrimitiveState::default(),
-            depth_stencil: None,
-            multisample: wgpu::MultisampleState::default(),
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: Some("fs_main"),
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format,
-                    blend: Some(wgpu::BlendState::REPLACE),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-            }),
-            multiview_mask: None,
-            cache: pipeline_cache::for_device(&device).as_ref(),
-        });
+        let pipeline = compositor_pipeline(&device, &pipeline_layout, &shader, format, "Ghost Render Core Pipeline");
+        // The build with source mips, made on a worker: until it is ready a
+        // frame that wants mips draws with `pipeline` (level zero, as before).
+        let mips_pipeline: Arc<std::sync::OnceLock<wgpu::RenderPipeline>> = Arc::new(std::sync::OnceLock::new());
+        if source_mips_enabled() {
+            let (device, layout, slot) = (device.clone(), pipeline_layout.clone(), Arc::clone(&mips_pipeline));
+            let _ = thread::Builder::new().name("ghost-compositor-mips".to_string()).spawn(move || {
+                let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                    label: Some("Ghost Render Core Heartbeat (source mips)"),
+                    source: wgpu::ShaderSource::Wgsl(
+                        heartbeat_wgsl(source_frame_mode, source_frame_bindings, true).into()),
+                });
+                let _ = slot.set(compositor_pipeline(&device, &layout, &shader, format,
+                    "Ghost Render Core Pipeline (source mips)"));
+            });
+        }
 
         let output_presenter = output_present::OutputPresenter::new(&device, &shader, format, &composite_frame_textures);
 
@@ -23884,6 +23891,8 @@ impl RenderState {
             config,
             supported_present_modes,
             pipeline,
+            mips_pipeline,
+            program_wants_mips: false,
             uniform_buffer,
             native_shader_uniform_buffer,
             layer_buffer,
@@ -29104,6 +29113,7 @@ impl RenderState {
             audio0, audio1, audio2, output_gate, post_effects, stage);
         churn_probe::write_buffer(&self.queue, &self.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
         let (filled, upload_len) = self.stage_layer_upload(scene_layers, layers_seen);
+        self.program_wants_mips = layers_want_mips(&self.layer_upload_scratch[..filled]);
         let grown = upload_composite_layers(
             &self.device,
             &self.queue,
@@ -29174,6 +29184,7 @@ impl RenderState {
         let Some(view) = self.composite_views.get_mut(key) else { return; };
         churn_probe::write_buffer(&self.queue, &view.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
         let Some(layers) = view.layers.as_mut() else { return; };
+        view.wants_mips = layers_want_mips(&self.layer_upload_scratch[..filled]);
         let grown = upload_composite_layers(
             &self.device,
             &self.queue,
@@ -29320,6 +29331,7 @@ impl RenderState {
             uniform_buffer,
             layers,
             bind_group,
+            wants_mips: false,
             scene_bindings_generation: self.scene_bindings_generation,
             used_epoch: epoch,
         });
@@ -29445,10 +29457,21 @@ impl RenderState {
             occlusion_query_set: None,
             multiview_mask: None,
         });
-        pass.set_pipeline(&self.pipeline);
+        pass.set_pipeline(self.compositor_pipeline_for(self.program_wants_mips));
         pass.set_bind_group(0, &self.bind_group, &[]);
         pass.set_bind_group(1, &self.source_frames_bind_group, &[]);
         pass.draw(0..3, 1..2);
+    }
+
+    /// The compositor build to draw with: with source mips when the layers
+    /// want them and that build is ready, otherwise the lean one.
+    fn compositor_pipeline_for(&self, source_mips: bool) -> &wgpu::RenderPipeline {
+        if source_mips {
+            if let Some(pipeline) = self.mips_pipeline.get() {
+                return pipeline;
+            }
+        }
+        &self.pipeline
     }
 
     fn draw_fullscreen_to_view(
@@ -29458,13 +29481,14 @@ impl RenderState {
         label: &'static str,
         timestamp_writes: Option<wgpu::RenderPassTimestampWrites<'_>>,
     ) {
-        self.draw_composite(encoder, &self.bind_group, view, label, timestamp_writes);
+        self.draw_composite(encoder, &self.bind_group, self.program_wants_mips, view, label, timestamp_writes);
     }
 
     /// Composite view `key` (written by `write_view_inputs`) into `view`.
     fn draw_composite_view(&self, encoder: &mut wgpu::CommandEncoder, key: &str, view: &wgpu::TextureView, label: &'static str) {
         if let Some(composite) = self.composite_views.get(key) {
-            self.draw_composite(encoder, &composite.bind_group, view, label, None);
+            let mips = if composite.layers.is_some() { composite.wants_mips } else { self.program_wants_mips };
+            self.draw_composite(encoder, &composite.bind_group, mips, view, label, None);
         }
     }
 
@@ -29472,6 +29496,7 @@ impl RenderState {
         &self,
         encoder: &mut wgpu::CommandEncoder,
         bind_group: &wgpu::BindGroup,
+        source_mips: bool,
         view: &wgpu::TextureView,
         label: &'static str,
         timestamp_writes: Option<wgpu::RenderPassTimestampWrites<'_>>,
@@ -29495,7 +29520,7 @@ impl RenderState {
             occlusion_query_set: None,
             multiview_mask: None,
         });
-        pass.set_pipeline(&self.pipeline);
+        pass.set_pipeline(self.compositor_pipeline_for(source_mips));
         pass.set_bind_group(0, bind_group, &[]);
         pass.set_bind_group(1, &self.source_frames_bind_group, &[]);
         pass.draw(0..3, 0..1);
@@ -35902,12 +35927,46 @@ fn shared_source_frame_slot_ceiling(
 }
 
 /// The compositor shader with the picture-slot readers for this store.
-fn heartbeat_wgsl(mode: SourceFrameMode, bindings: usize) -> String {
+/// The compositor shader for a picture store. `source_mips` builds in the
+/// per-pixel mip level of minified pictures (heartbeat.wgsl SOURCE_MIPS);
+/// without it that code is compiled out, so frames that need no mips pay
+/// nothing for it.
+fn heartbeat_wgsl(mode: SourceFrameMode, bindings: usize, source_mips: bool) -> String {
     let body = include_str!("heartbeat.wgsl").replace(
         "//#SOURCE_FRAMES",
         &source_frames::compositor_source_frames_wgsl(mode, 1, 0, bindings),
     );
-    format!("{}{body}", source_frames::source_frames_enable(mode))
+    format!("{}const SOURCE_MIPS: bool = {source_mips};\n{body}", source_frames::source_frames_enable(mode))
+}
+
+/// The compositor pipeline over `shader`'s fs_main.
+fn compositor_pipeline(device: &wgpu::Device, layout: &wgpu::PipelineLayout, shader: &wgpu::ShaderModule,
+    format: wgpu::TextureFormat, label: &str) -> wgpu::RenderPipeline {
+    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some(label),
+        layout: Some(layout),
+        vertex: wgpu::VertexState {
+            module: shader,
+            entry_point: Some("vs_main"),
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+            buffers: &[],
+        },
+        primitive: wgpu::PrimitiveState::default(),
+        depth_stencil: None,
+        multisample: wgpu::MultisampleState::default(),
+        fragment: Some(wgpu::FragmentState {
+            module: shader,
+            entry_point: Some("fs_main"),
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+            targets: &[Some(wgpu::ColorTargetState {
+                format,
+                blend: Some(wgpu::BlendState::REPLACE),
+                write_mask: wgpu::ColorWrites::ALL,
+            })],
+        }),
+        multiview_mask: None,
+        cache: pipeline_cache::for_device(device).as_ref(),
+    })
 }
 
 fn stage3d_mesh_wgsl(mode: SourceFrameMode, bindings: usize) -> String {
@@ -38728,7 +38787,11 @@ mod tests {
     #[test]
     fn compositor_and_stage3d_shaders_validate_for_both_slot_stores() {
         for mode in [SourceFrameMode::Shared, SourceFrameMode::PerSource] {
-            for (name, source) in [("heartbeat", heartbeat_wgsl(mode, 64)), ("stage3d", stage3d_mesh_wgsl(mode, 64))] {
+            for (name, source) in [
+                ("heartbeat", heartbeat_wgsl(mode, 64, false)),
+                ("heartbeat with source mips", heartbeat_wgsl(mode, 64, true)),
+                ("stage3d", stage3d_mesh_wgsl(mode, 64)),
+            ] {
                 let module = naga::front::wgsl::parse_str(&source)
                     .unwrap_or_else(|error| panic!("{name} {mode:?} parse: {}", error.emit_to_string(&source)));
                 let capabilities = match mode {
@@ -38783,7 +38846,7 @@ mod tests {
 
     #[test]
     fn heartbeat_compositor_wgsl_validates_with_the_edge_effect_layout() {
-        let module = naga::front::wgsl::parse_str(&heartbeat_wgsl(SourceFrameMode::Shared, 1))
+        let module = naga::front::wgsl::parse_str(&heartbeat_wgsl(SourceFrameMode::Shared, 1, true))
             .unwrap_or_else(|error| panic!("heartbeat.wgsl parse: {error}"));
         naga::valid::Validator::new(
             naga::valid::ValidationFlags::all(),
@@ -38803,7 +38866,7 @@ mod tests {
         assert_eq!(span as usize, std::mem::size_of::<LayerCoreGpu>());
         assert!(std::mem::size_of::<LayerCoreGpu>() <= 256);
         // The pool record offsets the shader reads by.
-        let source = heartbeat_wgsl(SourceFrameMode::Shared, 1);
+        let source = heartbeat_wgsl(SourceFrameMode::Shared, 1, true);
         for (name, value) in [
             ("POOL_SHAPE_PTS", POOL_SHAPE_PTS), ("POOL_MASK_PTS", POOL_MASK_PTS),
             ("POOL_MESH_POINTS", POOL_MESH_POINTS), ("POOL_MESH_REST", POOL_MESH_REST),

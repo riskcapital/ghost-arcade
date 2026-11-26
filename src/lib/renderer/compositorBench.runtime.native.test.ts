@@ -278,6 +278,11 @@ async function renderScene(env: Env, scene: Scene, width: number, height: number
       backend: platform.rendererBackend, width, height, target_fps: 60, native_quality_policy: 'fixed',
     } }, 30000);
     expect(started?.backend_ready).toBe(true);
+    // The compositor build with source mips is made on a worker after start.
+    if (env.GA_CORE_SOURCE_MIPS !== '0' && !env.CORE_BINARY) {
+      const ready = Date.now() + 30000;
+      while (!(await rpc.send('capabilities'))?.features?.compositor_source_mips_ready && Date.now() < ready) await sleep(50);
+    }
     await rpc.send('set_render_clock', { mode: 'manual', time: 1.25 });
     const commands = [...scene.build(width, height), { type: 'present' }];
     // The core takes at most 1024 commands and 64 MiB a message.
@@ -403,7 +408,9 @@ suite('Compositor scene set', () => {
     const height = Number(process.env.GA_CORE_COMPOSITOR_BENCH_HEIGHT ?? 1080);
     const envs = compareEnvs();
     const lines: string[] = [`compositor benchmark ${width}x${height}`];
-    for (const scene of SCENES) {
+    // GA_CORE_COMPOSITOR_BENCH_SCENES=a,b times only those scenes.
+    const only = (process.env.GA_CORE_COMPOSITOR_BENCH_SCENES ?? '').split(',').filter(Boolean);
+    for (const scene of SCENES.filter(scene => !only.length || only.includes(scene.name))) {
       // Each setting runs twice, interleaved (A B A B), and keeps its
       // better median: other GPU work on the machine only ever adds time.
       const runs: Array<[string, Run]> = [];
