@@ -147,6 +147,17 @@ describe('WebSocket upgrades', () => {
     phone.close();
   });
 
+  it('relays a phone\'s light painting undo and clear to the desktop', async () => {
+    const desktop = await openDesktop();
+    const phone = (await openSocket(`?pair=${TOKEN}`)).ws!;
+    phone.send(JSON.stringify({ type: 'lightpainting_undo', layerId: 'lp-1' }));
+    phone.send(JSON.stringify({ type: 'lightpainting_clear', layerId: 'lp-1' }));
+    expect(await waitFor(() => desktop.received!.find((m) => m.type === 'lightpainting_undo'))).toMatchObject({ layerId: 'lp-1' });
+    expect(await waitFor(() => desktop.received!.find((m) => m.type === 'lightpainting_clear'))).toMatchObject({ layerId: 'lp-1' });
+    desktop.ws!.close();
+    phone.close();
+  });
+
   it('still closes a connection that sends more than 10 MB at once', async () => {
     const { ws } = await openSocket(`?pair=${TOKEN}`);
     const code = closed(ws!);

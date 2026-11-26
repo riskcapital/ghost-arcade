@@ -962,6 +962,8 @@ function handleMessage(sender, msg) {
     case 'lightpainting_stroke_start':
     case 'lightpainting_stroke_point':
     case 'lightpainting_stroke_end':
+    case 'lightpainting_undo':
+    case 'lightpainting_clear':
       broadcast(sender, msg);
       break;
 
