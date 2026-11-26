@@ -52,7 +52,48 @@ type SvgNativeGraphOptions = {
    */
   rasterSourceId?: string;
   rasterReady?: boolean;
+  /*
+   * The geometry signature the caller last uploaded into this source's
+   * persistent buffers ('' or absent: nothing there). The core drops those
+   * buffers when the layer leaves the graph or the core restarts, so the
+   * caller keeps this per layer and clears it then; the graph re-sends the
+   * points whenever it differs. Read the new value from the result's
+   * `geometrySignature`.
+   */
+  uploadedGeometrySignature?: string;
+  /*
+   * The 3D auto-spin angle so far, in radians per axis (see advanceSvgSpin).
+   * Absent: the angle is worked out from the clock (time * speed), which
+   * jumps whenever a spin speed changes.
+   */
+  spin?: SvgSpinAngles;
 };
+
+export type SvgSpinAngles = { x: number; y: number; z: number };
+
+/*
+ * Turn the 3D auto-spin on by one frame. The angle grows by speed * dt, so
+ * changing a spin speed changes how fast it turns from where it is now,
+ * instead of snapping to time * newSpeed. Spin belongs to the 3D (extrude)
+ * look: in the other modes the angle holds.
+ */
+export function advanceSvgSpin(
+  previous: SvgSpinAngles | null | undefined,
+  content: Pick<SVGContent, 'renderMode' | 'rotateSpeedX' | 'rotateSpeedY' | 'rotateSpeedZ'>,
+  dt: number,
+): SvgSpinAngles {
+  const prev = previous ?? { x: 0, y: 0, z: 0 };
+  if (content.renderMode !== 'extrude') return prev;
+  const step = clamp(finite(dt, 0), 0, 0.1);
+  if (step === 0) return prev;
+  // Wrapped to one turn so a show that runs all day keeps float precision.
+  const wrap = (angle: number) => angle % (Math.PI * 2);
+  return {
+    x: wrap(prev.x + step * finite(content.rotateSpeedX, 0)),
+    y: wrap(prev.y + step * finite(content.rotateSpeedY, 0)),
+    z: wrap(prev.z + step * finite(content.rotateSpeedZ, 0)),
+  };
+}
 
 const FILL_CODES: Record<string, number> = {
   solid: 0, gradient: 1, shimmer: 2, pulse: 3, noise: 4,
@@ -442,14 +483,37 @@ function withoutBackground(contours: SvgNativeContour[]): SvgNativeContour[] {
   return filtered.length ? filtered : contours;
 }
 
-let svgParseCacheSource = '';
-let svgParseCacheContours: SvgNativeContour[] = [];
-function cachedSvgContours(source: string): SvgNativeContour[] {
-  if (source !== svgParseCacheSource) {
-    svgParseCacheSource = source;
-    svgParseCacheContours = withoutBackground(parseSvgNativeContours(source));
+/*
+ * Parsed contours and packed geometry, kept per SVG source. One entry each
+ * used to mean that two SVG layers on screen evicted each other every frame
+ * and re-parsed their XML (and reallocated the 128 KB point array) for every
+ * layer, every frame. A small LRU holds every artwork in a show.
+ */
+export const SVG_CACHE_LIMIT = 32;
+function lruGet<T>(cache: Map<string, T>, key: string): T | undefined {
+  const value = cache.get(key);
+  if (value !== undefined) {
+    cache.delete(key);
+    cache.set(key, value);
   }
-  return svgParseCacheContours;
+  return value;
+}
+function lruSet<T>(cache: Map<string, T>, key: string, value: T) {
+  cache.delete(key);
+  cache.set(key, value);
+  while (cache.size > SVG_CACHE_LIMIT) {
+    const oldest = cache.keys().next().value as string;
+    cache.delete(oldest);
+  }
+}
+
+const svgContourCache = new Map<string, SvgNativeContour[]>();
+function cachedSvgContours(source: string): SvgNativeContour[] {
+  const hit = lruGet(svgContourCache, source);
+  if (hit) return hit;
+  const contours = withoutBackground(parseSvgNativeContours(source));
+  lruSet(svgContourCache, source, contours);
+  return contours;
 }
 
 function geometrySignature(source: string): string {
@@ -473,10 +537,16 @@ type SvgGeometry = {
   bboxHeight: number;
 };
 
-let svgGeometryCacheSource = '';
-let svgGeometryCache: SvgGeometry | null = null;
+const svgGeometryCache = new Map<string, SvgGeometry>();
+/** How many times geometry was packed from scratch (for tests). */
+let svgGeometryBuilds = 0;
+export function svgGeometryBuildCount() {
+  return svgGeometryBuilds;
+}
 function cachedSvgGeometry(source: string): SvgGeometry {
-  if (source === svgGeometryCacheSource && svgGeometryCache) return svgGeometryCache;
+  const hit = lruGet(svgGeometryCache, source);
+  if (hit) return hit;
+  svgGeometryBuilds += 1;
   const parsed = cachedSvgContours(source);
   const raw = new Float32Array(SVG_MAX_POINTS * 4);
   const meta = new Float32Array(SVG_MAX_CONTOURS * META_VEC4S * 4);
@@ -507,8 +577,7 @@ function cachedSvgGeometry(source: string): SvgGeometry {
     contourCount += 1;
   }
   if (!Number.isFinite(minX)) { minX = 0; minY = 0; maxX = 1; maxY = 1; }
-  svgGeometryCacheSource = source;
-  svgGeometryCache = {
+  const geometry: SvgGeometry = {
     pointCount,
     contourCount,
     raw,
@@ -518,7 +587,8 @@ function cachedSvgGeometry(source: string): SvgGeometry {
     bboxWidth: Math.max(1e-4, maxX - minX),
     bboxHeight: Math.max(1e-4, maxY - minY),
   };
-  return svgGeometryCache;
+  lruSet(svgGeometryCache, source, geometry);
+  return geometry;
 }
 
 function packedSvgHeader(options: SvgNativeGraphOptions, geometry: SvgGeometry): Float32Array {
@@ -536,10 +606,14 @@ function packedSvgHeader(options: SvgNativeGraphOptions, geometry: SvgGeometry):
   const floatY = renderMode === 2 ? Math.sin(time * finite(content.floatSpeed, 0.8)) * finite(content.floatAmount, 0) : 0;
   // Manual rotation turns the SVG in every mode; auto-spin belongs to the 3D
   // (extrude) look, so a flat logo with the default spin speed stays still.
-  const spin = renderMode === 2 ? time : 0;
-  const rx = (finite(content.rotateX, 0) * Math.PI / 180) + spin * finite(content.rotateSpeedX, 0);
-  const ry = (finite(content.rotateY, 0) * Math.PI / 180) + spin * finite(content.rotateSpeedY, 0);
-  const rz = (finite(content.rotateZ, 0) * Math.PI / 180) + spin * finite(content.rotateSpeedZ, 0);
+  const spinning = renderMode === 2;
+  const spun = options.spin;
+  const spinX = !spinning ? 0 : spun ? finite(spun.x, 0) : time * finite(content.rotateSpeedX, 0);
+  const spinY = !spinning ? 0 : spun ? finite(spun.y, 0) : time * finite(content.rotateSpeedY, 0);
+  const spinZ = !spinning ? 0 : spun ? finite(spun.z, 0) : time * finite(content.rotateSpeedZ, 0);
+  const rx = (finite(content.rotateX, 0) * Math.PI / 180) + spinX;
+  const ry = (finite(content.rotateY, 0) * Math.PI / 180) + spinY;
+  const rz = (finite(content.rotateZ, 0) * Math.PI / 180) + spinZ;
   const depth = renderMode === 2 ? clamp(finite(content.extrudeDepth, 24), 0, 160) : 0;
   const fov = clamp(finite(content.cameraFov, 45), 20, 90) * Math.PI / 180;
   const focal = height * 0.5 / Math.tan(fov * 0.5);
@@ -574,9 +648,6 @@ function packedSvgHeader(options: SvgNativeGraphOptions, geometry: SvgGeometry):
   return data;
 }
 
-/** Persistent-buffer bookkeeping: geometry re-uploads only when it changes. */
-const geometryInitSent = new Map<string, string>();
-
 export function buildSvgNativeComputeGraph(options: SvgNativeGraphOptions) {
   const sourceId = String(options.sourceId || 'svg-native-source');
   const safeSourceId = sourceId.replace(/[^a-zA-Z0-9:_-]+/g, '_');
@@ -588,9 +659,9 @@ export function buildSvgNativeComputeGraph(options: SvgNativeGraphOptions) {
   const metaId = `svg:${safeSourceId}:meta`;
   const boundsId = `svg:${safeSourceId}:bounds`;
   const signature = geometrySignature(options.content.svgSource);
-  const reset = geometryInitSent.get(sourceId) !== signature;
-  if (reset) geometryInitSent.set(sourceId, signature);
-  if (geometryInitSent.size > 512) geometryInitSent.clear();
+  // Persistent buffers: the points go up only when what the caller uploaded
+  // is not this geometry (a new SVG, or buffers the core has dropped).
+  const reset = options.uploadedGeometrySignature !== signature;
   const seq = Math.max(0, Math.round(options.frameIndex ?? 0));
   return {
     state: null as null,
@@ -649,6 +720,8 @@ export function buildSvgNativeComputeGraph(options: SvgNativeGraphOptions) {
       }],
       readbacks: [],
     }, sourceId, passCount: 3,
+    /** What this graph leaves in the persistent buffers once submitted. */
+    geometrySignature: signature,
   };
 }
 export const SVG_TRANSFORM_WGSL = /* wgsl */`

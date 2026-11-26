@@ -122,6 +122,8 @@ import {
 import { linesAnimationTime } from '$lib/lines/linesClock';
 import {
   buildSvgNativeComputeGraph,
+  advanceSvgSpin,
+  type SvgSpinAngles,
   buildSvgNativePrecompileCommands,
 } from '$lib/renderer/svgNative';
 import {
@@ -764,6 +766,8 @@ export function nativeGraphInstrumentSourceId(
 }
 
 type NativeGraphRouteState = {
+  /** The layer the route draws (its buffers go when the route does). */
+  layerId?: string;
   inFlight: boolean;
   seq: number;
   warnings: number;
@@ -6245,12 +6249,16 @@ export class NativeRendererSync {
     raster: SvgRaster | null;
     uploaded: boolean;
     seq: number;
+    /** Geometry in the core's persistent buffers ('' = none). */
+    geometrySig: string;
+    /** The 3D auto-spin angle so far (advanceSvgSpin). */
+    spin: SvgSpinAngles | null;
   }>();
 
   private nativeSvgStateFor(layerId: string) {
     let state = this.nativeSvgState.get(layerId);
     if (!state) {
-      state = { signature: '', pending: null, raster: null, uploaded: false, seq: 0 };
+      state = { signature: '', pending: null, raster: null, uploaded: false, seq: 0, geometrySig: '', spin: null };
       this.nativeSvgState.set(layerId, state);
     }
     return state;
@@ -6310,7 +6318,10 @@ export class NativeRendererSync {
       model.textureUploadedSig = '';
     }
     const svg = this.nativeSvgState.get(layerId);
-    if (svg) svg.uploaded = false;
+    if (svg) {
+      svg.uploaded = false;
+      svg.geometrySig = '';
+    }
     const text = this.nativeTextState.get(layerId);
     if (text) text.atlasUploaded = false;
     this.nativePointCloudUploadSignatures.delete(layerId);
@@ -8256,6 +8267,7 @@ export class NativeRendererSync {
         state: null,
         bufferPrefixes: nativeGraphBufferPrefixesForRoute(route),
       };
+      routeState.layerId = layer.id;
       this.nativeGraphRoutes.set(route.key, routeState);
       const graphTime = nativeShaderClockSeconds(typeof clock.time === 'number'
         ? clock.time
@@ -8423,7 +8435,8 @@ export class NativeRendererSync {
               } as unknown as RendererCommand);
               state.uploaded = true;
             }
-            return buildSvgNativeComputeGraph({
+            state.spin = advanceSvgSpin(state.spin, content, graphDelta);
+            const svgGraph = buildSvgNativeComputeGraph({
               sourceId: graphSource.id,
               content,
               width,
@@ -8433,7 +8446,11 @@ export class NativeRendererSync {
               frameIndex: graphFrameIndex,
               rasterSourceId,
               rasterReady: state.uploaded && state.signature === signature,
+              uploadedGeometrySignature: state.geometrySig,
+              spin: state.spin,
             });
+            state.geometrySig = svgGraph.geometrySignature;
+            return svgGraph;
           }
           if (route.kind === 'light-painting') {
             const audio = getVisualAudioSnapshot();
@@ -8910,6 +8927,10 @@ export class NativeRendererSync {
       if (!activeRouteKeys.has(key) && !routeState.inFlight) {
         inactiveGraphBufferPrefixes.push(...routeState.bufferPrefixes);
         this.nativeGraphRoutes.delete(key);
+        // The SVG's points live in those buffers: send them again when the
+        // layer is next drawn, or it comes back blank.
+        const svg = routeState.layerId ? this.nativeSvgState.get(routeState.layerId) : undefined;
+        if (svg && routeState.bufferPrefixes.some((prefix) => prefix.startsWith('svg:'))) svg.geometrySig = '';
       }
     }
     // A route that is gone frees the LUT tables it last used.
