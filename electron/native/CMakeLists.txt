@@ -346,6 +346,45 @@ elseif(APPLE)
         COMMENT "Re-signing live_capture_addon for Apple Silicon"
     )
 
+    # --- macOS: three.js / p5 host frames into global IOSurfaces ---
+    add_library(js_frame_ring_addon SHARED
+        js_frame_ring_addon.mm
+        ${CMAKE_JS_SRC}
+    )
+
+    target_include_directories(js_frame_ring_addon PRIVATE
+        ${CMAKE_JS_INC}
+        ${NODE_ADDON_API_DIR}
+    )
+
+    target_link_libraries(js_frame_ring_addon PRIVATE
+        ${CMAKE_JS_LIB}
+        ${COCOA_FRAMEWORK}
+        ${COREVIDEO_FRAMEWORK}
+        ${IOSURFACE_FRAMEWORK}
+        ${METAL_FRAMEWORK}
+    )
+
+    target_compile_definitions(js_frame_ring_addon PRIVATE
+        NAPI_VERSION=9
+        NODE_ADDON_API_DISABLE_DEPRECATED
+    )
+
+    set_target_properties(js_frame_ring_addon PROPERTIES
+        PREFIX ""
+        SUFFIX ".node"
+        CXX_STANDARD 17
+    )
+
+    set_source_files_properties(js_frame_ring_addon.mm PROPERTIES
+        COMPILE_FLAGS "-x objective-c++ -fobjc-arc"
+    )
+
+    add_custom_command(TARGET js_frame_ring_addon POST_BUILD
+        COMMAND codesign --force --sign - "$<TARGET_FILE:js_frame_ring_addon>" || true
+        COMMENT "Re-signing js_frame_ring_addon for Apple Silicon"
+    )
+
 endif()
 
 # ============================================================
