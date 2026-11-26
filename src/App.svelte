@@ -51,6 +51,8 @@
   import MobileApp from './lib/components/MobileApp.svelte';
   import OutputWindow from './lib/components/OutputWindow.svelte';
   import { getOutputSharedTexturePresenterStats } from './lib/sync/outputSharedTexturePresenter';
+  import { broadcastCursorClear, broadcastCursorPosition, broadcastFrozenState } from './lib/sync/stateBroadcast';
+  import { createFrameCoalescer } from './lib/utils/frameCoalescer';
   // Real "is a projector window attached" state, independent of the local
   // outputIsOpen intent flag (which resets to false on editor reload while
   // the output BrowserWindow lives on). Used to stop the Output/Fullscreen
@@ -1901,7 +1903,7 @@
     outputFrozen.update(v => {
       const next = !v;
       // Broadcast to output window so it also freezes
-      import('./lib/sync/stateBroadcast').then(m => m.broadcastFrozenState(next));
+      broadcastFrozenState(next);
       return next;
     });
   }
@@ -3730,14 +3732,17 @@
       viewportPanY = panStartPanY + (e.clientY - panStartY);
     }
 
-    // Send cursor position to output window (normalized 0-1 canvas coordinates)
+    // Send cursor position to output window (normalized 0-1 canvas
+    // coordinates), at most once per frame.
     if (viewportEl) {
       const coords = mouseToCanvasCoords(e);
       if (coords.x >= 0 && coords.x <= 1 && coords.y >= 0 && coords.y <= 1) {
-        import('./lib/sync/stateBroadcast').then(m => m.broadcastCursorPosition(coords.x, coords.y));
+        cursorBroadcastFrame.schedule(coords.x, coords.y);
       }
     }
   }
+
+  const cursorBroadcastFrame = createFrameCoalescer((x: number, y: number) => broadcastCursorPosition(x, y));
 
   function handleViewportMouseUp(e: MouseEvent) {
     if (e.button === 0 && finishViewportSelectionGesture(e)) return;
@@ -3748,8 +3753,10 @@
   }
 
   function handleViewportMouseLeave() {
-    // Clear cursor on output window when mouse leaves viewport
-    import('./lib/sync/stateBroadcast').then(m => m.broadcastCursorClear());
+    // Clear cursor on output window when mouse leaves viewport (a position
+    // still waiting for its frame would draw it again).
+    cursorBroadcastFrame.cancel();
+    broadcastCursorClear();
   }
 
   function resetViewportTransform() {
@@ -5369,7 +5376,7 @@
       // ── Light painting from mobile (iPad Apple Pencil) ──
       case 'lightpainting_hover': {
         const { x, y } = msg as any;
-        import('./lib/sync/stateBroadcast').then(m => m.broadcastCursorPosition(x, y));
+        broadcastCursorPosition(x, y);
         break;
       }
       case 'lightpainting_stroke_start': {
@@ -5435,7 +5442,7 @@
         project.updateLightPaintingContent(state.layerId, { isRecording: false, livePreviewStroke: null });
         (window as any).__mobileLPState = null;
         // Clear cursor from output
-        import('./lib/sync/stateBroadcast').then(m => m.broadcastCursorClear());
+        broadcastCursorClear();
         break;
       }
     }
