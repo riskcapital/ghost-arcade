@@ -22351,18 +22351,56 @@ impl RenderState {
             .map_err(|err| err.to_string())?;
         // A driver reset (Windows TDR), a hung GPU or an unplugged external
         // GPU ends the device. Say so in the log with the adapter, so a support
-        // log tells a GPU fault from a fault in the app.
+        // log tells a GPU fault from a fault in the app, and raise the same
+        // GPU fault the completion watchdog raises: the core stops rendering
+        // on a dead device and the app restarts it instead of the show
+        // freezing on the last frame.
         {
             let adapter_label = format!(
                 "{} ({:?}, driver {} {})",
                 adapter_info.name, adapter_info.backend, adapter_info.driver, adapter_info.driver_info
             );
+            let lost_proxy = event_proxy.clone();
             device.set_device_lost_callback(move |reason, message| {
                 if matches!(reason, wgpu::DeviceLostReason::Destroyed) {
                     return;
                 }
                 eprintln!("[ghost-core] GPU DEVICE LOST on {adapter_label}: reason={reason:?} {message}");
+                let _ = lost_proxy.send_event(UserEvent::GpuFrameFailed(format!(
+                    "GPU device lost ({reason:?}: {message}); restart the renderer process to recover"
+                )));
             });
+        }
+        // Without a handler wgpu panics on any error no error scope caught,
+        // which aborts the process mid-show. A validation error only
+        // invalidates the work it was raised on, so log it and keep going;
+        // running out of GPU memory or an internal driver error leaves the
+        // device unreliable, so report it as a GPU fault for a restart.
+        {
+            let error_proxy = event_proxy.clone();
+            let validation_errors = Arc::new(AtomicU64::new(0));
+            device.on_uncaptured_error(Arc::new(move |error: wgpu::Error| match error {
+                wgpu::Error::Validation { description, .. } => {
+                    let count = validation_errors.fetch_add(1, Ordering::Relaxed) + 1;
+                    // The same error usually repeats every frame: log the
+                    // first few, then a periodic count.
+                    if count <= 5 || count.is_power_of_two() {
+                        eprintln!("[ghost-core] GPU validation error #{count} (frame work skipped): {description}");
+                    }
+                }
+                wgpu::Error::OutOfMemory { source } => {
+                    eprintln!("[ghost-core] GPU out of memory: {source}");
+                    let _ = error_proxy.send_event(UserEvent::GpuFrameFailed(format!(
+                        "GPU out of memory ({source}); restart the renderer process to recover"
+                    )));
+                }
+                wgpu::Error::Internal { description, .. } => {
+                    eprintln!("[ghost-core] GPU internal error: {description}");
+                    let _ = error_proxy.send_event(UserEvent::GpuFrameFailed(format!(
+                        "GPU internal error ({description}); restart the renderer process to recover"
+                    )));
+                }
+            }));
         }
 
         let caps = surface.get_capabilities(&adapter);
