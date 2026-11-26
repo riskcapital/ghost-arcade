@@ -11,6 +11,9 @@
 //
 // GA_CORE_COMPOSITOR_BENCH_ENV='{"name":{"GA_X":"1"},...}' picks the
 // settings the benchmark compares (default: source mips on and off).
+// The raster compositor (GA_CORE_COMPOSITOR=raster) is compared with the
+// legacy one on every scene too; the benchmark also prints the CPU time of
+// the frame's render call.
 import { spawn } from 'node:child_process';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -207,6 +210,27 @@ type Scene = {
   mover: string;
 };
 
+/** A spread of sizes (0.1 to 0.45 of the canvas) and places that is the
+ *  same on every run. Pictures on these are fitted to the smallest size,
+ *  so source mips leave them be. */
+function scatter(count: number, seed: number) {
+  let state = seed;
+  const next = () => { state = (state * 1103515245 + 12345) % 2147483648; return state / 2147483648; };
+  return Array.from({ length: count }, () => {
+    const w = 0.1 + next() * 0.35;
+    const h = 0.1 + next() * 0.35;
+    return { x: next() * (1 - w), y: next() * (1 - h), w, h, a: next() };
+  });
+}
+
+function colorLayer(id: string, z: number, rgba: [number, number, number, number], layerCorners: WarpCorners, extra: Command = {}): Command[] {
+  return [
+    { type: 'upsert_layer', layer_id: id, opacity: 0.8, z_index: z, corners: layerCorners, ...extra },
+    { type: 'set_layer_color', layer_id: id, rgba },
+    { type: 'set_layer_visibility', layer_id: id, visible: true },
+  ];
+}
+
 const SCENES: Scene[] = [
   {
     name: 'plain-quads-64', mover: 'quad-0',
@@ -247,6 +271,49 @@ const SCENES: Scene[] = [
     ],
   },
   {
+    // Many layers stacked on each other, each with its own opacity.
+    name: 'overlap-quads-128', mover: 'over-0',
+    build: (width, height) => scatter(128, 7).flatMap((r, i) => imageLayer(`over-${i}`, i, fit(width, height, 0.1), i,
+      corners(r.x, r.y, r.w, r.h), { opacity: 0.25 + 0.7 * r.a })),
+  },
+  {
+    // Bezier meshes and perspective pins lying across each other.
+    name: 'overlap-warps', mover: 'warp-0',
+    build: (width, height) => scatter(12, 11).flatMap((r, i) => imageLayer(`warp-${i}`, i, fit(width, height, 0.05), i,
+      i % 2 ? {
+        topLeft: { x: r.x + r.w * 0.2, y: 1 - r.y }, topRight: { x: r.x + r.w, y: 1 - r.y - r.h * 0.15 },
+        bottomRight: { x: r.x + r.w * 0.9, y: 1 - r.y - r.h }, bottomLeft: { x: r.x, y: 1 - r.y - r.h * 0.85 },
+      } : corners(r.x, r.y, r.w, r.h),
+      i % 2 ? { corner_perspective: true, opacity: 0.7 } : { mesh_grid: bezierMesh(5, 5, 0.3, i), opacity: 0.7 })),
+  },
+  {
+    // Feathered ellipses, stars and masked shapes: soft and anti-aliased edges.
+    name: 'alpha-edges', mover: 'shape-0',
+    build: (width, height) => scatter(24, 5).flatMap((r, i) => imageLayer(`shape-${i}`, i, fit(width, height, 0.1), i,
+      corners(r.x, r.y, r.w, r.h), {
+        opacity: 0.5 + 0.5 * r.a,
+        ...(i % 3 === 0 ? { shape: [3, 0.04, 0, 1], shape2: [0.9, 0.7, 6, 0.4] }
+          : i % 3 === 1 ? { shape: [5, 0, 0.3, 1], shape2: [1, 1, 5, 0.45] }
+          : circleMask(24)),
+      })),
+  },
+  {
+    // Normal, Screen and Multiply in hardware, Add by reading the stack back.
+    name: 'blend-common', mover: 'common-0',
+    build: (width, height) => scatter(16, 3).flatMap((r, i) => imageLayer(`common-${i}`, i, fit(width, height, 0.1), i,
+      corners(r.x, r.y, r.w, r.h), {
+        blend_mode: i === 5 || i === 11 ? 'add' : ['normal', 'screen', 'multiply', 'normal'][i % 4],
+        opacity: 0.5 + 0.5 * r.a,
+      })),
+  },
+  {
+    // Source-less colour rectangles (the plain-fill path) under pictures.
+    name: 'color-layers', mover: 'color-0',
+    build: (width, height) => scatter(32, 9).flatMap((r, i) => i % 2
+      ? colorLayer(`color-${i}`, i, [r.a, 1 - r.a, 0.5, 1], corners(r.x, r.y, r.w, r.h), { blend_mode: i % 4 === 1 ? 'screen' : 'normal' })
+      : imageLayer(`color-${i}`, i, fit(width, height, 0.1), i, corners(r.x, r.y, r.w, r.h), { opacity: 0.6 })),
+  },
+  {
     name: 'minified', minified: true, mover: 'mini-0',
     build: () => grid(16, (i, x, y, w, h) => imageLayer(`mini-${i}`, i, 1024, i, corners(x, y, w, h))),
   },
@@ -268,7 +335,12 @@ const SCENES: Scene[] = [
 // Running a scene
 // ---------------------------------------------------------------------------
 
-type Run = { pixels: Buffer; width: number; height: number; bgra: boolean; gpuMs: number | null; gpuP10: number | null; passes: string; layerBytesPerFrame: number | null };
+type Run = {
+  pixels: Buffer; width: number; height: number; bgra: boolean; gpuMs: number | null; gpuP10: number | null;
+  cpuMs: number | null; passes: string; layerBytesPerFrame: number | null;
+  /** GA_CORE_COMPOSITOR=raster: frames it drew and why it last did not. */
+  raster: { frames: number; fallback_frames: number; last_fallback: string } | null;
+};
 
 async function renderScene(env: Env, scene: Scene, width: number, height: number, timed: boolean): Promise<Run> {
   // Timed runs keep one frame in flight, so each reading is one frame's own GPU work.
@@ -282,6 +354,11 @@ async function renderScene(env: Env, scene: Scene, width: number, height: number
     if (env.GA_CORE_SOURCE_MIPS === '1' && !env.CORE_BINARY) {
       const ready = Date.now() + 30000;
       while (!(await rpc.send('capabilities'))?.features?.compositor_source_mips_ready && Date.now() < ready) await sleep(50);
+    }
+    // So is the raster compositor.
+    if (env.GA_CORE_COMPOSITOR === 'raster' && !env.CORE_BINARY) {
+      const ready = Date.now() + 30000;
+      while (!(await rpc.send('capabilities'))?.features?.compositor_raster_ready && Date.now() < ready) await sleep(50);
     }
     await rpc.send('set_render_clock', { mode: 'manual', time: 1.25 });
     const commands = [...scene.build(width, height), { type: 'present' }];
@@ -307,6 +384,7 @@ async function renderScene(env: Env, scene: Scene, width: number, height: number
     const pixels = Buffer.from(frame.rgba_b64, 'base64');
     let gpuMs: number | null = null;
     let gpuP10: number | null = null;
+    let cpuMs: number | null = null;
     let passes = '';
     let layerBytesPerFrame: number | null = null;
     if (timed) {
@@ -314,6 +392,7 @@ async function renderScene(env: Env, scene: Scene, width: number, height: number
       // GPU time of the composite: the frame timer's last reading (the
       // output composite pass), sampled while the scene stands still.
       const samples: number[] = [];
+      const cpuSamples: number[] = [];
       let lastSampled = 0;
       const timeEnd = performance.now() + seconds * 1000;
       while (performance.now() < timeEnd) {
@@ -322,7 +401,13 @@ async function renderScene(env: Env, scene: Scene, width: number, height: number
         const sampled = Number(status.gpu_timing_samples ?? 0);
         const ms = Number(status.last_render_gpu_ms ?? 0);
         if (ms > 0 && sampled !== lastSampled) { samples.push(ms); lastSampled = sampled; }
+        // CPU time of the render call (encoding and submitting the frame),
+        // the core's running average.
+        const cpu = Number(status.avg_render_cpu_ms ?? 0);
+        if (cpu > 0) cpuSamples.push(cpu);
       }
+      cpuSamples.sort((a, b) => a - b);
+      cpuMs = cpuSamples.length ? cpuSamples[Math.floor(cpuSamples.length / 2)] : null;
       samples.sort((a, b) => a - b);
       gpuMs = samples.length ? samples[Math.floor(samples.length / 2)] : null;
       gpuP10 = samples.length ? samples[Math.floor(samples.length * 0.1)] : null;
@@ -343,8 +428,9 @@ async function renderScene(env: Env, scene: Scene, width: number, height: number
         layerBytesPerFrame = (after.gpu_object_churn.layer_bytes - before.gpu_object_churn.layer_bytes) / frames;
       }
     }
+    const raster = (await rpc.send('stats'))?.compositor_raster ?? null;
     return { pixels, width: Number(frame.width), height: Number(frame.height),
-      bgra: String(frame.format).toLowerCase().startsWith('bgra'), gpuMs, gpuP10, passes, layerBytesPerFrame };
+      bgra: String(frame.format).toLowerCase().startsWith('bgra'), gpuMs, gpuP10, cpuMs, passes, layerBytesPerFrame, raster };
   } finally {
     await rpc.close();
   }
@@ -376,6 +462,22 @@ function difference(a: Run, b: Run) {
   return { max, differing: differing / Math.max(1, a.pixels.length) };
 }
 
+/** Where two runs differ by more than the raster tolerance, and by how much. */
+function differenceOver(a: Run, b: Run, tolerance: number) {
+  let over = 0;
+  for (let i = 0; i < Math.min(a.pixels.length, b.pixels.length); i++) {
+    if (Math.abs(a.pixels[i] - b.pixels[i]) > tolerance) over++;
+  }
+  return over;
+}
+
+function rasterNote(run: Run) {
+  if (!run.raster) return '';
+  return run.raster.fallback_frames > 0 && run.raster.frames === 0
+    ? `, legacy (${run.raster.last_fallback})`
+    : `, raster ${run.raster.frames}/${run.raster.frames + run.raster.fallback_frames} frames`;
+}
+
 function compareEnvs(): Record<string, Env> {
   const raw = process.env.GA_CORE_COMPOSITOR_BENCH_ENV;
   if (raw) return JSON.parse(raw);
@@ -403,6 +505,28 @@ suite('Compositor scene set', () => {
     }
   }, 240000);
 
+  // The raster compositor draws what the legacy one does. Its hardware
+  // blends compute the blend in a different order, which can round a value
+  // on an 8-bit step boundary to the next step (RASTER_TOLERANCE_LSB), so a
+  // channel may differ by 1 on a few pixels; never by more.
+  it('draws every scene the same with the raster compositor as with the legacy one', async () => {
+    const width = 640;
+    const height = 360;
+    for (const scene of SCENES) {
+      const legacy = await renderScene({}, scene, width, height, false);
+      const raster = await renderScene({ GA_CORE_COMPOSITOR: 'raster' }, scene, width, height, false);
+      dump(`${scene.name}-legacy`, legacy, legacy.bgra);
+      dump(`${scene.name}-raster`, raster, raster.bgra);
+      const diff = difference(legacy, raster);
+      if (process.env.GA_CORE_COMPOSITOR_BENCH_TRACE) {
+        console.log(`scene ${scene.name}: max diff ${diff.max}, differing ${(diff.differing * 100).toFixed(4)}%${rasterNote(raster)}`);
+      }
+      expect(diff.max, `${scene.name}: max channel difference`).toBeLessThanOrEqual(1);
+      expect(diff.differing, `${scene.name}: share of channels off by one`).toBeLessThan(0.001);
+      expect(differenceOver(legacy, raster, 1)).toBe(0);
+    }
+  }, 300000);
+
   (bench ? it : it.skip)('benchmark: composite GPU time and layer upload per frame', async () => {
     const width = Number(process.env.GA_CORE_COMPOSITOR_BENCH_WIDTH ?? 1920);
     const height = Number(process.env.GA_CORE_COMPOSITOR_BENCH_HEIGHT ?? 1080);
@@ -425,7 +549,7 @@ suite('Compositor scene set', () => {
       }
       for (const [name, run] of best) {
         runs.push([name, run]);
-        lines.push(`  ${scene.name.padEnd(20)} ${name.padEnd(12)} gpu median ${run.gpuMs?.toFixed(2) ?? 'n/a'} ms, p10 ${run.gpuP10?.toFixed(2) ?? 'n/a'} ms, layer upload ${run.layerBytesPerFrame?.toFixed(0) ?? 'n/a'} B/frame`);
+        lines.push(`  ${scene.name.padEnd(20)} ${name.padEnd(12)} gpu median ${run.gpuMs?.toFixed(2) ?? 'n/a'} ms, p10 ${run.gpuP10?.toFixed(2) ?? 'n/a'} ms, cpu median ${run.cpuMs?.toFixed(2) ?? 'n/a'} ms, layer upload ${run.layerBytesPerFrame?.toFixed(0) ?? 'n/a'} B/frame${rasterNote(run)}`);
       }
       for (const [name, run] of runs.slice(1)) {
         const diff = difference(runs[0][1], run);
