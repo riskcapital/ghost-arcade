@@ -1009,7 +1009,9 @@ fn material_face_color(ci: i32, p: vec2<f32>, resolution: vec2<f32>, time: f32, 
     let reveal=1.0-smoothstep(sweep,min(1.0,sweep+0.06),progress);let head=1.0-smoothstep(0.0,0.035,abs(progress-sweep));
     alpha*=reveal;color=color*reveal+generated_color(nearest_ci,p)*head*1.5;
   }
-  let bloom=max(0.0,svg.h9.y)*(1.0-smoothstep(svg.h9.z,1.0,max(color.r,max(color.g,color.b))));color+=color*bloom;
+  // Bloom lifts what is brighter than the threshold. (It used to lift what
+  // was darker: 1 - smoothstep, so dim shapes glowed and highlights did not.)
+  let bloom=max(0.0,svg.h9.y)*smoothstep(svg.h9.z,1.0,max(color.r,max(color.g,color.b)));color+=color*bloom;
   let vig=1.0-svg.h10.x*smoothstep(0.25,0.72,distance(input.uv,vec2<f32>(0.5)));color*=vig;
   return vec4<f32>(color*clamp(alpha,0.0,1.0),clamp(alpha,0.0,1.0));
 }

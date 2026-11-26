@@ -108,3 +108,11 @@ describe('SVG 3D auto-spin', () => {
   });
 });
 
+describe('SVG bloom', () => {
+  it('lifts pixels above the threshold, not below it', async () => {
+    const { SVG_NATIVE_WGSL } = await import('./svgNative');
+    const line = SVG_NATIVE_WGSL.split('\n').find((l) => l.includes('let bloom='))!;
+    expect(line).toContain('*smoothstep(svg.h9.z,1.0,');
+    expect(line).not.toContain('1.0-smoothstep(svg.h9.z');
+  });
+});
