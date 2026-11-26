@@ -49,6 +49,7 @@ const nativePreviewNode = path.join(outputDir, 'native_preview_addon.node');
 const liveCaptureNode = path.join(outputDir, 'live_capture_addon.node');
 const ndiNode = path.join(outputDir, 'ndi_addon.node');
 const linkNode = path.join(outputDir, 'link_addon.node');
+const jsFrameRingNode = path.join(outputDir, 'js_frame_ring_addon.node');
 const sliceDir = path.join(nativeDir, '.native-build-slices');
 const slices = [
   { cmakeArch: 'x64', lipoArch: 'x86_64' },
@@ -104,6 +105,10 @@ for (const slice of slices) {
   if (fs.existsSync(linkNode)) {
     fs.copyFileSync(linkNode, path.join(sliceDir, `link_addon-${slice.lipoArch}.node`));
   }
+  // Optional: without it three.js / p5 frames take the CPU path.
+  if (fs.existsSync(jsFrameRingNode)) {
+    fs.copyFileSync(jsFrameRingNode, path.join(sliceDir, `js_frame_ring_addon-${slice.lipoArch}.node`));
+  }
 }
 
 lipoSlices(syphonNode, 'syphon_addon', { required: true });
@@ -111,4 +116,5 @@ lipoSlices(nativePreviewNode, 'native_preview_addon', { required: true });
 lipoSlices(liveCaptureNode, 'live_capture_addon', { required: true });
 lipoSlices(ndiNode, 'ndi_addon');
 lipoSlices(linkNode, 'link_addon');
+lipoSlices(jsFrameRingNode, 'js_frame_ring_addon');
 fs.rmSync(sliceDir, { recursive: true, force: true });
