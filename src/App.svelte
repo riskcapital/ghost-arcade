@@ -5385,7 +5385,14 @@
       case 'lightpainting_stroke_point': {
         const state = (window as any).__mobileLPState;
         if (!state) break;
-        const { x, y, pressure, timestamp } = msg as any;
+        const { x, y, pressure, timestamp, coalesced } = msg as any;
+        // In-between Pencil samples the phone collected for this event.
+        if (Array.isArray(coalesced)) {
+          for (const c of coalesced) {
+            if (!c || !Number.isFinite(c.x) || !Number.isFinite(c.y)) continue;
+            state.points.push({ x: c.x, y: c.y, pressure: c.pressure ?? 0.5, timestamp: c.timestamp ?? (performance.now() - state.startTime) });
+          }
+        }
         state.points.push({ x, y, pressure: pressure ?? 0.5, timestamp: timestamp ?? (performance.now() - state.startTime) });
         scheduleMobileLightPaintingPreview(state);
         break;
@@ -5402,15 +5409,18 @@
         // Finalize stroke with smoothing
         let finalPoints = [...state.points];
         const smoothing = state.brush.smoothing ?? 0.5;
-        // Simple Chaikin smoothing inline (same algorithm as LightPaintingPanel)
+        // Simple Chaikin smoothing inline (same algorithm as LightPaintingPanel):
+        // keeps both endpoints so the stroke reaches where the pen went down
+        // and lifted, and blends pressure along with position.
         const passes = Math.ceil(smoothing * 3);
-        for (let p = 0; p < passes; p++) {
-          const smoothed: typeof finalPoints = [];
+        for (let p = 0; p < passes && finalPoints.length >= 3; p++) {
+          const smoothed: typeof finalPoints = [finalPoints[0]];
           for (let i = 0; i < finalPoints.length - 1; i++) {
             const a = finalPoints[i], b = finalPoints[i + 1];
-            smoothed.push({ x: a.x * 0.75 + b.x * 0.25, y: a.y * 0.75 + b.y * 0.25, pressure: a.pressure, timestamp: a.timestamp });
-            smoothed.push({ x: a.x * 0.25 + b.x * 0.75, y: a.y * 0.25 + b.y * 0.75, pressure: b.pressure, timestamp: b.timestamp });
+            smoothed.push({ x: a.x * 0.75 + b.x * 0.25, y: a.y * 0.75 + b.y * 0.25, pressure: a.pressure * 0.75 + b.pressure * 0.25, timestamp: a.timestamp * 0.75 + b.timestamp * 0.25 });
+            smoothed.push({ x: a.x * 0.25 + b.x * 0.75, y: a.y * 0.25 + b.y * 0.75, pressure: a.pressure * 0.25 + b.pressure * 0.75, timestamp: a.timestamp * 0.25 + b.timestamp * 0.75 });
           }
+          smoothed.push(finalPoints[finalPoints.length - 1]);
           finalPoints = smoothed;
         }
         // Cap at 800 points

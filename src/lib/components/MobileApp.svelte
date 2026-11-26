@@ -110,7 +110,7 @@
     smoothing: 0.5,
     speed: 1,
     taper: false,
-    pressureSensitivity: true,
+    pressureSensitive: true,
     secondaryGlow: false,
   };
   let isPainting = false;
@@ -365,16 +365,39 @@
 
     if (isPainting && (e.type === 'pointermove' || e.type === 'pointerdown')) {
       const ts = performance.now();
+      // The Pencil reports at 240 Hz but pointermove fires once per frame;
+      // the samples in between arrive as coalesced events. Without them
+      // fast strokes turn into straight segments.
+      const coalesced: { x: number; y: number; pressure: number; timestamp: number }[] = [];
+      if (e.type === 'pointermove' && typeof e.getCoalescedEvents === 'function') {
+        const samples = e.getCoalescedEvents();
+        // The last coalesced sample is the event itself.
+        for (let i = 0; i < samples.length - 1; i++) {
+          const c = samples[i];
+          coalesced.push({
+            x: Math.max(0, Math.min(1, (c.clientX - rect.left - cx) / cw)),
+            y: Math.max(0, Math.min(1, (c.clientY - rect.top - cy) / ch)),
+            pressure: c.pressure || 0.5,
+            timestamp: ts - (e.timeStamp - c.timeStamp),
+          });
+        }
+      }
       // Local point buffer used for live preview rendering on iPad (zero-latency)
+      for (const c of coalesced) localLivePoints.push(c);
       localLivePoints.push({ x: nx, y: ny, pressure: pressure || 0.5, timestamp: ts });
       // Cap the buffer so long strokes don't blow memory (8k = ~2 min @ 60hz)
-      if (localLivePoints.length > 8000) localLivePoints.shift();
+      if (localLivePoints.length > 8000) localLivePoints.splice(0, localLivePoints.length - 8000);
+      // Reassign so the live preview path re-renders (push alone does not).
+      localLivePoints = localLivePoints;
 
       if (ws && ws.readyState === WebSocket.OPEN) {
+        // One message per event: the latest point in x/y (what older
+        // desktops read) plus the in-between samples in `coalesced`.
         ws.send(JSON.stringify({
           type: 'lightpainting_stroke_point',
           layerId: paintLayerId,
           x: nx, y: ny, pressure, timestamp: ts,
+          ...(coalesced.length ? { coalesced } : {}),
         }));
       }
     }
