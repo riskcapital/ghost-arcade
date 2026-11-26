@@ -15,6 +15,7 @@
   } from '../lines/types';
   import { createDefaultDrawAnimation, LINES_REVEAL_DEFAULTS } from '../lines/types';
   import { restartLinesAnimation } from '../lines/linesClock';
+  import { nextLineZIndex } from '../lines/geometry';
 
   // Dual-mode props: no props = mapping mode, with props = VJ mode
   export let content: LinesContent | undefined = undefined;
@@ -67,6 +68,7 @@
   $: animEl = selectedEl ?? (drawScope === 'all' ? elements[0] ?? null : null);
   $: revealMode = (lc?.revealMode ?? 'off') as LinesRevealMode;
   $: toolMode = $linesStore.toolMode;
+  $: newLine = $linesStore.newLine;
 
   // === Color helpers ===
   function rgbaToHex(rgba: [number, number, number, number]): string {
@@ -109,6 +111,11 @@
 
   function updateSelectedStroke(stroke: LineStroke) {
     updateSelectedElement({ stroke });
+  }
+
+  function updateShapeProp(key: string, value: unknown) {
+    if (!selectedEl) return;
+    updateSelectedElement({ shape: { ...selectedEl.shape, [key]: value } as LineElement['shape'] });
   }
 
   function updateStrokeProp(key: string, value: unknown) {
@@ -245,7 +252,7 @@
       id: generateUUID(),
       name: `${el.name} Copy`,
       position: { x: el.position.x + 0.05, y: el.position.y + 0.05 },
-      zIndex: elements.length,
+      zIndex: nextLineZIndex(elements),
     };
     updateContent({ elements: [...elements, newEl], selectedElementId: newEl.id });
   }
@@ -367,8 +374,9 @@
           <div class="sec-label">Freehand Settings</div>
           <div class="slider-col">
             <div class="sc">
-              <label>Smoothing <b>0.50</b></label>
-              <input type="range" min="0" max="1" step="0.05" value="0.5" />
+              <label>Smoothing <b>{newLine.smoothing.toFixed(2)}</b></label>
+              <input type="range" min="0" max="1" step="0.05" value={newLine.smoothing}
+                oninput={(e) => linesStore.setNewLineSettings({ smoothing: parseFloat((e.target as HTMLInputElement).value) })} />
             </div>
           </div>
           <div class="drawing-hint">Click and drag to draw. Hold Shift to constrain.</div>
@@ -379,16 +387,24 @@
           <div class="slider-col">
             <div class="sc">
               <label>Corner style</label>
-              <select class="inline-select" value="sharp">
+              <select class="inline-select" value={newLine.cornerStyle}
+                onchange={(e) => linesStore.setNewLineSettings({ cornerStyle: (e.target as HTMLSelectElement).value as typeof newLine.cornerStyle })}>
                 <option value="sharp">Sharp</option>
                 <option value="rounded">Rounded</option>
                 <option value="chamfer">Chamfer</option>
               </select>
             </div>
-            <div class="sc">
-              <label>Corner radius <b>0</b></label>
-              <input type="range" min="0" max="50" step="1" value="0" />
-            </div>
+            {#if newLine.cornerStyle !== 'sharp'}
+              <div class="sc">
+                <label>Corner radius <b>{newLine.cornerRadius}</b></label>
+                <input type="range" min="0" max="50" step="1" value={newLine.cornerRadius}
+                  oninput={(e) => linesStore.setNewLineSettings({ cornerRadius: parseFloat((e.target as HTMLInputElement).value) })} />
+              </div>
+            {/if}
+          </div>
+          <div class="check-row">
+            <label><input type="checkbox" checked={newLine.closed}
+              onchange={(e) => linesStore.setNewLineSettings({ closed: (e.target as HTMLInputElement).checked })} /> Closed</label>
           </div>
           <div class="drawing-hint">Click to add points. Shift = straight. Double-click or right-click to finish. Esc to cancel.</div>
         {/if}
@@ -400,6 +416,39 @@
       <!-- ============ TAB 2: STROKE EFFECTS ============ -->
       {:else if activeTab === 'stroke'}
         {#if selectedEl}
+          <div class="sec-label">Shape</div>
+          {#if selectedEl.shape.type === 'freehand'}
+            <div class="control-row">
+              <span class="control-label">Smoothing</span>
+              <input type="range" min="0" max="1" step="0.05" value={selectedEl.shape.smoothing ?? 0.5}
+                oninput={(e) => updateShapeProp('smoothing', parseFloat((e.target as HTMLInputElement).value))} />
+              <span class="control-value">{(selectedEl.shape.smoothing ?? 0.5).toFixed(2)}</span>
+            </div>
+          {:else if selectedEl.shape.type === 'pointClick'}
+            <div class="check-row">
+              <label><input type="checkbox" checked={!!selectedEl.shape.closed}
+                disabled={selectedEl.shape.points.length < 3}
+                onchange={(e) => updateShapeProp('closed', (e.target as HTMLInputElement).checked)} /> Closed</label>
+            </div>
+            <div class="control-row">
+              <span class="control-label">Corner style</span>
+              <select value={selectedEl.shape.cornerStyle ?? 'sharp'}
+                onchange={(e) => updateShapeProp('cornerStyle', (e.target as HTMLSelectElement).value)}>
+                <option value="sharp">Sharp</option>
+                <option value="rounded">Rounded</option>
+                <option value="chamfer">Chamfer</option>
+              </select>
+            </div>
+            {#if (selectedEl.shape.cornerStyle ?? 'sharp') !== 'sharp'}
+              <div class="control-row">
+                <span class="control-label">Corner radius</span>
+                <input type="range" min="0" max="50" step="1" value={selectedEl.shape.cornerRadius ?? 0}
+                  oninput={(e) => updateShapeProp('cornerRadius', parseFloat((e.target as HTMLInputElement).value))} />
+                <span class="control-value">{selectedEl.shape.cornerRadius ?? 0}</span>
+              </div>
+            {/if}
+          {/if}
+
           <div class="sec-label">Stroke Type</div>
           <div class="control-row">
             <span class="control-label">Type</span>
@@ -451,26 +500,9 @@
           </div>
 
           <!-- Type-specific controls -->
-          {#if selectedEl.stroke.type === 'solid'}
-            <div class="sec-label">Solid Options</div>
-            <div class="control-row">
-              <span class="control-label">Cap</span>
-              <select value={selectedEl.stroke.cap} onchange={(e) => updateStrokeProp('cap', (e.target as HTMLSelectElement).value)}>
-                <option value="butt">Butt</option>
-                <option value="round">Round</option>
-                <option value="square">Square</option>
-              </select>
-            </div>
-            <div class="control-row">
-              <span class="control-label">Join</span>
-              <select value={selectedEl.stroke.join} onchange={(e) => updateStrokeProp('join', (e.target as HTMLSelectElement).value)}>
-                <option value="miter">Miter</option>
-                <option value="round">Round</option>
-                <option value="bevel">Bevel</option>
-              </select>
-            </div>
-
-          {:else if selectedEl.stroke.type === 'dashed'}
+          <!-- Solid lines always draw with round caps and joins (both
+               renderers); there are no cap/join choices to offer. -->
+          {#if selectedEl.stroke.type === 'dashed'}
             <div class="sec-label">Dash Options</div>
             <div class="control-row">
               <span class="control-label">Dash</span>

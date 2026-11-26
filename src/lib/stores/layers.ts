@@ -91,6 +91,7 @@ import { screenSetups } from './screenSetups';
 import { isIdentityMeshGrid, meshGridHasTangents, withMeshPointTangents } from '../utils/meshWarp';
 import { fittedMeshGrid, refitRestingMesh } from '../utils/meshShapeFit';
 import { createLineElement, createDefaultLinesContent, createDefaultDrawAnimation } from '../lines/types';
+import { nextLineZIndex, syncLineZIndex } from '../lines/geometry';
 import { syncTrimmedVideoPlayback } from '../utils/videoTrimPlayback';
 import { recoverVJClipAssetRef } from '../storage/vjAssetPersistence';
 import { selectionForPrimary } from './layerSelection';
@@ -4460,7 +4461,7 @@ void main() {
           if (l.id !== layerId || l.type !== 'lines' || !l.linesContent) return l;
 
           const element = createLineElement(shape);
-          element.zIndex = l.linesContent.elements.length;
+          element.zIndex = nextLineZIndex(l.linesContent.elements);
 
           return {
             ...l,
@@ -4651,7 +4652,7 @@ void main() {
               x: element.position.x + 0.05,
               y: element.position.y + 0.05,
             },
-            zIndex: l.linesContent.elements.length,
+            zIndex: nextLineZIndex(l.linesContent.elements),
           };
 
           return {
@@ -4672,13 +4673,15 @@ void main() {
         layers: project.layers.map((l) => {
           if (l.id !== layerId || l.type !== 'lines' || !l.linesContent) return l;
           const elements = [...l.linesContent.elements];
+          if (fromIndex < 0 || fromIndex >= elements.length) return l;
           const [moved] = elements.splice(fromIndex, 1);
-          elements.splice(toIndex, 0, moved);
+          elements.splice(Math.max(0, Math.min(elements.length, toIndex)), 0, moved);
           return {
             ...l,
             linesContent: {
               ...l.linesContent,
-              elements,
+              // Renderers draw by zIndex, so it must follow the new order.
+              elements: syncLineZIndex(elements),
             },
           };
         }),
