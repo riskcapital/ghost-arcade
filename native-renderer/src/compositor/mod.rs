@@ -1,4 +1,19 @@
+//! The compositor: blend and effect codes and their manifests, layer GPU
+//! records, tiles, scene layers, layer commands, per-frame inputs and the
+//! composite draw.
+
 use serde_json::{Value, json};
+
+mod layer_gpu;
+pub(crate) use layer_gpu::*;
+mod tiles;
+pub(crate) use tiles::*;
+mod scene_layer;
+pub(crate) use scene_layer::*;
+mod layer_commands;
+mod inputs;
+mod draw;
+pub(crate) use draw::*;
 
 pub fn blend_mode_code(mode: &str) -> f32 {
     match mode.trim().to_ascii_lowercase().as_str() {
