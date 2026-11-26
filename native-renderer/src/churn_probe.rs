@@ -21,6 +21,7 @@ static BIND_GROUPS: AtomicU64 = AtomicU64::new(0);
 static TEXTURE_VIEWS: AtomicU64 = AtomicU64::new(0);
 static SUBMITS: AtomicU64 = AtomicU64::new(0);
 static BUFFER_BYTES: AtomicU64 = AtomicU64::new(0);
+static LAYER_BYTES: AtomicU64 = AtomicU64::new(0);
 
 /// Read the switch once, at start.
 pub fn init() {
@@ -60,12 +61,22 @@ pub fn write_buffer(queue: &wgpu::Queue, buffer: &wgpu::Buffer, offset: u64, dat
     queue.write_buffer(buffer, offset, data);
 }
 
+/// Bytes of compositor layer data (records, side pools, tile bins) handed
+/// to `write_buffer`; also counted in `buffer_bytes`.
+#[inline]
+pub fn layer_bytes(bytes: usize) {
+    if ON.load(Ordering::Relaxed) {
+        LAYER_BYTES.fetch_add(bytes as u64, Ordering::Relaxed);
+    }
+}
+
 #[derive(Clone, Copy, Debug, Serialize)]
 pub struct ChurnCounts {
     pub bind_groups: u64,
     pub texture_views: u64,
     pub submits: u64,
     pub buffer_bytes: u64,
+    pub layer_bytes: u64,
 }
 
 /// The running totals, or None while the probe is off.
@@ -75,5 +86,6 @@ pub fn counts() -> Option<ChurnCounts> {
         texture_views: TEXTURE_VIEWS.load(Ordering::Relaxed),
         submits: SUBMITS.load(Ordering::Relaxed),
         buffer_bytes: BUFFER_BYTES.load(Ordering::Relaxed),
+        layer_bytes: LAYER_BYTES.load(Ordering::Relaxed),
     })
 }

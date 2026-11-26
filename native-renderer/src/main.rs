@@ -1824,9 +1824,11 @@ fn upload_composite_layers(
                 (MESH_CELL_BOUNDS_BASE * std::mem::size_of::<u32>()) as u64,
                 bytemuck::cast_slice(mesh_cell_bounds_scratch),
             );
+            churn_probe::layer_bytes(mesh_cell_bounds_scratch.len() * 4);
             std::mem::swap(state.mesh_cell_bounds_last, mesh_cell_bounds_scratch);
         }
         churn_probe::write_buffer(queue, state.layer_buffer, 0, layer_bytes);
+        churn_probe::layer_bytes(layer_bytes.len());
         state.layer_last.clear();
         state.layer_last.extend_from_slice(layer_bytes);
     }
@@ -1834,6 +1836,7 @@ fn upload_composite_layers(
     build_layer_tiles(&culls, tile_scratch);
     if *state.tile_last != *tile_scratch {
         churn_probe::write_buffer(queue, state.tile_buffer, 0, bytemuck::cast_slice(tile_scratch));
+        churn_probe::layer_bytes(tile_scratch.len() * 4);
         std::mem::swap(state.tile_last, tile_scratch);
     }
 }
