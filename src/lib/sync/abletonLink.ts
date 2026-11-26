@@ -36,6 +36,9 @@ export interface AbletonLinkState {
   /** Beat phase 0..quantum at the LAST poll + extrapolation anchor. */
   phase: number;
   quantum: number;
+  /** Output trim (ms) on top of the audio device's own latency: Audio Lab's
+   *  loops play this much earlier while Link drives the clock. */
+  offsetMs: number;
   error: string | null;
 }
 
@@ -47,15 +50,31 @@ const INITIAL: AbletonLinkState = {
   playing: false,
   phase: 0,
   quantum: 4,
+  offsetMs: 0,
   error: null,
 };
 
 const STORAGE_KEY = 'ghost-arcade-ableton-link-enabled';
+const OFFSET_KEY = 'ghost-arcade-ableton-link-offset-ms';
+/** The output trim's range, in ms either way. */
+export const LINK_OFFSET_LIMIT_MS = 100;
+
+export function clampLinkOffset(ms: number): number {
+  return Number.isFinite(ms) ? Math.max(-LINK_OFFSET_LIMIT_MS, Math.min(LINK_OFFSET_LIMIT_MS, Math.round(ms))) : 0;
+}
+
+function savedOffset(): number {
+  try {
+    return clampLinkOffset(Number(localStorage.getItem(OFFSET_KEY) ?? 0));
+  } catch {
+    return 0;
+  }
+}
 const POLL_MS = 250;
 const TEMPO_EPSILON = 0.01;
 
 function createAbletonLinkStore() {
-  const { subscribe, update, set } = writable<AbletonLinkState>({ ...INITIAL });
+  const { subscribe, update } = writable<AbletonLinkState>({ ...INITIAL, offsetMs: savedOffset() });
   let pollTimer: ReturnType<typeof setInterval> | null = null;
   let lastBridgedTempo: number | null = null;
   let audioUnsub: (() => void) | null = null;
@@ -64,10 +83,15 @@ function createAbletonLinkStore() {
 
   async function poll() {
     try {
+      // The state is read somewhere inside the round trip to the main
+      // process: stamp it at the midpoint, not on arrival, so the delivery
+      // delay does not push the phase late by a few ms on every poll.
+      const sent = performance.now();
       const s: any = await invoke('link_get_state');
+      const atMs = (sent + performance.now()) / 2;
       if (!s || !s.enabled) return;
       anchor = { beat: Number.isFinite(s.beat) ? s.beat : s.phase,
-        phase: s.phase, tempo: s.tempo, quantum: s.quantum, atMs: performance.now() };
+        phase: s.phase, tempo: s.tempo, quantum: s.quantum, atMs };
       update(st => ({
         ...st,
         available: true,
@@ -127,6 +151,14 @@ function createAbletonLinkStore() {
       const elapsed = (performance.now() - anchor.atMs) / 1000;
       const beats = elapsed * (anchor.tempo / 60);
       return (anchor.phase + beats) % anchor.quantum;
+    },
+
+    /** Set the output trim (clamped to ±LINK_OFFSET_LIMIT_MS; returns what was kept); kept for next time. */
+    setOffsetMs(ms: number): number {
+      const offsetMs = clampLinkOffset(ms);
+      update(s => ({ ...s, offsetMs }));
+      try { localStorage.setItem(OFFSET_KEY, String(offsetMs)); } catch { /* private mode */ }
+      return offsetMs;
     },
 
     async enable(): Promise<boolean> {
