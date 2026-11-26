@@ -210,10 +210,10 @@ impl RenderState {
         timestamp_writes: Option<wgpu::RenderPassTimestampWrites<'_>>,
     ) {
         // The raster compositor, when this frame's plan has it draw.
-        if let Some(raster) = self.raster.as_ref().filter(|raster| raster.active()) {
+        if let Some(raster) = self.raster.as_ref().filter(|raster| raster.program.active()) {
             let pass_time = if timestamp_writes.is_none() { pass_timing::slot(label) } else { None };
             let timestamp_writes = timestamp_writes.or_else(|| pass_timing::render_writes(&pass_time));
-            raster.draw(encoder, &self.bind_group, &self.source_frames_bind_group, view, label, timestamp_writes);
+            raster.draw(&raster.program, encoder, &self.bind_group, &self.source_frames_bind_group, view, label, timestamp_writes);
             return;
         }
         self.draw_composite(encoder, &self.bind_group, self.program_wants_mips, view, label, timestamp_writes);
@@ -222,6 +222,12 @@ impl RenderState {
     /// Composite view `key` (written by `write_view_inputs`) into `view`.
     pub(crate) fn draw_composite_view(&self, encoder: &mut wgpu::CommandEncoder, key: &str, view: &wgpu::TextureView, label: &'static str) {
         if let Some(composite) = self.composite_views.get(key) {
+            if let Some((raster, plan)) = self.raster.as_ref().and_then(|raster| raster.view_plan(key).map(|plan| (raster, plan))) {
+                let pass_time = pass_timing::slot(label);
+                raster.draw(plan, encoder, &composite.bind_group, &self.source_frames_bind_group, view, label,
+                    pass_timing::render_writes(&pass_time));
+                return;
+            }
             let mips = if composite.layers.is_some() { composite.wants_mips } else { self.program_wants_mips };
             self.draw_composite(encoder, &composite.bind_group, mips, view, label, None);
         }
@@ -575,9 +581,7 @@ impl RenderState {
                 gpu_timing.resolve_to_readback(&mut mirror_encoder);
             }
         }
-        pass_timing::resolve(&mut mirror_encoder);
         self.submit_frame(mirror_encoder);
-        pass_timing::after_submit();
         #[cfg(any(target_os = "macos", target_os = "windows"))]
         self.encode_native_recording_frame();
         self.texture_share_submitted();

@@ -1562,10 +1562,18 @@ impl App {
         value["last_media_pump_cpu_ms"] = json!(self.media_pump_ms);
         // GA_CORE_COMPOSITOR=raster: frames it drew, frames it left to the
         // legacy compositor and why the last one was.
-        value["compositor_raster"] = self.renderer.as_ref().and_then(|r| r.raster.as_ref()).map_or(Value::Null, |raster| json!({
-            "frames": raster.frames, "fallback_frames": raster.fallback_frames, "last_fallback": raster.last_fallback,
-            "last_passes": raster.last_passes,
-        }));
+        value["compositor_raster"] = self.renderer.as_ref().and_then(|r| r.raster.as_ref()).map_or(Value::Null, |raster| {
+            let plan = |plan: &RasterPlan| json!({
+                "frames": plan.frames, "fallback_frames": plan.fallback_frames, "last_fallback": plan.last_fallback,
+                "last_passes": plan.last_passes,
+            });
+            let mut value = plan(&raster.program);
+            // Deck monitors, the record target and Screens drawn straight
+            // from the compositor, by view; and the accumulation targets.
+            value["views"] = Value::Object(raster.views.iter().map(|(key, view)| (key.clone(), plan(view))).collect());
+            value["accumulation_bytes"] = json!(raster.accumulation_bytes());
+            value
+        });
         value["timing_coverage"] = json!({ "cpu": "graph preparation, program and auxiliary output encoding; media pump reported separately",
             "gpu_timestamps": "program encoder only; auxiliary work is included in completion fence", "completion": "program, deck monitors and slices" });
         value

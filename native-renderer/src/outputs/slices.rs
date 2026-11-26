@@ -103,7 +103,7 @@ impl RenderState {
             // uploaded this frame) with its own output stage.
             let view_key = format!("slice:{}", spec.id);
             if direct {
-                self.write_view_inputs(&view_key, false, command_phase, layers.len() as u32, time_seconds, frame_count,
+                self.write_view_inputs(&view_key, (spec.width, spec.height), false, command_phase, layers.len() as u32, time_seconds, frame_count,
                     layers, audio0, audio1, audio2, output_gate, post_effects, spec.stage);
             }
             let mut encoder = self.take_outputs_encoder();

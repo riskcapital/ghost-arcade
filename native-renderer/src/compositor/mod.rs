@@ -15,6 +15,8 @@ mod inputs;
 mod draw;
 pub(crate) use draw::*;
 mod raster;
+mod raster_stage;
+pub(crate) use raster_stage::*;
 pub(crate) use raster::*;
 
 pub fn blend_mode_code(mode: &str) -> f32 {

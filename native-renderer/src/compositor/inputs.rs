@@ -149,11 +149,13 @@ impl RenderState {
     /// full-detail Screen. Each view has its own buffers, so it no longer
     /// overwrites the program's and every view's unchanged layers stay
     /// uploaded from one frame to the next. A view without its own layers
-    /// draws the program's (a Screen shows the program's layers).
+    /// draws the program's (a Screen shows the program's layers). `size`:
+    /// the view's target.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn write_view_inputs(
         &mut self,
         key: &str,
+        size: (u32, u32),
         own_layers: bool,
         command_phase: f32,
         layers_seen: u32,
@@ -169,11 +171,19 @@ impl RenderState {
     ) {
         let uniforms = self.frame_uniforms(command_phase, layers_seen, time_seconds, frame_count,
             audio0, audio1, audio2, output_gate, post_effects, stage);
-        let (filled, upload_len) = if own_layers {
+        // The raster compositor plans from the layers as uploaded: a view
+        // drawing the program's stages them again (the scratch holds the
+        // last view's by now).
+        let (filled, upload_len) = if own_layers || self.raster.is_some() {
             self.stage_layer_upload(scene_layers, layers_seen)
         } else {
             (0, 0)
         };
+        if self.raster.is_some() {
+            let mips = if own_layers { layers_want_mips(&self.layer_upload_scratch[..filled]) } else { self.program_wants_mips };
+            self.plan_raster_view(key, filled, &uniforms, size, mips);
+        }
+        let (filled, upload_len) = if own_layers { (filled, upload_len) } else { (0, 0) };
         self.ensure_composite_view(key, own_layers, upload_len);
         let Some(view) = self.composite_views.get_mut(key) else { return; };
         churn_probe::write_buffer(&self.queue, &view.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
@@ -336,6 +346,10 @@ impl RenderState {
     pub(crate) fn prune_composite_views(&mut self) {
         let epoch = self.frame_epoch;
         self.composite_views.retain(|_, view| epoch.wrapping_sub(view.used_epoch) <= COMPOSITE_VIEW_KEEP_FRAMES);
+        let views = &self.composite_views;
+        if let Some(raster) = self.raster.as_mut() {
+            raster.prune(|key| views.contains_key(key));
+        }
     }
 
     pub(crate) fn create_paint_mask_texture(device: &wgpu::Device, size: u32, layers: u32) -> wgpu::Texture {

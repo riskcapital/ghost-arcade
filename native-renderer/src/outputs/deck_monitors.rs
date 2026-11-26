@@ -104,6 +104,7 @@ impl RenderState {
             let key = DECK_MONITOR_VIEWS[index];
             self.write_view_inputs(
                 key,
+                (width, height),
                 true,
                 command_phase,
                 layers.len() as u32,

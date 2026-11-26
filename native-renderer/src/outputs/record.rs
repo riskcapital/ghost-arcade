@@ -338,6 +338,7 @@ impl RenderState {
         }
         self.write_view_inputs(
             RECORD_TARGET_VIEW,
+            (width, height),
             true,
             command_phase,
             layers.len() as u32,

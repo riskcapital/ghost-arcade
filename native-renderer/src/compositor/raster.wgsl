@@ -1,10 +1,12 @@
 // Rasterised layers (GA_CORE_COMPOSITOR=raster, compositor/raster.rs),
-// appended to heartbeat.wgsl built with RASTER_LEAN (and SOURCE_MIPS for
-// the build that draws minified pictures).
+// appended to heartbeat.wgsl built with RASTER_LEAN (SOURCE_MIPS for the
+// build that draws minified pictures; without RASTER_LEAN for the build
+// that draws generated content).
 //
 // Each layer is one draw of fs_main's fullscreen triangle (vs_main), cut by
-// a scissor to the canvas pixels it can touch (its cull rectangle), so each
-// pixel sees the very canvas UV fs_main sees. The layer's index arrives as
+// a scissor to the output pixels it can touch (its cull rectangle, through
+// the output stage for a Screen drawn straight from the compositor:
+// raster_stage.rs), so each pixel sees the very canvas UV fs_main sees. The layer's index arrives as
 // the instance (VertexOut.pass_kind). Layers draw bottom to top into a
 // float accumulation target that holds what fs_main keeps in registers: the
 // stack composited over black in rgb, its coverage in alpha. The per-pixel
@@ -30,11 +32,26 @@
 @group(2) @binding(0)
 var raster_input: texture_2d<f32>;
 
+// The canvas UV fs_main composites at this output pixel and its dome mask:
+// the output stage's map (the identity for the program, a deck monitor or
+// the record target; a Screen's crop and warps for a Screen drawn straight
+// from the compositor).
+fn raster_canvas(uv: vec2<f32>) -> vec3<f32> {
+  let source = output_source_uv(uv);
+  var canvas_uv = source.xy;
+  var dome_mask = source.z;
+  if (u.dome0.x > 0.5) {
+    let aspect = max(0.01, u.resolution.x / max(1.0, u.resolution.y));
+    let domed = dome_source_uv(canvas_uv, aspect, aspect);
+    canvas_uv = domed.xy;
+    dome_mask = dome_mask * domed.z * domed.w;
+  }
+  return vec3<f32>(canvas_uv, dome_mask);
+}
+
 // fs_main's per-pixel steps, taken where control flow is uniform: one
 // output pixel in canvas UV (source mips) and the analytic edge width
-// (Edge Effects). The output stage is the identity here (raster.rs), so
-// the canvas UV is the fragment's own, as output_source_uv gives it to
-// fs_main.
+// (Edge Effects).
 struct RasterSteps {
   step_x: vec2<f32>,
   step_y: vec2<f32>,
@@ -77,9 +94,9 @@ fn raster_layer_uv(canvas_uv: vec2<f32>, layer_index: u32) -> vec3<f32> {
 
 // What layer `layer_index` blends at this pixel, as fs_main's loop finds it:
 // (rgb before the blend's clamp, blend alpha). Alpha below zero: nothing
-// (fs_main's `continue`). Generated content never gets here (raster.rs
-// draws those frames with fs_main), nor do Edge Effects (the _edges entry
-// points) or hierarchy masks (fs_raster_mask).
+// (fs_main's `continue`). Generated content draws with the build without
+// RASTER_LEAN; Edge Effects with the _edges entry points, hierarchy masks
+// with fs_raster_mask.
 fn raster_layer_source(canvas_uv: vec2<f32>, layer_index: u32, steps: RasterSteps) -> vec4<f32> {
   let aspect = max(0.01, u.resolution.x / max(1.0, u.resolution.y));
   let nothing = vec4<f32>(-1.0);
@@ -206,29 +223,33 @@ fn raster_readback_out(position: vec4<f32>, source: vec4<f32>, layer_index: u32,
 
 @fragment
 fn fs_raster(in: VertexOut) -> @location(0) vec4<f32> {
-  let steps = raster_steps(in.uv);
-  return raster_hardware_out(raster_layer_source(in.uv, in.pass_kind, steps), in.pass_kind);
+  let canvas_uv = raster_canvas(in.uv).xy;
+  let steps = raster_steps(canvas_uv);
+  return raster_hardware_out(raster_layer_source(canvas_uv, in.pass_kind, steps), in.pass_kind);
 }
 
 @fragment
 fn fs_raster_edges(in: VertexOut) -> @location(0) vec4<f32> {
-  let steps = raster_steps(in.uv);
-  return raster_hardware_out(raster_edge_layer_source(in.uv, in.pass_kind, steps), in.pass_kind);
+  let canvas_uv = raster_canvas(in.uv).xy;
+  let steps = raster_steps(canvas_uv);
+  return raster_hardware_out(raster_edge_layer_source(canvas_uv, in.pass_kind, steps), in.pass_kind);
 }
 
 @fragment
 fn fs_raster_dst(in: VertexOut) -> @location(0) vec4<f32> {
-  let steps = raster_steps(in.uv);
+  let canvas_uv = raster_canvas(in.uv).xy;
+  let steps = raster_steps(canvas_uv);
   let layer_index = in.pass_kind % RASTER_BELOW_CLEAR;
-  return raster_readback_out(in.position, raster_layer_source(in.uv, layer_index, steps), layer_index,
+  return raster_readback_out(in.position, raster_layer_source(canvas_uv, layer_index, steps), layer_index,
     in.pass_kind >= RASTER_BELOW_CLEAR);
 }
 
 @fragment
 fn fs_raster_dst_edges(in: VertexOut) -> @location(0) vec4<f32> {
-  let steps = raster_steps(in.uv);
+  let canvas_uv = raster_canvas(in.uv).xy;
+  let steps = raster_steps(canvas_uv);
   let layer_index = in.pass_kind % RASTER_BELOW_CLEAR;
-  return raster_readback_out(in.position, raster_edge_layer_source(in.uv, layer_index, steps), layer_index,
+  return raster_readback_out(in.position, raster_edge_layer_source(canvas_uv, layer_index, steps), layer_index,
     in.pass_kind >= RASTER_BELOW_CLEAR);
 }
 
@@ -246,7 +267,7 @@ fn fs_raster_mask(in: VertexOut) -> @location(0) vec4<f32> {
     return keep;
   }
   let border = vec2<f32>(1.6 / max(min(u.resolution.x, u.resolution.y), 64.0));
-  let layer_uv = clamp(in.uv, border, vec2<f32>(1.0) - border);
+  let layer_uv = clamp(raster_canvas(in.uv).xy, border, vec2<f32>(1.0) - border);
   let cull = layers[layer_index].cull;
   if (any(layer_uv < cull.xy) || any(layer_uv > cull.zw) || layers[layer_index].info.x < 0.5) {
     return keep;
@@ -280,6 +301,7 @@ fn fs_raster_copy(in: VertexOut) -> @location(0) vec4<f32> {
 fn fs_resolve(in: VertexOut) -> @location(0) vec4<f32> {
   let aspect = max(0.01, u.resolution.x / max(1.0, u.resolution.y));
   let source = output_source_uv(in.uv);
+  let canvas = raster_canvas(in.uv);
   let stack = textureLoad(raster_input, vec2<i32>(in.position.xy), 0);
-  return composite_finish(stack.rgb, stack.a, in.uv, source.xy, source.xy, source.z, aspect, u.time);
+  return composite_finish(stack.rgb, stack.a, in.uv, source.xy, canvas.xy, canvas.z, aspect, u.time);
 }

@@ -159,6 +159,11 @@ pub fn compute_writes(slot: &Option<(wgpu::QuerySet, u32)>) -> Option<wgpu::Comp
     })
 }
 
+/// This frame is being timed and has timed a pass.
+pub fn recording() -> bool {
+    enabled() && TIMER.with(|cell| cell.borrow().as_ref().is_some_and(|timer| timer.active && timer.next > 0))
+}
+
 /// In the frame's last encoder: copy this frame's timestamps out. Passes
 /// after this are not timed.
 pub fn resolve(encoder: &mut wgpu::CommandEncoder) {

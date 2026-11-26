@@ -236,6 +236,13 @@ impl RenderState {
         if let Some(cache) = self.disk_pipeline_cache.as_mut() {
             cache.maybe_save(Instant::now());
         }
+        // Pass timing resolves in the frame's last encoder, so the outputs'
+        // passes (deck monitors, Screens, the record target) are timed too.
+        if pass_timing::recording() {
+            let mut encoder = self.take_outputs_encoder();
+            pass_timing::resolve(&mut encoder);
+            self.outputs_encoder = Some(encoder);
+        }
         // Fence after program, confidence monitors and slices, not just
         // program: the outputs' submit is the frame's last, or else the
         // program's, when nothing was sent after it.
@@ -243,6 +250,7 @@ impl RenderState {
             .or_else(|| self.frame_submission.take())
             .unwrap_or_else(|| churn_probe::submit(&self.queue, std::iter::empty()));
         self.frame_submission = None;
+        pass_timing::after_submit();
         self.slice_shares_submitted();
         self.slice_ndi_submitted();
         self.gpu_frames_submitted = self.gpu_frames_submitted.saturating_add(1);
