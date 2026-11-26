@@ -4,6 +4,7 @@
     Layer, SVGFillMode, SVGColorMode, SVGContent,
     SVGRenderMode, SVGMaterialPreset, SVGLightPreset, SVGOutlineStyle, SVGConnectionStyle,
   } from '../types';
+  import { SVG_PAN_MIN, SVG_PAN_MAX, SVG_SCALE_MIN, SVG_SCALE_MAX } from '../svg/svgTransform';
 
   // Tray state
   export let isOpen = false;
@@ -485,8 +486,8 @@
               <label>Pan X</label>
               <input
                 type="range"
-                min="-1"
-                max="1"
+                min={SVG_PAN_MIN}
+                max={SVG_PAN_MAX}
                 step="0.01"
                 value={$selectedSVGContent.panX ?? 0}
                 oninput={(e) => updateParam('panX', parseFloat((e.target as HTMLInputElement).value))}
@@ -497,8 +498,8 @@
               <label>Pan Y</label>
               <input
                 type="range"
-                min="-1"
-                max="1"
+                min={SVG_PAN_MIN}
+                max={SVG_PAN_MAX}
                 step="0.01"
                 value={$selectedSVGContent.panY ?? 0}
                 oninput={(e) => updateParam('panY', parseFloat((e.target as HTMLInputElement).value))}
@@ -509,8 +510,8 @@
               <label>Scale</label>
               <input
                 type="range"
-                min="0.1"
-                max="3"
+                min={SVG_SCALE_MIN}
+                max={SVG_SCALE_MAX}
                 step="0.01"
                 value={$selectedSVGContent.contentScale ?? 1}
                 oninput={(e) => updateParam('contentScale', parseFloat((e.target as HTMLInputElement).value))}

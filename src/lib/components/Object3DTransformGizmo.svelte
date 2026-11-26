@@ -1,6 +1,8 @@
 <script lang="ts">
   import { onDestroy, onMount } from 'svelte';
   import { project, selectedLayer, recordDiscreteAction } from '../stores/layers';
+  import { beginGesture, endGesture, hasPendingHistorySnapshot } from '../stores/historyHooks';
+  import { clampSvgPan, clampSvgScale, gizmoShortcutFor, svgPanDelta } from '../svg/svgTransform';
   import { keyframeTimeline } from '../stores/keyframeTimeline';
   import { SPLAT_AUTOMATABLE_PARAM_MAP } from '../splat/splatParamSchema';
   import { MODEL3D_AUTOMATABLE_PARAM_MAP } from '../model3d/model3dParamSchema';
@@ -33,6 +35,9 @@
   let axis: GizmoAxis = 'free';
   let hoverAxis: GizmoAxis | null = null;
   let drag: DragState | null = null;
+  /** Set once a drag has changed something, so a click that never moved
+   *  leaves no undo step. */
+  let dragMoved = false;
 
   $: layer = $selectedLayer;
   $: isSvg = layer?.type === 'svg';
@@ -82,12 +87,12 @@
     if (!layer) return;
     if (layer.type === 'svg') {
       const svg: Partial<SVGContent> = {};
-      if (updates.positionX !== undefined) svg.panX = Math.max(-2, Math.min(2, updates.positionX));
-      if (updates.positionY !== undefined) svg.panY = Math.max(-2, Math.min(2, updates.positionY));
+      if (updates.positionX !== undefined) svg.panX = clampSvgPan(updates.positionX);
+      if (updates.positionY !== undefined) svg.panY = clampSvgPan(updates.positionY);
       if (updates.rotationX !== undefined) svg.rotateX = wrapDegrees(updates.rotationX);
       if (updates.rotationY !== undefined) svg.rotateY = wrapDegrees(updates.rotationY);
       if (updates.rotationZ !== undefined) svg.rotateZ = wrapDegrees(updates.rotationZ);
-      if (updates.scaleUniform !== undefined) svg.contentScale = Math.max(0.05, Math.min(8, updates.scaleUniform));
+      if (updates.scaleUniform !== undefined) svg.contentScale = clampSvgScale(updates.scaleUniform);
       project.updateSVGContent(layer.id, svg);
       return;
     }
@@ -149,6 +154,10 @@
       rotationZ: content.rotationZ,
       scaleUniform: content.scaleUniform,
     };
+    dragMoved = false;
+    // The whole drag is one undo step, however long it rests on the way:
+    // without this the SVG's debounced edit committed mid-drag.
+    beginGesture();
     window.addEventListener('pointermove', handleDrag, { passive: false });
     window.addEventListener('pointerup', endDrag, { once: true });
     window.addEventListener('pointercancel', endDrag, { once: true });
@@ -159,6 +168,7 @@
     event.preventDefault();
     const dx = event.clientX - drag.startX;
     const dy = event.clientY - drag.startY;
+    if (dx !== 0 || dy !== 0) dragMoved = true;
 
     if (isSvg) {
       dragSvg(event, dx, dy);
@@ -212,11 +222,10 @@
   function dragSvg(event: PointerEvent, dx: number, dy: number) {
     if (!drag) return;
     if (mode === 'move') {
-      const w = Math.max(1, containerWidth);
-      const h = Math.max(1, containerHeight);
+      const pan = svgPanDelta(dx, dy, containerWidth, containerHeight, zoom);
       updateTransform({
-        positionX: drag.axis === 'y' ? drag.positionX : drag.positionX + (dx * 2) / w,
-        positionY: drag.axis === 'x' ? drag.positionY : drag.positionY + (dy * 2) / h,
+        positionX: drag.axis === 'y' ? drag.positionX : drag.positionX + pan.x,
+        positionY: drag.axis === 'x' ? drag.positionY : drag.positionY + pan.y,
       });
     } else if (mode === 'rotate') {
       if (drag.axis === 'z') {
@@ -241,10 +250,15 @@
     window.removeEventListener('pointermove', handleDrag);
     window.removeEventListener('pointerup', endDrag);
     window.removeEventListener('pointercancel', endDrag);
-    // One undo step per drag, matching WarpHandles.svelte's mouseup pattern —
-    // handleDrag() never records mid-drag, so this is the only point a real
-    // transform change becomes undoable.
-    if (hadDrag) recordDiscreteAction();
+    if (!hadDrag) return;
+    // One undo step per drag. An SVG edit is already waiting as a debounced
+    // step: ending the gesture commits it. Splat and 3D model edits record
+    // nothing on their own, so they get their step here.
+    const cancelled = event.type === 'pointercancel';
+    const waiting = hasPendingHistorySnapshot();
+    endGesture(!cancelled);
+    if (!cancelled && dragMoved && !waiting) recordDiscreteAction();
+    dragMoved = false;
   }
 
   function frameObject(event: MouseEvent) {
@@ -291,13 +305,12 @@
     if (!layer || !content) return;
     const target = event.target as HTMLElement | null;
     if (target?.matches('input, textarea, select, [contenteditable="true"]')) return;
-    const key = event.key.toLowerCase();
-    if (key === 'w') selectMode('move');
-    else if (key === 'e') selectMode('rotate');
-    else if (key === 's') selectMode('scale');
-    else if (key === 'x' || key === 'y' || key === 'z') axis = key;
-    else if (key === 'f') frameObject(event as unknown as MouseEvent);
-    else return;
+    // Cmd/Ctrl/Alt combinations (Undo, Save, Cut, Close…) are the app's.
+    const shortcut = gizmoShortcutFor(event);
+    if (!shortcut) return;
+    if (shortcut.kind === 'mode') selectMode(shortcut.mode);
+    else if (shortcut.kind === 'axis') axis = shortcut.axis;
+    else frameObject(event as unknown as MouseEvent);
     event.preventDefault();
   }
 
@@ -310,6 +323,12 @@
     window.removeEventListener('pointermove', handleDrag);
     window.removeEventListener('pointerup', endDrag);
     window.removeEventListener('pointercancel', endDrag);
+    // Unmounted mid-drag (layer deselected): close the gesture so later
+    // edits are not held back waiting for it.
+    if (drag) {
+      drag = null;
+      endGesture(true);
+    }
   });
 </script>
 
