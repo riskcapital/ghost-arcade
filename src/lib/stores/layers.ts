@@ -21,6 +21,7 @@ function identifiedEntries(raw: unknown): any[] {
     ? raw.filter(entry => entry && typeof entry === 'object' && typeof (entry as any).id === 'string')
     : [];
 }
+import { normalizeStoredSVGContent } from '../svg/svgContentDefaults';
 import { createLayer, createProject, createDefaultCorners, createLinesLayer, createSVGLayer, createColorLayer, createLightPaintingLayer, createAdvLightPaintingLayer, createTextLayer, createSplatLayer, createDefaultSVGContent, createDefaultCropRegion, createDefaultLayerShape, createDefaultVJModeState, createDefaultMappingCompositionState, createDefaultTimeline, generateUUID, createDefaultModel3DContent, createDefaultEdgeEffect, convertShapeToCustom, createGroupLayer, createDefaultPixelFXContent, createDefaultGPULayerContent } from '../types';
 import type { GroupConfig, Surface } from '../types';
 import { instantiateEdgeEffects } from './edgeEffectPresets';
@@ -4825,6 +4826,7 @@ void main() {
           };
         }),
       }));
+      scheduleHistorySnapshot(editKey('svg', layerId, 'fillMode'));
     },
 
     setSVGColorMode(layerId: string, colorMode: SVGColorMode) {
@@ -4838,6 +4840,7 @@ void main() {
           };
         }),
       }));
+      scheduleHistorySnapshot(editKey('svg', layerId, 'colorMode'));
     },
 
     toggleSVGEffect(layerId: string, effectKey: keyof SVGContent) {
@@ -6312,7 +6315,9 @@ void main() {
         ...(typeof layer.autoMap === 'string' && /^[\w-]{1,40}$/.test(layer.autoMap) ? { autoMap: layer.autoMap } : {}),
         effects: layer.effects || [],
         linesContent,
-        svgContent: layer.svgContent,
+        // Older files leave out fields added since: fill them with what the
+        // renderer drew for them, so the project looks as it did.
+        svgContent: migratedType === 'svg' ? normalizeStoredSVGContent(layer.svgContent) : layer.svgContent,
         colorContent: layer.colorContent,
         lightPaintingContent: layer.lightPaintingContent || null,
         advLightPaintingContent: layer.advLightPaintingContent || null,

@@ -47,6 +47,7 @@
   import { LinesRenderer } from '../lines/renderer';
   import { DrawingRenderer } from '../drawing/renderer';
   import type { SVGLayerRenderer } from '../svg/renderer';
+  import { planSvgScene } from '../svg/svgSceneRebuild';
   import { LightPaintingRenderer } from '../lightpainting/renderer';
   import { LightPaintingWebGLRenderer } from '../lightpainting/webglRenderer';
   import { getGPUBrushCanvas } from '../lightpainting/gpuBrushBridge';
@@ -6086,70 +6087,23 @@
         const mainRenderer = engine.getRenderer();
         svgRenderer = new _SVGLayerRendererCtor(width, height, mainRenderer);
         svgRenderers.set(layer.id, svgRenderer);
-
-        // Parse SVG source if provided
-        if (layer.svgContent.svgSource) {
-          svgRenderer.parseSVG(layer.svgContent.svgSource);
-          svgRenderer.buildScene(layer.svgContent);
-        }
       } else {
         // Ensure SVG renderer dimensions are in sync with container
         // This handles cases where the renderer was created with different dimensions
         svgRenderer.resize(width, height);
       }
 
-      // Check if SVG source changed or if dimensions changed (needs rebuild)
-      const currentSvgSource = layer.svgContent.svgSource;
-      const cachedSvgSource = (svgRenderer as any)._lastSvgSource || '';
-      const needsRebuild = svgRenderer.needsRebuild();
-      if (currentSvgSource !== cachedSvgSource || needsRebuild) {
-        (svgRenderer as any)._lastSvgSource = currentSvgSource;
-        if (currentSvgSource) {
-          svgRenderer.parseSVG(currentSvgSource);
-          svgRenderer.buildScene(layer.svgContent);
-        }
+      // One decision a frame: read the artwork again (new source or size),
+      // rebuild the scene (a structural setting changed), or neither.
+      const plan = planSvgScene((svgRenderer as any)._builtScene ?? null, layer.svgContent, svgRenderer.needsRebuild());
+      (svgRenderer as any)._builtScene = plan.next;
+      if (plan.empty) {
+        // Cleared: drop the last picture, or it stays on screen frozen.
+        delete (layer as any)._svgTexture;
+        continue;
       }
-
-      // Check if effect toggles changed - rebuild scene if needed
-      const effectsKey = [
-        layer.svgContent.fillMode,
-        layer.svgContent.colorMode,
-        layer.svgContent.liquidEnabled,
-        layer.svgContent.particlesEnabled,
-        layer.svgContent.energyEnabled,
-        layer.svgContent.connectionsEnabled,
-        layer.svgContent.glowEnabled,
-        layer.svgContent.ripplesEnabled,
-        layer.svgContent.lightningEnabled,
-        layer.svgContent.edgeFlowEnabled,
-        layer.svgContent.innerGlowEnabled,
-        layer.svgContent.nebulaEnabled,
-        layer.svgContent.heartbeatEnabled,
-        layer.svgContent.plasmaEnabled,
-        layer.svgContent.particleLinksEnabled,
-        layer.svgContent.particleLinkMaxLinks, // Rebuild if max links changes (creates new line pool)
-        layer.svgContent.echoEnabled,
-        layer.svgContent.arcBridgesEnabled,
-        // 3D + new effect families — these change geometry/material/scene
-        // structure so they require a scene rebuild (uniform-only params
-        // like rotation speed / metalness update live and stay out of here).
-        layer.svgContent.renderMode,
-        layer.svgContent.materialPreset,
-        layer.svgContent.extrudeDepth,
-        layer.svgContent.bevelEnabled,
-        layer.svgContent.bevelSize,
-        layer.svgContent.lightPreset,
-        layer.svgContent.outlineStyle,
-        layer.svgContent.connectionStyle,
-        layer.svgContent.connectionRange,
-        layer.svgContent.particleFillEnabled,
-        layer.svgContent.particleFillDensity,
-      ].join(',');
-      const cachedEffectsKey = (svgRenderer as any)._lastEffectsKey || '';
-      if (effectsKey !== cachedEffectsKey && currentSvgSource) {
-        (svgRenderer as any)._lastEffectsKey = effectsKey;
-        svgRenderer.buildScene(layer.svgContent);
-      }
+      if (plan.parse) svgRenderer.parseSVG(layer.svgContent.svgSource);
+      if (plan.build) svgRenderer.buildScene(layer.svgContent);
 
       // Animate and render
       if (layer.svgContent.svgSource) {
