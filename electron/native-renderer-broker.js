@@ -4,6 +4,7 @@ import { createRequire } from 'module';
 import os from 'os';
 import path from 'path';
 import {
+  coreIpcBytesWanted,
   coreIpcFramesWanted,
   createCoreOutputReader,
   decodeCoreLine,
@@ -621,6 +622,7 @@ class NativeRendererBroker {
     // Binary payload frames (core-ipc-frames.js): asked of each core this
     // broker starts unless GA_CORE_IPC=json, used once that core says hello.
     this.coreIpcFramesWanted = coreIpcFramesWanted(env);
+    this.coreIpcBytesWanted = coreIpcBytesWanted(env);
     this.coreIpcFrames = false;
     this.tempFrameDir = null;
     this.tempFrameSerial = 1;
@@ -2517,6 +2519,9 @@ class NativeRendererBroker {
     const childEnv = { ...this.env, RUST_BACKTRACE: this.env.RUST_BACKTRACE || '1' };
     if (this.coreIpcFramesWanted) childEnv.GA_CORE_IPC_FRAMES = '1';
     else delete childEnv.GA_CORE_IPC_FRAMES;
+    // Snapshot pixels a request asks for as `pixel_bytes` come back raw.
+    if (this.coreIpcBytesWanted) childEnv.GA_CORE_IPC_BYTES = '1';
+    else delete childEnv.GA_CORE_IPC_BYTES;
     if (!childEnv.GA_FFMPEG_PATH) {
       childEnv.GA_FFMPEG_PATH = resolveFfmpegPath(this.env, this.platform);
     }

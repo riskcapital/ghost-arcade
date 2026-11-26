@@ -11,6 +11,12 @@
 // frames once it has said so (a `{"id":0,"ipc_frames":1}` hello, sent when
 // the broker sets GA_CORE_IPC_FRAMES=1), and frames its own large replies
 // the same way. GA_CORE_IPC=json keeps the plain JSON lines throughout.
+//
+// Snapshot pixels can also come back as raw bytes: the broker sets
+// GA_CORE_IPC_BYTES=1 too, a request asks with `pixel_bytes: true`, and the
+// reply names the payload `{"$bytes": n}` under `rgba_raw` / `jpeg_raw`. The
+// reader turns it into a Uint8Array of exactly those bytes, which IPC hands
+// to the renderer without any base64 step. GA_CORE_IPC_BYTES=0 turns it off.
 // See native-renderer/src/ipc_frames.rs for the core's half.
 
 import os from 'os';
@@ -22,6 +28,12 @@ const NEWLINE = 0x0a;
 export function coreIpcFramesWanted(env = process.env) {
   if (os.endianness() !== 'LE') return false;
   return String(env?.GA_CORE_IPC ?? '').trim().toLowerCase() !== 'json';
+}
+
+/** False when raw snapshot bytes are off (GA_CORE_IPC_BYTES=0, or no frames). */
+export function coreIpcBytesWanted(env = process.env) {
+  if (!coreIpcFramesWanted(env)) return false;
+  return String(env?.GA_CORE_IPC_BYTES ?? '').trim() !== '0';
 }
 
 /** The hello a framing core sends before anything else. */
@@ -147,11 +159,29 @@ function spliceBlobs(value, blobs, depth = 0) {
     // The core lifts only base64 text, so this is the original string.
     return blob.toString('latin1');
   }
+  if (!Array.isArray(value) && keys.length === 1 && keys[0] === '$bytes') {
+    const blob = blobs[value.$bytes];
+    if (!blob) throw new Error('core reply names a payload it did not carry');
+    return ownedBytes(blob);
+  }
   for (const key of keys) {
     const item = value[key];
     if (item && typeof item === 'object') value[key] = spliceBlobs(item, blobs, depth + 1);
   }
   return value;
+}
+
+/**
+ * Raw payload bytes as a Uint8Array over a buffer of their own. A payload is
+ * often a view into a larger pipe chunk, and IPC would copy the whole of it.
+ */
+function ownedBytes(blob) {
+  if (blob.byteOffset === 0 && blob.buffer.byteLength === blob.length) {
+    return new Uint8Array(blob.buffer, 0, blob.length);
+  }
+  const out = new Uint8Array(blob.length);
+  out.set(blob);
+  return out;
 }
 
 /**

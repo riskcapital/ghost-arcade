@@ -14979,6 +14979,7 @@ impl App {
         let jpeg_quality = string_at(&req.params, &["encoding"])
             .is_some_and(|value| value.eq_ignore_ascii_case("jpeg"))
             .then(|| number_at(&req.params, &["quality"]).unwrap_or(80.0).clamp(30.0, 95.0) as u8);
+        let raw_bytes = ipc_frames::bytes_wanted(&req.params);
         let renderer = self.renderer.as_mut().ok_or("native renderer unavailable")?;
         let pending = renderer.prepare_frame_snapshot_scaled(max_dim, true)?;
         let frame_index = renderer.creative_frame_index as u64;
@@ -14989,9 +14990,9 @@ impl App {
             let result = pending.finish().and_then(|frame| {
                 let mut value = match jpeg_quality.filter(|_| include_pixels) {
                     Some(quality) => SourcePreviewRequest {
-                        width: None, height: None, max_dim, jpeg_quality: Some(quality), include_pixels: true,
+                        width: None, height: None, max_dim, jpeg_quality: Some(quality), include_pixels: true, raw_bytes,
                     }.encode(&frame)?,
-                    None => frame.to_json(include_pixels),
+                    None => frame.to_json_as(include_pixels, raw_bytes),
                 };
                 value["frame_index"] = json!(frame_index);
                 value["render_source"] = json!("core-output-mirror");
@@ -15025,6 +15026,7 @@ impl App {
         }
         let permit = LiveCapturePermit(busy);
         let include_pixels = bool_at(&req.params, &["include_pixels"]).unwrap_or(false);
+        let raw_bytes = ipc_frames::bytes_wanted(&req.params);
         let renderer = self.renderer.as_ref().ok_or("native renderer unavailable")?;
         // No deck has drawn since the core started: answer with no pixels
         // rather than an error, so a panel polling an empty deck stays quiet.
@@ -15040,7 +15042,7 @@ impl App {
         thread::spawn(move || {
             let _permit = permit;
             let result = pending.finish().map(|frame| {
-                let mut value = frame.to_json(include_pixels);
+                let mut value = frame.to_json_as(include_pixels, raw_bytes);
                 value["render_source"] = json!("core-deck-monitor");
                 value
             });
@@ -15069,7 +15071,7 @@ impl App {
             let Some(renderer) = self.renderer.as_mut() else {
                 return Err("native renderer has not created a wgpu device".to_string());
             };
-            let snapshot = renderer.frame_snapshot_scaled(include_pixels, max_dim)?;
+            let snapshot = renderer.frame_snapshot_scaled(include_pixels, max_dim, ipc_frames::bytes_wanted(params))?;
             renderer.poll_gpu_timing();
             snapshot
         };
@@ -28653,12 +28655,12 @@ impl RenderState {
     }
 
     fn frame_snapshot(&mut self, include_pixels: bool) -> Result<Value, String> {
-        self.frame_snapshot_scaled(include_pixels, 0)
+        self.frame_snapshot_scaled(include_pixels, 0, false)
     }
 
-    fn frame_snapshot_scaled(&mut self, include_pixels: bool, max_dim: u32) -> Result<Value, String> {
+    fn frame_snapshot_scaled(&mut self, include_pixels: bool, max_dim: u32, raw_bytes: bool) -> Result<Value, String> {
         let readback = self.read_frame_snapshot_scaled(max_dim)?;
-        Ok(readback.to_json(include_pixels))
+        Ok(readback.to_json_as(include_pixels, raw_bytes))
     }
 
     fn output_export_snapshot(&mut self, include_pixels: bool) -> Result<Value, String> {
@@ -36007,6 +36009,12 @@ struct FrameSnapshotReadback {
 
 impl FrameSnapshotReadback {
     fn to_json(&self, include_pixels: bool) -> Value {
+        self.to_json_as(include_pixels, false)
+    }
+
+    /// With `raw_bytes` the pixels go out as raw bytes under `rgba_raw`
+    /// (see ipc_frames::bytes_value) instead of base64 under `rgba_b64`.
+    fn to_json_as(&self, include_pixels: bool, raw_bytes: bool) -> Value {
         let mut value = json!({
             "timestamp_ms": self.timestamp_ms,
             "width": self.width,
@@ -36025,7 +36033,11 @@ impl FrameSnapshotReadback {
             "dark_frame": self.metrics.dark_frame,
             "includes_pixels": include_pixels,
         });
-        if include_pixels {
+        if include_pixels && raw_bytes {
+            if let Some(object) = value.as_object_mut() {
+                object.insert("rgba_raw".to_string(), ipc_frames::bytes_value(self.pixels.clone()));
+            }
+        } else if include_pixels {
             if let Some(object) = value.as_object_mut() {
                 object.insert(
                     "rgba_b64".to_string(),
@@ -36107,6 +36119,9 @@ struct SourcePreviewRequest {
     max_dim: u32,
     jpeg_quality: Option<u8>,
     include_pixels: bool,
+    /// Pixels as raw bytes rather than base64 (`pixel_bytes`, when the
+    /// broker reads them).
+    raw_bytes: bool,
 }
 
 impl SourcePreviewRequest {
@@ -36121,6 +36136,7 @@ impl SourcePreviewRequest {
             max_dim: number_at(params, &["max_dim"]).unwrap_or(640.0).clamp(64.0, 1024.0) as u32,
             jpeg_quality: jpeg.then(|| number_at(params, &["quality"]).unwrap_or(82.0).clamp(30.0, 95.0) as u8),
             include_pixels: bool_at(params, &["include_pixels"]).unwrap_or(true),
+            raw_bytes: ipc_frames::bytes_wanted(params),
         }
     }
 
@@ -36136,7 +36152,7 @@ impl SourcePreviewRequest {
 
     fn encode(&self, frame: &FrameSnapshotReadback) -> Result<Value, String> {
         let Some(quality) = self.jpeg_quality.filter(|_| self.include_pixels) else {
-            return Ok(frame.to_json(self.include_pixels));
+            return Ok(frame.to_json_as(self.include_pixels, self.raw_bytes));
         };
         let bgra = matches!(frame.format, wgpu::TextureFormat::Bgra8Unorm | wgpu::TextureFormat::Bgra8UnormSrgb);
         let mut rgb = Vec::with_capacity(frame.pixels.len() / 4 * 3);
@@ -36150,7 +36166,11 @@ impl SourcePreviewRequest {
         let mut value = frame.to_json(false);
         value["encoding"] = json!("jpeg");
         value["jpeg_bytes"] = json!(jpeg.len());
-        value["jpeg_b64"] = json!(base64::engine::general_purpose::STANDARD.encode(&jpeg));
+        if self.raw_bytes {
+            value["jpeg_raw"] = ipc_frames::bytes_value(jpeg);
+        } else {
+            value["jpeg_b64"] = json!(base64::engine::general_purpose::STANDARD.encode(&jpeg));
+        }
         Ok(value)
     }
 }

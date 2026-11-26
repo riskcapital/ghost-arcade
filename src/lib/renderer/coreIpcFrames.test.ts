@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  coreIpcBytesWanted,
   coreIpcFramesWanted,
   createCoreOutputReader,
   decodeCoreLine,
@@ -140,6 +141,31 @@ describe('core IPC frames: replies', () => {
     ]);
     for (let i = 0; i < frame.length; i += 4096) reader.push(frame.subarray(i, i + 4096));
     expect(seen).toEqual([{ id: 5, ok: true, result: { width: 2, rgba_b64: pixels } }, { id: 6, ok: true }]);
+  });
+
+  it('hands raw payloads over as Uint8Arrays of exactly their bytes', () => {
+    const { seen, reader } = collect();
+    const pixels = Buffer.from(Array.from({ length: 5000 }, (_, i) => (i * 31) & 255));
+    const jpegText = Buffer.alloc(70000, 9).toString('base64');
+    const frame = Buffer.concat([
+      Buffer.from(`#B ${pixels.length} ${jpegText.length}\n`), pixels, Buffer.from(jpegText),
+      Buffer.from('{"id":7,"ok":true,"result":{"rgba_raw":{"$bytes":0},"jpeg_b64":{"$blob":1}}}\n'),
+    ]);
+    for (let i = 0; i < frame.length; i += 4096) reader.push(frame.subarray(i, i + 4096));
+    const result = seen[0].result;
+    expect(result.rgba_raw).toBeInstanceOf(Uint8Array);
+    // Its own buffer: IPC copies the whole backing store of a view.
+    expect(result.rgba_raw.byteOffset).toBe(0);
+    expect(result.rgba_raw.buffer.byteLength).toBe(pixels.length);
+    expect(Buffer.from(result.rgba_raw).equals(pixels)).toBe(true);
+    expect(result.jpeg_b64).toBe(jpegText);
+    expect(() => decodeCoreLine('{"id":8,"result":{"rgba_raw":{"$bytes":3}}}', [pixels])).toThrow();
+  });
+
+  it('asks for raw bytes unless told not to', () => {
+    expect(coreIpcBytesWanted({})).toBe(true);
+    expect(coreIpcBytesWanted({ GA_CORE_IPC_BYTES: '0' })).toBe(false);
+    expect(coreIpcBytesWanted({ GA_CORE_IPC: 'json' })).toBe(false);
   });
 
   it('recognises the core\'s hello', () => {
