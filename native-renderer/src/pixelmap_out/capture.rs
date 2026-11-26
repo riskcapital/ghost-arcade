@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 
 use wgpu::util::{TextureBlitter, TextureBlitterBuilder};
 
-use super::{CAPTURE_INTERVAL_US, CAPTURE_MAX_DIM, MappedFrame};
+use super::MappedFrame;
 use crate::RenderState;
 use crate::gpu::align_u32;
 
@@ -60,7 +60,7 @@ impl RenderState {
             return;
         }
         let now = Instant::now();
-        let interval = Duration::from_micros(CAPTURE_INTERVAL_US.load(Ordering::Relaxed));
+        let interval = super::capture_interval();
         if self.pixelmap_capture.last_capture.is_some_and(|last| now.duration_since(last) < interval) {
             return;
         }
@@ -69,7 +69,7 @@ impl RenderState {
             | wgpu::TextureFormat::Rgba8Unorm | wgpu::TextureFormat::Rgba8UnormSrgb) {
             return;
         }
-        let (w, h, scaled) = capture_size(self.config.width, self.config.height, CAPTURE_MAX_DIM.load(Ordering::Relaxed));
+        let (w, h, scaled) = capture_size(self.config.width, self.config.height, super::capture_max_dim());
         let capture = &mut self.pixelmap_capture;
         if capture.slot_size != (w, h) {
             capture.slots.clear();

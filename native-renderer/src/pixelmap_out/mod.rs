@@ -13,6 +13,10 @@
 //! per-fixture buffers, the socket and its rate cap, sequence numbers and
 //! the black-and-terminate on stop (`output.rs`, a port of
 //! `electron/pixelmap-output.cjs`). The editor path stays as the fallback.
+//!
+//! The same thread drives WLED controllers (`wled.rs`) from the same
+//! picture, on their own clock: one capture serves both, at the larger of
+//! the two sizes asked for.
 
 mod capture;
 pub(crate) mod colour;
@@ -21,6 +25,9 @@ pub(crate) mod packets;
 pub(crate) mod plan;
 #[cfg(test)]
 mod tests;
+pub(crate) mod wled;
+#[cfg(test)]
+mod wled_tests;
 
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
@@ -35,15 +42,33 @@ use colour::{Frame, TestPattern};
 use output::{Handover, OutFrame, Output, UniverseFrame};
 use plan::Plan;
 
-/// Set while a plan needs pictures: the only thing the frame loop reads
-/// when pixel-map output is off.
-static CAPTURE_WANTED: AtomicBool = AtomicBool::new(false);
-static CAPTURE_MAX_DIM: AtomicU32 = AtomicU32::new(384);
-/// Minimum time between captures, in microseconds.
-static CAPTURE_INTERVAL_US: AtomicU64 = AtomicU64::new(12_500);
+/// The picture size each output wants (0: none), and the minimum time
+/// between captures it needs, in microseconds. The only thing the frame loop
+/// reads when no output is on.
+static PIXELMAP_DIM: AtomicU32 = AtomicU32::new(0);
+static PIXELMAP_INTERVAL_US: AtomicU64 = AtomicU64::new(12_500);
+static WLED_DIM: AtomicU32 = AtomicU32::new(0);
+static WLED_INTERVAL_US: AtomicU64 = AtomicU64::new(25_000);
 
 pub(crate) fn capture_wanted() -> bool {
-    CAPTURE_WANTED.load(Ordering::Relaxed)
+    PIXELMAP_DIM.load(Ordering::Relaxed) > 0 || WLED_DIM.load(Ordering::Relaxed) > 0
+}
+
+/// Longest edge of the capture: the larger of what the outputs ask for.
+pub(crate) fn capture_max_dim() -> u32 {
+    PIXELMAP_DIM.load(Ordering::Relaxed).max(WLED_DIM.load(Ordering::Relaxed))
+}
+
+/// Minimum time between captures: the shorter of the wanted ones.
+pub(crate) fn capture_interval() -> Duration {
+    let mut us = u64::MAX;
+    if PIXELMAP_DIM.load(Ordering::Relaxed) > 0 {
+        us = us.min(PIXELMAP_INTERVAL_US.load(Ordering::Relaxed));
+    }
+    if WLED_DIM.load(Ordering::Relaxed) > 0 {
+        us = us.min(WLED_INTERVAL_US.load(Ordering::Relaxed));
+    }
+    Duration::from_micros(if us == u64::MAX { 0 } else { us })
 }
 
 /// A readback buffer the GPU has filled and mapped, on its way to the
@@ -63,6 +88,9 @@ enum Msg {
     Stop { handover: bool, reply: Sender<Value> },
     State { fixture: Option<String>, reply: Sender<Value> },
     Frame(MappedFrame),
+    WledConfigure(Box<wled::WledPlan>, Vec<(String, wled::LinkSeed)>, Sender<Value>),
+    WledStop { reply: Sender<Value> },
+    WledState { pixels: bool, reply: Sender<Value> },
 }
 
 fn channel() -> &'static Mutex<Option<Sender<Msg>>> {
@@ -144,6 +172,30 @@ pub(crate) fn rpc(method: &str, params: &Value) -> Result<Value, String> {
             tx.send(Msg::State { fixture, reply }).map_err(|_| "pixel-map output thread gone".to_string())?;
             rx.recv_timeout(timeout).map_err(|_| "pixel-map output thread did not answer".to_string())
         }
+        "wled_configure" => {
+            let plan = wled::parse_wled_plan(params.get("plan").unwrap_or(params))?;
+            let seeds = params.get("links").and_then(Value::as_array).map(|links| links.iter().filter_map(wled::LinkSeed::from_json).collect()).unwrap_or_default();
+            let (reply, rx) = mpsc::channel();
+            sender()?.send(Msg::WledConfigure(Box::new(plan), seeds, reply)).map_err(|_| "pixel-map output thread gone".to_string())?;
+            rx.recv_timeout(timeout).map_err(|_| "pixel-map output thread did not answer".to_string())
+        }
+        "wled_stop" => {
+            let Some(tx) = channel().lock().ok().and_then(|guard| guard.clone()) else {
+                return Ok(json!({ "ok": true, "links": [] }));
+            };
+            let (reply, rx) = mpsc::channel();
+            tx.send(Msg::WledStop { reply }).map_err(|_| "pixel-map output thread gone".to_string())?;
+            rx.recv_timeout(timeout).map_err(|_| "pixel-map output thread did not answer".to_string())
+        }
+        "wled_state" => {
+            let Some(tx) = channel().lock().ok().and_then(|guard| guard.clone()) else {
+                return Ok(json!({ "configured": false }));
+            };
+            let pixels = params.get("pixels").and_then(Value::as_bool) == Some(true);
+            let (reply, rx) = mpsc::channel();
+            tx.send(Msg::WledState { pixels, reply }).map_err(|_| "pixel-map output thread gone".to_string())?;
+            rx.recv_timeout(timeout).map_err(|_| "pixel-map output thread did not answer".to_string())
+        }
         _ => Err(format!("unknown pixel-map method {method}")),
     }
 }
@@ -176,6 +228,7 @@ struct Worker {
     samples: u64,
     sample_us_total: u64,
     sample_us_max: u64,
+    wled: wled::WledOutput,
 }
 
 impl Worker {
@@ -199,6 +252,7 @@ impl Worker {
             samples: 0,
             sample_us_total: 0,
             sample_us_max: 0,
+            wled: wled::WledOutput::new(),
         }
     }
 
@@ -208,11 +262,17 @@ impl Worker {
         let priority = crate::audio_priority::raise_current_thread(Duration::from_millis(25));
         self.priority = priority.priority.label();
         loop {
-            let message = match self.next_tick {
+            let deadline = [self.next_tick, self.wled.next_tick].into_iter().flatten().min();
+            let message = match deadline {
                 Some(deadline) => {
                     let now = Instant::now();
                     if now >= deadline {
-                        self.tick(deadline, now);
+                        if let Some(due) = self.next_tick.filter(|d| now >= *d) {
+                            self.tick(due, now);
+                        }
+                        if let Some(due) = self.wled.next_tick.filter(|d| now >= *d) {
+                            self.wled_tick(due, now);
+                        }
                         continue;
                     }
                     match rx.recv_timeout(deadline - now) {
@@ -246,15 +306,57 @@ impl Worker {
                 self.plan = None;
                 self.buffers.clear();
                 self.next_tick = None;
-                self.has_picture = false;
-                CAPTURE_WANTED.store(false, Ordering::Relaxed);
+                PIXELMAP_DIM.store(0, Ordering::Relaxed);
+                self.forget_picture_if_unwanted();
                 let _ = reply.send(result);
             }
             Msg::State { fixture, reply } => {
                 let _ = reply.send(self.state(fixture.as_deref()));
             }
             Msg::Frame(frame) => self.receive_frame(frame),
+            Msg::WledConfigure(plan, seeds, reply) => {
+                let plan = *plan;
+                let period = Duration::from_secs_f64(1.0 / plan.fps as f64);
+                WLED_INTERVAL_US.store((period.as_micros() / 2) as u64, Ordering::Relaxed);
+                WLED_DIM.store(if plan.needs_picture() { plan.max_dim } else { 0 }, Ordering::Relaxed);
+                self.forget_picture_if_unwanted();
+                let result = self.wled.configure(plan, &seeds, Instant::now(), self.has_picture);
+                let _ = reply.send(result);
+            }
+            Msg::WledStop { reply } => {
+                let result = self.wled.stop();
+                WLED_DIM.store(0, Ordering::Relaxed);
+                self.forget_picture_if_unwanted();
+                let _ = reply.send(result);
+            }
+            Msg::WledState { pixels, reply } => {
+                let mut state = self.wled.state(pixels);
+                state["pictures"] = json!(self.pictures);
+                state["picture_width"] = json!(self.picture_size.0);
+                state["picture_height"] = json!(self.picture_size.1);
+                state["thread_priority"] = json!(self.priority);
+                let _ = reply.send(state);
+            }
         }
+    }
+
+    /// Once no output captures, the last picture goes stale: the next output
+    /// to start waits for a new one rather than send an old frame.
+    fn forget_picture_if_unwanted(&mut self) {
+        if !capture_wanted() {
+            self.has_picture = false;
+        }
+    }
+
+    fn wled_tick(&mut self, deadline: Instant, now: Instant) {
+        let frame = Frame {
+            pixels: &self.picture,
+            width: self.picture_size.0,
+            height: self.picture_size.1,
+            rgb: if self.picture_bgra { [2, 1, 0] } else { [0, 1, 2] },
+        };
+        let picture = self.has_picture.then_some((&frame, self.pictures));
+        self.wled.tick(deadline, now, picture);
     }
 
     fn configure(&mut self, plan: Plan, handover: Option<Handover>) -> Value {
@@ -277,9 +379,8 @@ impl Worker {
             self.buffers.push(buffers);
         }
         let period = Duration::from_secs_f64(1.0 / plan.fps as f64);
-        CAPTURE_MAX_DIM.store(plan.max_dim, Ordering::Relaxed);
-        CAPTURE_INTERVAL_US.store((period.as_micros() / 2) as u64, Ordering::Relaxed);
-        CAPTURE_WANTED.store(plan.needs_picture(), Ordering::Relaxed);
+        PIXELMAP_INTERVAL_US.store((period.as_micros() / 2) as u64, Ordering::Relaxed);
+        PIXELMAP_DIM.store(if plan.needs_picture() { plan.max_dim } else { 0 }, Ordering::Relaxed);
         let fps_changed = self.plan.as_ref().is_none_or(|p| p.fps != plan.fps);
         self.plan = Some(plan);
         self.sample_all();
@@ -290,11 +391,14 @@ impl Worker {
     }
 
     fn receive_frame(&mut self, frame: MappedFrame) {
+        // A frame still in flight when the last output stopped is stale by
+        // the time one starts again.
         if frame.ok {
+            let wanted = capture_wanted();
             let width = frame.width as usize;
             let height = frame.height as usize;
             let row = width * 4;
-            if let Ok(mapped) = frame.buffer.get_mapped_range(..) {
+            if wanted && let Ok(mapped) = frame.buffer.get_mapped_range(..) {
                 self.picture.resize(row * height, 0);
                 for y in 0..height {
                     let src = y * frame.padded_bytes_per_row as usize;
@@ -311,7 +415,7 @@ impl Worker {
         frame.busy.store(false, Ordering::Release);
         // Sampled at the next tick: the GPU may deliver more pictures than
         // ticks, and only the newest is sent.
-        if frame.ok {
+        if frame.ok && self.has_picture {
             self.picture_dirty = true;
         }
     }
