@@ -268,7 +268,7 @@ describe('TS <-> Rust riders quality resolution', () => {
   // the assumption those multipliers are what Rust says they are, so a
   // one-sided edit has to fail here rather than silently mismatch.
   const rust = readFileSync(
-    resolve(__dirname, '../../../native-renderer/src/main.rs'),
+    resolve(__dirname, '../../../native-renderer/src/visuals/smoke_riders.rs'),
     'utf8',
   );
   const body = rust.slice(
