@@ -14,6 +14,8 @@ mod layer_commands;
 mod inputs;
 mod draw;
 pub(crate) use draw::*;
+mod raster;
+pub(crate) use raster::*;
 
 pub fn blend_mode_code(mode: &str) -> f32 {
     match mode.trim().to_ascii_lowercase().as_str() {

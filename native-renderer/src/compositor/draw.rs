@@ -9,11 +9,19 @@ use crate::*;
 /// without it that code is compiled out, so frames that need no mips pay
 /// nothing for it.
 pub(crate) fn heartbeat_wgsl(mode: SourceFrameMode, bindings: usize, source_mips: bool) -> String {
+    heartbeat_wgsl_with(mode, bindings, source_mips, false)
+}
+
+/// `heartbeat_wgsl`, and with `raster_lean` the build the raster
+/// compositor appends its layer passes to: generated content (gpu_proxy),
+/// which those frames never draw, compiled out.
+pub(crate) fn heartbeat_wgsl_with(mode: SourceFrameMode, bindings: usize, source_mips: bool, raster_lean: bool) -> String {
     let body = include_str!("../heartbeat.wgsl").replace(
         "//#SOURCE_FRAMES",
         &source_frames::compositor_source_frames_wgsl(mode, 1, 0, bindings),
     );
-    format!("{}const SOURCE_MIPS: bool = {source_mips};\n{body}", source_frames::source_frames_enable(mode))
+    format!("{}const SOURCE_MIPS: bool = {source_mips};\nconst RASTER_LEAN: bool = {raster_lean};\n{body}",
+        source_frames::source_frames_enable(mode))
 }
 
 /// The compositor pipeline over `shader`'s fs_main.
@@ -201,6 +209,13 @@ impl RenderState {
         label: &'static str,
         timestamp_writes: Option<wgpu::RenderPassTimestampWrites<'_>>,
     ) {
+        // The raster compositor, when this frame's plan has it draw.
+        if let Some(raster) = self.raster.as_ref().filter(|raster| raster.active()) {
+            let pass_time = if timestamp_writes.is_none() { pass_timing::slot(label) } else { None };
+            let timestamp_writes = timestamp_writes.or_else(|| pass_timing::render_writes(&pass_time));
+            raster.draw(encoder, &self.bind_group, &self.source_frames_bind_group, view, label, timestamp_writes);
+            return;
+        }
         self.draw_composite(encoder, &self.bind_group, self.program_wants_mips, view, label, timestamp_writes);
     }
 

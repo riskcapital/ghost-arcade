@@ -107,6 +107,7 @@ impl RenderState {
         churn_probe::write_buffer(&self.queue, &self.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
         let (filled, upload_len) = self.stage_layer_upload(scene_layers, layers_seen);
         self.program_wants_mips = layers_want_mips(&self.layer_upload_scratch[..filled]);
+        self.plan_raster_frame(filled, &uniforms);
         let grown = upload_composite_layers(
             &self.device,
             &self.queue,
