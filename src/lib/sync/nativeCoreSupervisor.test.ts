@@ -13,6 +13,12 @@ describe('native core supervisor', () => {
     expect(nativeCoreRestartDelay(NATIVE_CORE_RESTART_DELAYS_MS.length)).toBeNull();
   });
 
+  it('sends the scene at once to a core the broker already replaced, within the same attempt budget', () => {
+    expect(NATIVE_CORE_RESTART_DELAYS_MS.map((_, i) => nativeCoreRestartDelay(i, { replaced: true }))).toEqual([0, 0, 0]);
+    expect(nativeCoreRestartDelay(NATIVE_CORE_RESTART_DELAYS_MS.length, { replaced: true })).toBeNull();
+    expect(nativeCoreRestartDelay(NATIVE_CORE_RESTART_DELAYS_MS.length, { replaced: true, persistent: true })).toBe(0);
+  });
+
   it('notices a core that stopped by itself', () => {
     expect(nativeCoreLossReason({ running: false, last_frame_error: 'The render core stopped (code 0xC0000005).',
       core_exited_unexpectedly: true, core_instance: 1 }, 1)).toContain('0xC0000005');

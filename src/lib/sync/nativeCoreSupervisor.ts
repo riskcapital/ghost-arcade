@@ -28,9 +28,28 @@ export const NATIVE_CORE_STABLE_RUN_MS = 60_000;
  *  escalates to a reload or relaunch if the core still will not run). */
 export const NATIVE_CORE_PERSISTENT_RESTART_MS = 15_000;
 
-export function nativeCoreRestartDelay(attempt: number, options: { persistent?: boolean } = {}): number | null {
-  if (!Number.isFinite(attempt) || attempt < 0) return NATIVE_CORE_RESTART_DELAYS_MS[0];
-  return NATIVE_CORE_RESTART_DELAYS_MS[Math.floor(attempt)] ?? (options.persistent ? NATIVE_CORE_PERSISTENT_RESTART_MS : null);
+/** How often the editor checks that the core it talks to is still the one it
+ *  started. A status read is answered off the render thread, and it is also
+ *  what lets the broker see a GPU fault and replace the core, so this sets
+ *  how long the picture is gone after a lost GPU device. It used to ride on
+ *  the 3 s status log: up to 3 s before anything happened. */
+export const NATIVE_CORE_LIVENESS_POLL_MS = 500;
+
+/** `nativeCoreLossReason` for a core the broker replaced (after a GPU fault). */
+export const NATIVE_CORE_REPLACED_REASON = 'The render core restarted.';
+
+/**
+ * `replaced`: the broker already started a new core (after a GPU fault), so
+ * there is nothing to back off from; the scene goes to it at once. The
+ * attempt still counts, so a core that keeps faulting still ends on the
+ * error with Retry.
+ */
+export function nativeCoreRestartDelay(attempt: number, options: { persistent?: boolean; replaced?: boolean } = {}): number | null {
+  const delay = !Number.isFinite(attempt) || attempt < 0
+    ? NATIVE_CORE_RESTART_DELAYS_MS[0]
+    : NATIVE_CORE_RESTART_DELAYS_MS[Math.floor(attempt)] ?? (options.persistent ? NATIVE_CORE_PERSISTENT_RESTART_MS : null);
+  if (delay === null) return null;
+  return options.replaced ? 0 : delay;
 }
 
 type CoreStatus = Pick<RendererStatus, 'running' | 'last_frame_error'>
@@ -53,7 +72,7 @@ export function nativeCoreLossReason(
   }
   const instance = Number(status.core_instance ?? 0);
   if (startedInstance && instance > 0 && instance !== startedInstance) {
-    return 'The render core restarted.';
+    return NATIVE_CORE_REPLACED_REASON;
   }
   return null;
 }

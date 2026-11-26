@@ -133,8 +133,11 @@
   import {
     describeNativeCoreFailure,
     nativeCoreRestartDelay,
+    NATIVE_CORE_LIVENESS_POLL_MS,
+    NATIVE_CORE_REPLACED_REASON,
     NATIVE_CORE_RESTART_DELAYS_MS,
     NATIVE_CORE_STABLE_RUN_MS,
+    stripIpcErrorPrefix,
     type NativeCoreFailure,
   } from '$lib/sync/nativeCoreSupervisor';
   import { openLogFolder } from '$lib/utils/logFolder';
@@ -318,6 +321,7 @@
   // native scene explicitly. Live publishing overlaid the venue onto the
   // 2D output.
   let nativeRendererStatusTimer: ReturnType<typeof setInterval> | null = null;
+  let nativeCoreLivenessTimer: ReturnType<typeof setInterval> | null = null;
   let nativeQualityUnsub: (() => void) | null = null;
   let lastPushedNativeQuality: string | null = null;
   let lastPushedVideoMemoryMb = -1;
@@ -347,6 +351,10 @@
       clearInterval(nativeRendererStatusTimer);
       nativeRendererStatusTimer = null;
     }
+    if (nativeCoreLivenessTimer) {
+      clearInterval(nativeCoreLivenessTimer);
+      nativeCoreLivenessTimer = null;
+    }
     void sync.stop({ stopCore: false }).catch(() => {});
   }
 
@@ -372,6 +380,10 @@
       nativeRendererStatusTimer = setInterval(() => {
         void nativeRendererSync?.logStatus();
       }, 3000);
+      if (nativeCoreLivenessTimer) clearInterval(nativeCoreLivenessTimer);
+      nativeCoreLivenessTimer = setInterval(() => {
+        void nativeRendererSync?.checkCoreLiveness();
+      }, NATIVE_CORE_LIVENESS_POLL_MS);
       if (nativeCoreStableTimer) clearTimeout(nativeCoreStableTimer);
       nativeCoreStableTimer = setTimeout(() => {
         nativeCoreStableTimer = null;
@@ -383,6 +395,13 @@
     }).catch(async (err) => {
       if (nativeRendererSync !== sync || canvasDestroyed) return;
       console.warn('[NativeRendererSync] failed to start native renderer:', err);
+      // A restart is sent the moment the broker has a new core. If that core
+      // could not start yet (a GPU still resetting), try again on the usual
+      // backoff before showing the error.
+      if (restart) {
+        handleNativeCoreLost(sync, stripIpcErrorPrefix(err instanceof Error ? err.message : String(err)));
+        return;
+      }
       const status = await getNativeRendererStatus().catch(() => null);
       if (nativeRendererSync !== sync || canvasDestroyed) return;
       retireNativeRendererSync(sync);
@@ -395,7 +414,10 @@
     if (nativeRendererSync !== sync || canvasDestroyed) return;
     retireNativeRendererSync(sync);
     if (nativeCoreStableTimer) { clearTimeout(nativeCoreStableTimer); nativeCoreStableTimer = null; }
-    const delay = nativeCoreRestartDelay(nativeCoreRestartAttempt, { persistent: installModeRunning() });
+    const delay = nativeCoreRestartDelay(nativeCoreRestartAttempt, {
+      persistent: installModeRunning(),
+      replaced: reason === NATIVE_CORE_REPLACED_REASON,
+    });
     if (delay === null) {
       nativeCoreRestarting = false;
       void getNativeRendererStatus().catch(() => null).then((status) => {
@@ -4564,6 +4586,10 @@
     if (nativeRendererStatusTimer) {
       clearInterval(nativeRendererStatusTimer);
       nativeRendererStatusTimer = null;
+    }
+    if (nativeCoreLivenessTimer) {
+      clearInterval(nativeCoreLivenessTimer);
+      nativeCoreLivenessTimer = null;
     }
     if (nativeQualityUnsub) {
       nativeQualityUnsub();

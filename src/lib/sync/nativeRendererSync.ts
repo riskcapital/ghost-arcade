@@ -12944,6 +12944,15 @@ fn fs_main() -> @location(0) vec4<f32> {
     return true;
   }
 
+  /** Between status logs: a cheap status read that only checks the core is
+   *  still the one this sync started (and lets the broker notice a GPU
+   *  fault), so a lost core is replaced in well under a second. */
+  async checkCoreLiveness() {
+    if (!this.running || this.coreLossReported) return;
+    const status = await getNativeRendererStatus().catch(() => null);
+    if (status) this.noteCoreLiveness(status);
+  }
+
   async logStatus() {
     if (!this.running) return;
     const [status, previewStatus] = await Promise.all([
