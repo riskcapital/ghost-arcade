@@ -195,7 +195,8 @@ export class BrushSpriteCache {
       return Math.floor(timeS * Math.max(0.001, speed) * 8) % VARIANTS_PER_BANK;
     }
     // Random per-stamp brushes: a prime multiplier scatters indices.
-    return (stampIndex * 73856093) >>> 0 & (VARIANTS_PER_BANK - 1);
+    // `%`, not a bitmask: VARIANTS_PER_BANK (12) is not a power of two.
+    return ((stampIndex * 73856093) >>> 0) % VARIANTS_PER_BANK;
   }
 
   /** Fetch (or lazily generate) a sprite for the given brush params

@@ -10,6 +10,7 @@ import type {
   ShapeMeshWarp,
 } from './types';
 import type { Point2D } from '../types';
+import { lineShapeRenderPoints } from './geometry';
 
 // ============================================================================
 // SHADER CODE
@@ -1204,8 +1205,15 @@ export class LinesRenderer {
       u.uMeshWarpEnabled.value = false;
     }
 
-    // Upload polyline points as custom vertices
-    const points = element.shape.points;
+    // Upload polyline points as custom vertices — freehand smoothing and
+    // point-click corners applied the same way as the native core.
+    let points = lineShapeRenderPoints(element, this.width, this.height);
+    if (points.length > 64) {
+      const sampled: Point2D[] = [];
+      for (let i = 0; i < 64; i++) sampled.push(points[Math.min(points.length - 1, Math.floor((i * points.length) / 64))]);
+      sampled[63] = points[points.length - 1];
+      points = sampled;
+    }
     if (points.length >= 2) {
       u.uCustomVertexCount.value = Math.min(points.length, 64);
       u.uCustomVerticesClosed.value =
@@ -1275,6 +1283,10 @@ export class LinesRenderer {
     }
     if ('spacing' in stroke && stroke.type === 'dotted') {
       u.uGapLength.value = (stroke as any).spacing; // reuse uniform
+    }
+    if (stroke.type === 'dashed' || stroke.type === 'dotted') {
+      // These strokes have no `speed`; scroll only when Animated is on.
+      u.uSnakeSpeed.value = stroke.animated ? (stroke.animationSpeed ?? 1) : 0;
     }
 
     // Electric

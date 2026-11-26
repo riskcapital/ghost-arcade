@@ -11,17 +11,52 @@ import { createDefaultFreehandLine, createDefaultPointClickLine } from '../lines
 // STORE STATE
 // ============================================================================
 
+/** Draw-tab settings applied to the next line drawn. */
+export interface NewLineSettings {
+  smoothing: number;                                  // freehand 0-1
+  closed: boolean;                                    // point-click
+  cornerStyle: PointClickLine['cornerStyle'];         // point-click
+  cornerRadius: number;                               // point-click, output pixels
+}
+
+export const DEFAULT_NEW_LINE_SETTINGS: NewLineSettings = {
+  smoothing: 0.5,
+  closed: false,
+  cornerStyle: 'sharp',
+  cornerRadius: 0,
+};
+
 interface LinesState {
   toolMode: LineToolMode;   // 'select' | 'freehand' | 'pointClick'
   isDrawing: boolean;
   currentPoints: Point2D[];
+  newLine: NewLineSettings;
 }
 
 const initialState: LinesState = {
   toolMode: 'select',
   isDrawing: false,
   currentPoints: [],
+  newLine: { ...DEFAULT_NEW_LINE_SETTINGS },
 };
+
+/** A new line's shape from its drawn points and the Draw-tab settings. */
+export function createDrawnLineShape(
+  mode: 'freehand' | 'pointClick',
+  points: Point2D[],
+  settings: NewLineSettings,
+): FreehandLine | PointClickLine {
+  if (mode === 'freehand') {
+    return { ...createDefaultFreehandLine(points), smoothing: settings.smoothing };
+  }
+  return {
+    ...createDefaultPointClickLine(points),
+    // A closed shape needs three corners.
+    closed: settings.closed && points.length >= 3,
+    cornerStyle: settings.cornerStyle,
+    cornerRadius: settings.cornerRadius,
+  };
+}
 
 // ============================================================================
 // STORE
@@ -41,6 +76,10 @@ function createLinesStore() {
         isDrawing: false,
         currentPoints: [],
       }));
+    },
+
+    setNewLineSettings(updates: Partial<NewLineSettings>) {
+      update((state) => ({ ...state, newLine: { ...state.newLine, ...updates } }));
     },
 
     startDrawing() {
@@ -69,10 +108,8 @@ function createLinesStore() {
       }
 
       let shape: LineShape;
-      if (state.toolMode === 'freehand') {
-        shape = createDefaultFreehandLine(state.currentPoints);
-      } else if (state.toolMode === 'pointClick') {
-        shape = createDefaultPointClickLine(state.currentPoints);
+      if (state.toolMode === 'freehand' || state.toolMode === 'pointClick') {
+        shape = createDrawnLineShape(state.toolMode, state.currentPoints, state.newLine);
       } else {
         set({ ...state, isDrawing: false, currentPoints: [] });
         return null;

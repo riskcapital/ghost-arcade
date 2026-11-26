@@ -680,7 +680,7 @@
   import { signalCodeReady } from './lib/stores/codeUpdate';
   import { startAutoEngine, stopAutoEngine } from './lib/audio/autoEngine';
   import { startMusicMotionEngine, stopMusicMotionEngine } from './lib/audio/musicMotionEngine';
-  import { linesStore, linesDrawingModeForTool } from './lib/stores/lines';
+  import { linesStore, linesDrawingModeForTool, createDrawnLineShape } from './lib/stores/lines';
   import { startInterfaceScale } from './lib/stores/interfaceScale';
   import { startTranslation } from './lib/i18n';
   import { loadShadersFromServer, loadCloudShadersFromDisk, shaderLibrary } from './lib/stores/shaderLibrary';
@@ -712,7 +712,13 @@
   } from './lib/remote/remotePairing';
   import type { Point2D, BezierPoint, Layer, WarpCorners, MediaSource, LayerShapeParams, LayerShapeType, Project } from './lib/types';
   import { createDefaultCorners, generateUUID } from './lib/types';
-  import { createDefaultFreehandLine, createDefaultPointClickLine } from './lib/lines/types';
+  import {
+    hitTestLineElements,
+    lineElementCanvasPoints,
+    lineElementToCanvas,
+    canvasToLineElement,
+    trimDuplicateTailPoints,
+  } from './lib/lines/geometry';
   // qrcode is lazy-loaded inside generateQRCode() so it stays out of the
   // main App chunk — it's only needed when the mobile-connect panel opens.
   import { midiManager } from './lib/midi/midiManager';
@@ -2700,10 +2706,7 @@
 
       // ESC exits lines drawing mode
       if (e.key === 'Escape' && linesDrawingMode !== 'none') {
-        linesDrawingMode = 'none';
-        isLinesDrawing = false;
-        linesDrawingPoints = [];
-        window.dispatchEvent(new CustomEvent('lines-mode-change', { detail: { mode: 'select' } }));
+        exitLinesDrawingMode();
         e.preventDefault();
         return;
       }
@@ -5395,7 +5398,14 @@
       case 'lightpainting_stroke_point': {
         const state = (window as any).__mobileLPState;
         if (!state) break;
-        const { x, y, pressure, timestamp } = msg as any;
+        const { x, y, pressure, timestamp, coalesced } = msg as any;
+        // In-between Pencil samples the phone collected for this event.
+        if (Array.isArray(coalesced)) {
+          for (const c of coalesced) {
+            if (!c || !Number.isFinite(c.x) || !Number.isFinite(c.y)) continue;
+            state.points.push({ x: c.x, y: c.y, pressure: c.pressure ?? 0.5, timestamp: c.timestamp ?? (performance.now() - state.startTime) });
+          }
+        }
         state.points.push({ x, y, pressure: pressure ?? 0.5, timestamp: timestamp ?? (performance.now() - state.startTime) });
         scheduleMobileLightPaintingPreview(state);
         break;
@@ -5412,15 +5422,18 @@
         // Finalize stroke with smoothing
         let finalPoints = [...state.points];
         const smoothing = state.brush.smoothing ?? 0.5;
-        // Simple Chaikin smoothing inline (same algorithm as LightPaintingPanel)
+        // Simple Chaikin smoothing inline (same algorithm as LightPaintingPanel):
+        // keeps both endpoints so the stroke reaches where the pen went down
+        // and lifted, and blends pressure along with position.
         const passes = Math.ceil(smoothing * 3);
-        for (let p = 0; p < passes; p++) {
-          const smoothed: typeof finalPoints = [];
+        for (let p = 0; p < passes && finalPoints.length >= 3; p++) {
+          const smoothed: typeof finalPoints = [finalPoints[0]];
           for (let i = 0; i < finalPoints.length - 1; i++) {
             const a = finalPoints[i], b = finalPoints[i + 1];
-            smoothed.push({ x: a.x * 0.75 + b.x * 0.25, y: a.y * 0.75 + b.y * 0.25, pressure: a.pressure, timestamp: a.timestamp });
-            smoothed.push({ x: a.x * 0.25 + b.x * 0.75, y: a.y * 0.25 + b.y * 0.75, pressure: b.pressure, timestamp: b.timestamp });
+            smoothed.push({ x: a.x * 0.75 + b.x * 0.25, y: a.y * 0.75 + b.y * 0.25, pressure: a.pressure * 0.75 + b.pressure * 0.25, timestamp: a.timestamp * 0.75 + b.timestamp * 0.25 });
+            smoothed.push({ x: a.x * 0.25 + b.x * 0.75, y: a.y * 0.25 + b.y * 0.75, pressure: a.pressure * 0.25 + b.pressure * 0.75, timestamp: a.timestamp * 0.25 + b.timestamp * 0.75 });
           }
+          smoothed.push(finalPoints[finalPoints.length - 1]);
           finalPoints = smoothed;
         }
         // Cap at 800 points
@@ -6906,86 +6919,26 @@
     return { x: cx / vertices.length, y: cy / vertices.length };
   }
 
-  /**
-   * Check if a point is inside or near a polygon
-   */
-  function pointNearPolygon(px: number, py: number, vertices: Point2D[], margin: number = 0.05): boolean {
-    if (vertices.length < 2) return false;
-
-    // First check bounding box with margin for quick rejection
-    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
-    for (const v of vertices) {
-      minX = Math.min(minX, v.x);
-      maxX = Math.max(maxX, v.x);
-      minY = Math.min(minY, v.y);
-      maxY = Math.max(maxY, v.y);
-    }
-    // If outside bounding box + margin, quick reject
-    if (px < minX - margin || px > maxX + margin || py < minY - margin || py > maxY + margin) {
-      return false;
-    }
-
-    // Check if point is inside polygon using ray casting
-    let inside = false;
-    for (let i = 0, j = vertices.length - 1; i < vertices.length; j = i++) {
-      const xi = vertices[i].x, yi = vertices[i].y;
-      const xj = vertices[j].x, yj = vertices[j].y;
-
-      if (((yi > py) !== (yj > py)) && (px < (xj - xi) * (py - yi) / (yj - yi) + xi)) {
-        inside = !inside;
-      }
-    }
-    if (inside) return true;
-
-    // Check distance to edges
-    for (let i = 0; i < vertices.length; i++) {
-      const a = vertices[i];
-      const b = vertices[(i + 1) % vertices.length];
-
-      // Distance to line segment
-      const dx = b.x - a.x;
-      const dy = b.y - a.y;
-      const len2 = dx * dx + dy * dy;
-      if (len2 === 0) continue;
-
-      const t = Math.max(0, Math.min(1, ((px - a.x) * dx + (py - a.y) * dy) / len2));
-      const projX = a.x + t * dx;
-      const projY = a.y + t * dy;
-      const dist = Math.sqrt((px - projX) ** 2 + (py - projY) ** 2);
-
-      if (dist < margin) return true;
-    }
-
-    // Also check distance to vertices themselves
-    for (const v of vertices) {
-      const dist = Math.sqrt((px - v.x) ** 2 + (py - v.y) ** 2);
-      if (dist < margin) return true;
-    }
-
-    return false;
-  }
-
   function handleShapeClick(e: MouseEvent) {
     if (!$selectedLinesLayer?.linesContent) return;
 
     const { x: clickX, y: clickY } = mouseToCanvasCoords(e);
 
-    // Find element at click position (reverse order to get top-most first)
-    const elements = [...$selectedLinesLayer.linesContent.elements].reverse();
-    for (const element of elements) {
-      // Lines always have points — use polygon hit testing
-      if (element.shape.points.length >= 2 && pointNearPolygon(clickX, clickY, element.shape.points)) {
-        // Reset warp mode when selecting a different element
-        if ($selectedLinesLayer.linesContent?.selectedElementId !== element.id) {
-          warpModeEnabled = false;
-        }
-        project.selectElement($selectedLinesLayer.id, element.id);
-        isDraggingShape = true;
-        dragStartPos = { x: clickX, y: clickY };
-        dragStartShapePos = getPolygonCentroid(element.shape.points);
-        draggedElementId = element.id;
-        return;
+    // Top-most visible, unlocked line under the pointer, tested where the
+    // line is drawn (its move/rotate/scale applied). Open lines hit only on
+    // the stroke; closed shapes also inside.
+    const element = hitTestLineElements($selectedLinesLayer.linesContent.elements, { x: clickX, y: clickY });
+    if (element) {
+      // Reset warp mode when selecting a different element
+      if ($selectedLinesLayer.linesContent?.selectedElementId !== element.id) {
+        warpModeEnabled = false;
       }
+      project.selectElement($selectedLinesLayer.id, element.id);
+      isDraggingShape = true;
+      dragStartPos = { x: clickX, y: clickY };
+      dragStartShapePos = getPolygonCentroid(lineElementCanvasPoints(element));
+      draggedElementId = element.id;
+      return;
     }
 
     // Clicked on empty space - deselect and exit warp mode
@@ -7009,18 +6962,19 @@
     const element = $selectedLinesLayer.linesContent?.elements.find(
       el => el.id === draggedElementId
     );
-    if (!element) return;
+    if (!element || element.locked) return;
 
     // Store original points on first drag move
     if (!dragStartCustomVertices) {
       dragStartCustomVertices = element.shape.points.map(v => ({ ...v }));
     }
 
-    // Move all points by the drag delta
-    const newPoints = dragStartCustomVertices.map(v => ({
-      x: v.x + dx,
-      y: v.y + dy
-    }));
+    // Move all points by the drag delta, measured on the canvas and mapped
+    // back through the line's own move/rotate/scale.
+    const newPoints = dragStartCustomVertices.map(v => {
+      const onCanvas = lineElementToCanvas(v, element);
+      return canvasToLineElement({ x: onCanvas.x + dx, y: onCanvas.y + dy }, element);
+    });
 
     project.updateElementShape($selectedLinesLayer.id, draggedElementId, {
       points: newPoints
@@ -7176,6 +7130,8 @@
 
   function handleLinesDrawingDoubleClick(_e: MouseEvent) {
     if (linesDrawingMode === 'pointClick' && isLinesDrawing) {
+      // Both clicks of the double-click also landed as points; keep one.
+      linesDrawingPoints = trimDuplicateTailPoints(linesDrawingPoints, 0.003);
       finishLinesDrawing();
     }
   }
@@ -7187,6 +7143,15 @@
     }
   }
 
+  /** Leave line drawing (Esc / Cancel) and put the Lines toolbox on Select. */
+  function exitLinesDrawingMode() {
+    linesDrawingMode = 'none';
+    isLinesDrawing = false;
+    linesDrawingPoints = [];
+    linesStore.setToolMode('select');
+    window.dispatchEvent(new CustomEvent('lines-mode-change', { detail: { mode: 'select' } }));
+  }
+
   function finishLinesDrawing() {
     if (!$selectedLinesLayer || linesDrawingPoints.length < 2) {
       isLinesDrawing = false;
@@ -7194,12 +7159,10 @@
       return;
     }
 
-    // Create the line shape and add it to the layer
-    if (linesDrawingMode === 'freehand') {
-      const shape = createDefaultFreehandLine(linesDrawingPoints);
-      project.addLineElement($selectedLinesLayer.id, shape);
-    } else if (linesDrawingMode === 'pointClick') {
-      const shape = createDefaultPointClickLine(linesDrawingPoints);
+    // Create the line shape (with the Draw tab's smoothing / corner /
+    // closed settings) and add it to the layer
+    if (linesDrawingMode === 'freehand' || linesDrawingMode === 'pointClick') {
+      const shape = createDrawnLineShape(linesDrawingMode, linesDrawingPoints, get(linesStore).newLine);
       project.addLineElement($selectedLinesLayer.id, shape);
     }
 
@@ -7548,7 +7511,8 @@
    */
   function getShapeVertices(element: typeof $selectedLineElement): { x: number; y: number; index: number; type: string }[] {
     if (!element) return [];
-    return element.shape.points.map((pt, i) => ({
+    // Where each point is drawn (the line's move/rotate/scale applied).
+    return lineElementCanvasPoints(element).map((pt, i) => ({
       x: pt.x,
       y: pt.y,
       index: i,
@@ -7570,12 +7534,13 @@
     const element = $selectedLinesLayer.linesContent?.elements.find(
       el => el.id === draggedVertexInfo!.elementId
     );
-    if (!element) return;
+    if (!element || element.locked) return;
 
-    // Update the point directly in the shape's points array
+    // Update the point directly in the shape's points array (pointer is on
+    // the canvas; the point is stored in the line's own space).
     const newPoints = [...element.shape.points];
     if (draggedVertexInfo.vertexIndex < newPoints.length) {
-      newPoints[draggedVertexInfo.vertexIndex] = { x, y };
+      newPoints[draggedVertexInfo.vertexIndex] = canvasToLineElement({ x, y }, element);
       project.updateElementShape($selectedLinesLayer.id, element.id, { points: newPoints } as any);
     }
   }
@@ -8575,15 +8540,16 @@
               <svg class="shape-handles">
                 {#each $selectedLinesLayer.linesContent.elements as element}
                   {@const isSelected = $selectedLinesLayer.linesContent.selectedElementId === element.id}
-                  {@const centroid = getPolygonCentroid(element.shape.points)}
+                  {@const drawnPoints = isSelected ? lineElementCanvasPoints(element) : element.shape.points}
+                  {@const centroid = getPolygonCentroid(drawnPoints)}
                   {@const screenX = canvasToSvgX(centroid.x)}
                   {@const screenY = canvasToSvgY(centroid.y)}
                   <!-- Selection bounding box -->
-                  {#if isSelected && element.shape.points.length >= 2}
-                    {@const minX = Math.min(...element.shape.points.map(v => v.x))}
-                    {@const maxX = Math.max(...element.shape.points.map(v => v.x))}
-                    {@const minY = Math.min(...element.shape.points.map(v => v.y))}
-                    {@const maxY = Math.max(...element.shape.points.map(v => v.y))}
+                  {#if isSelected && drawnPoints.length >= 2}
+                    {@const minX = Math.min(...drawnPoints.map(v => v.x))}
+                    {@const maxX = Math.max(...drawnPoints.map(v => v.x))}
+                    {@const minY = Math.min(...drawnPoints.map(v => v.y))}
+                    {@const maxY = Math.max(...drawnPoints.map(v => v.y))}
                     <rect
                       x={canvasToSvgX(minX) - 5}
                       y={canvasToSvgY(maxY) - 5}
@@ -8594,7 +8560,8 @@
                       stroke-width="2"
                       stroke-dasharray="5,5"
                     />
-                    <!-- Center handle - draggable for moving the whole line -->
+                    <!-- Center handle - draggable for moving the whole line (not when locked) -->
+                    {#if !element.locked}
                     <circle
                       cx={screenX}
                       cy={screenY}
@@ -8616,12 +8583,13 @@
                     >
                       <title>Drag to move line</title>
                     </circle>
+                    {/if}
                   {/if}
                 {/each}
 
                 <!-- Edit Points toggle button when line element is selected -->
-                {#if $selectedLineElement}
-                  {@const centroid = getPolygonCentroid($selectedLineElement.shape.points)}
+                {#if $selectedLineElement && !$selectedLineElement.locked}
+                  {@const centroid = getPolygonCentroid(lineElementCanvasPoints($selectedLineElement))}
                   <foreignObject
                     x={canvasToSvgX(centroid.x) - 50}
                     y={canvasToSvgY(centroid.y) + 30}
@@ -8654,18 +8622,30 @@
                 {/if}
 
                 <!-- Vertex handles for selected element - ONLY when edit mode is enabled -->
-                {#if $selectedLineElement && warpModeEnabled && selectedVertices.length > 0}
+                {#if $selectedLineElement && !$selectedLineElement.locked && warpModeEnabled && selectedVertices.length > 0}
                   <!-- Determine if line is closed (pointClick with closed=true) -->
                   {@const isClosedShape = $selectedLineElement.shape.type === 'pointClick' &&
                     'closed' in $selectedLineElement.shape && $selectedLineElement.shape.closed}
-                  <polygon
-                    points={selectedVertices.map(v => `${canvasToSvgX(v.x)},${canvasToSvgY(v.y)}`).join(' ')}
-                    fill="none"
-                    stroke="#00ffff"
-                    stroke-width="1"
-                    stroke-dasharray="4,4"
-                    style="pointer-events: none;"
-                  />
+                  <!-- Guide: open lines must not show a closing edge. -->
+                  {#if isClosedShape}
+                    <polygon
+                      points={selectedVertices.map(v => `${canvasToSvgX(v.x)},${canvasToSvgY(v.y)}`).join(' ')}
+                      fill="none"
+                      stroke="#00ffff"
+                      stroke-width="1"
+                      stroke-dasharray="4,4"
+                      style="pointer-events: none;"
+                    />
+                  {:else}
+                    <polyline
+                      points={selectedVertices.map(v => `${canvasToSvgX(v.x)},${canvasToSvgY(v.y)}`).join(' ')}
+                      fill="none"
+                      stroke="#00ffff"
+                      stroke-width="1"
+                      stroke-dasharray="4,4"
+                      style="pointer-events: none;"
+                    />
+                  {/if}
 
                   <!-- Edge midpoint handles for adding vertices -->
                   {#each selectedVertices as vertex, i}
@@ -8788,7 +8768,7 @@
                 {:else if linesDrawingMode === 'pointClick'}
                   Polyline: Click to add points, double-click to finish
                 {/if}
-                <button class="cancel-btn" onclick={() => { linesDrawingMode = 'none'; isLinesDrawing = false; linesDrawingPoints = []; }}>
+                <button class="cancel-btn" onclick={exitLinesDrawingMode}>
                   Cancel
                 </button>
               </div>
@@ -9082,6 +9062,7 @@
             {canvasWidth}
             {canvasHeight}
             drawingEnabled={lpDrawingEnabled}
+            spacePanActive={isSpacePressed}
             bind:isPathEditMode={lpIsPathEditMode}
             bind:pathEditTool={lpPathEditTool}
             bind:pathEditShowAllRawPoints={lpPathEditShowAllRawPoints}

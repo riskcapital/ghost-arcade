@@ -5,6 +5,7 @@
 // clock, so line animations stay silky even when the UI thread is busy.
 import type { LinesContent, LineElement, LineStroke, LineMotionFxMode } from '../lines/types';
 import type { Point2D } from '../types';
+import { lineShapeRenderPoints } from '../lines/geometry';
 
 export const LINES_NATIVE_SHADER_ID = 'lines/render';
 
@@ -53,21 +54,6 @@ function finite(value: unknown, fallback: number): number {
   return Number.isFinite(n) ? n : fallback;
 }
 
-function chaikin(points: Point2D[], closed: boolean): Point2D[] {
-  if (points.length < 3) return points;
-  const out: Point2D[] = [];
-  const count = closed ? points.length : points.length - 1;
-  if (!closed) out.push(points[0]);
-  for (let i = 0; i < count; i++) {
-    const a = points[i];
-    const b = points[(i + 1) % points.length];
-    out.push({ x: a.x * 0.75 + b.x * 0.25, y: a.y * 0.75 + b.y * 0.25 });
-    out.push({ x: a.x * 0.25 + b.x * 0.75, y: a.y * 0.25 + b.y * 0.75 });
-  }
-  if (!closed) out.push(points[points.length - 1]);
-  return out;
-}
-
 function bilinearWarp(p: Point2D, corners: LineElement['warpCorners']): Point2D {
   const top = {
     x: corners.topLeft.x + (corners.topRight.x - corners.topLeft.x) * p.x,
@@ -98,18 +84,38 @@ function meshWarp(p: Point2D, mesh: LineElement['meshWarp']): Point2D {
   };
 }
 
+/**
+ * Dashed / dotted sizes arrive in tenths of the line's length (the units the
+ * panel shows and the WebGL path uses); the shader works in pixels along the
+ * line. Dotted: p0 = dot diameter, p1 = dot-to-dot period. p3 = scroll speed
+ * in pixels per second (WebGL scrolls a tenth of the line per second per
+ * unit of speed).
+ */
+export function packDashUnits(type: LineStroke['type'], p: number[], totalLenPx: number): void {
+  if (type !== 'dashed' && type !== 'dotted') return;
+  const unit = Math.max(1, totalLenPx) / 10;
+  const on = p[0] * unit;
+  const off = p[1] * unit;
+  p[0] = on;
+  p[1] = type === 'dotted' ? on + off : off;
+  p[3] = p[3] * 0.1 * Math.max(1, totalLenPx);
+}
+
 function strokeParams(stroke: LineStroke): { color: number[]; width: number; p: number[] } {
   const p = [0, 0, 0, 0, 0, 0, 0, 0];
   const anyStroke = stroke as any;
   const color = Array.isArray(anyStroke.color) ? anyStroke.color.slice(0, 4) : [1, 1, 1, 1];
   const width = Math.max(0.5, finite(anyStroke.width, 3));
   switch (stroke.type) {
+    // Dash/dot sizes are in the panel's units (tenths of the line's length,
+    // as the WebGL path reads them); packDashUnits() turns them into pixels
+    // once the line's length is known.
     case 'dashed':
-      p[0] = finite(stroke.dashLength, 12); p[1] = finite(stroke.gapLength, 8);
+      p[0] = Math.max(0, finite(stroke.dashLength, 0.3)); p[1] = Math.max(0, finite(stroke.gapLength, 0.2));
       p[2] = stroke.animated ? 1 : 0; p[3] = finite(stroke.animationSpeed, 1);
       break;
     case 'dotted':
-      p[0] = Math.max(1, finite(stroke.dotSize, 4)); p[1] = Math.max(2, finite(stroke.spacing, 12));
+      p[0] = Math.max(0, finite(stroke.dotSize, 0.1)); p[1] = Math.max(0, finite(stroke.spacing, 0.15));
       p[2] = stroke.animated ? 1 : 0; p[3] = finite(stroke.animationSpeed, 1);
       break;
     case 'glow':
@@ -208,13 +214,9 @@ export function buildLinesNativeComputeGraph(options: LinesNativeGraphOptions) {
   const centres: number[] = [];
   for (let index = 0; index < visible.length; index++) {
     const element = visible[index];
-    let pts: Point2D[] = element.shape.points.map((point) => ({ x: point.x, y: point.y }));
     const closed = element.shape.type === 'pointClick' && !!element.shape.closed;
-    if (element.shape.type === 'freehand') {
-      const smoothing = finite(element.shape.smoothing, 0.5);
-      const iterations = smoothing > 0.66 ? 2 : smoothing > 0.2 ? 1 : 0;
-      for (let i = 0; i < iterations; i++) pts = chaikin(pts, false);
-    }
+    // Freehand smoothing and point-click corners, shared with WebGL.
+    let pts: Point2D[] = lineShapeRenderPoints(element, width, height);
     // Bake element transform: scale/rotate around center, then offset.
     const rot = (finite(element.rotation, 0) * Math.PI) / 180;
     const cosR = Math.cos(rot);
@@ -276,6 +278,7 @@ export function buildLinesNativeComputeGraph(options: LinesNativeGraphOptions) {
     }
 
     const { color, width: strokeWidth, p } = strokeParams(element.stroke);
+    packDashUnits(element.stroke.type, p, totalLen);
     const anim = element.drawAnimation;
     const stagger = String(content.staggerMode ?? 'simultaneous');
     const staggerDelaySec = Math.max(0, finite(content.staggerDelay, 200)) / 1000;
@@ -751,17 +754,20 @@ fn fs_lines(in: VsOut) -> @location(0) vec4<f32> {
 
     if (stroke_type == 1) {
       // dashed
-      let cycle = max(2.0, e2.x + e2.y);
-      let phase = best_s + select(0.0, t * e2.w * 60.0, e2.z > 0.5);
+      let cycle = max(1.0, e2.x + e2.y);
+      let phase = best_s + select(0.0, t * e2.w, e2.z > 0.5);
       let on_dash = step(fract(phase / cycle) * cycle, e2.x);
       out_a = out_a * on_dash;
     } else if (stroke_type == 2) {
       // dotted
-      let spacing = max(2.0, e2.y);
-      let phase = best_s + select(0.0, t * e2.w * 60.0, e2.z > 0.5);
+      let spacing = max(1.0, e2.y);
+      let phase = best_s + select(0.0, t * e2.w, e2.z > 0.5);
       let local = fract(phase / spacing) * spacing - spacing * 0.5;
-      let dot_d = length(vec2<f32>(local, d));
-      out_a = e1.a * (1.0 - smoothstep(e2.x * 0.5 - aa, e2.x * 0.5 + aa, dot_d));
+      // Each dot is e2.x long along the line and as thick as the stroke
+      // (round-ended), like the WebGL path; never shorter than round.
+      let half_len = max(0.0, e2.x * 0.5 - half_w);
+      let dot_d = length(vec2<f32>(max(abs(local) - half_len, 0.0), d));
+      out_a = e1.a * (1.0 - smoothstep(half_w - aa, half_w + aa, dot_d));
     } else if (stroke_type == 3) {
       // glow (audio: beat swells the halo)
       let pulse = select(1.0, 0.75 + 0.25 * sin(t * e2.z * 6.28318), e2.z > 0.01);
