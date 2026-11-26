@@ -17,6 +17,7 @@ mod core_frame_counter;
 mod churn_probe;
 mod gpu_object_cache;
 mod pass_timing;
+mod pipeline_cache;
 mod frames_in_flight;
 mod effect_specialize;
 mod media_decode;
@@ -3100,7 +3101,7 @@ impl MirrorRenderer {
             depth_stencil: None,
             multisample: Default::default(),
             multiview_mask: None,
-            cache: None,
+            cache: pipeline_cache::for_device(device).as_ref(),
         });
         Self { pipeline, uniform, bind_group, _master: master, master_view, meshes: HashMap::new() }
     }
@@ -5309,6 +5310,8 @@ struct RenderState {
     paint_mask_view: wgpu::TextureView,
     /// Bumped when the paint-mask texture is remade, so views rebind it.
     paint_mask_generation: u64,
+    /// Compiled pipelines kept on disk (Vulkan; see pipeline_cache.rs).
+    disk_pipeline_cache: Option<pipeline_cache::DiskPipelineCache>,
     paint_mask_size: u32,
     paint_mask_layers: u32,
     start_time: Instant,
@@ -8030,6 +8033,9 @@ impl App {
             "audio_tap_stop" => Ok(self.clip_audio.as_mut().map(|audio| audio.stop_tap()).unwrap_or_else(|| json!({ "active": false, "frames": 0, "dropped": 0 }))),
             "shutdown" => {
                 self.running = false;
+                if let Some(cache) = self.renderer.as_mut().and_then(|renderer| renderer.disk_pipeline_cache.as_mut()) {
+                    cache.flush();
+                }
                 // Its decoded audio folder goes with it.
                 self.clip_audio = None;
                 event_loop.exit();
@@ -22429,6 +22435,12 @@ impl RenderState {
         if source_frame_mode == SourceFrameMode::PerSource {
             requested_features |= PER_SOURCE_SLOT_FEATURES;
         }
+        // Compiled pipelines saved between runs, where the backend offers it
+        // (pipeline_cache.rs). Not part of the reported capabilities.
+        let caps_features = requested_features;
+        if pipeline_cache::wanted() {
+            requested_features |= adapter_features & wgpu::Features::PIPELINE_CACHE;
+        }
         eprintln!(
             "[GhostRenderCore] picture slots: {} (slot edge {}, binding array {})",
             source_frame_mode.label(), source_frame_size,
@@ -22438,7 +22450,7 @@ impl RenderState {
             &adapter_info,
             &adapter_limits,
             adapter_features,
-            requested_features,
+            caps_features,
         );
         let (device, queue) = adapter
             .request_device(&wgpu::DeviceDescriptor {
@@ -22457,6 +22469,8 @@ impl RenderState {
             })
             .await
             .map_err(|err| err.to_string())?;
+        // Before any pipeline is built, so all of them can use it.
+        let disk_pipeline_cache = pipeline_cache::DiskPipelineCache::open(&device, &adapter_info);
         // A driver reset (Windows TDR), a hung GPU or an unplugged external
         // GPU ends the device. Say so in the log with the adapter, so a support
         // log tells a GPU fault from a fault in the app, and raise the same
@@ -22845,7 +22859,7 @@ impl RenderState {
                 })],
             }),
             multiview_mask: None,
-            cache: None,
+            cache: pipeline_cache::for_device(&device).as_ref(),
         });
 
         let output_presenter = output_present::OutputPresenter::new(&device, &shader, format, &composite_frame_textures);
@@ -22941,7 +22955,7 @@ impl RenderState {
                     })],
                 }),
                 multiview_mask: None,
-                cache: None,
+                cache: pipeline_cache::for_device(&device).as_ref(),
             });
 
         let stage3d_mesh_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -23041,7 +23055,7 @@ impl RenderState {
                     })],
                 }),
                 multiview_mask: None,
-                cache: None,
+                cache: pipeline_cache::for_device(&device).as_ref(),
             });
         let (stage3d_mesh_depth_texture, stage3d_mesh_depth_view) = Self::create_depth_target(
             &device,
@@ -23389,6 +23403,7 @@ impl RenderState {
             paint_mask_texture,
             paint_mask_view,
             paint_mask_generation: 0,
+            disk_pipeline_cache,
             paint_mask_size: 1,
             paint_mask_layers: 1,
             start_time: Instant::now(),
@@ -25118,6 +25133,9 @@ impl RenderState {
     fn finish_frame(&mut self, frame_started: Instant) {
         self.frame_uniform_pool.truncate(self.frame_uniform_cursor);
         self.prune_composite_views();
+        if let Some(cache) = self.disk_pipeline_cache.as_mut() {
+            cache.maybe_save(Instant::now());
+        }
         // Fence after program, confidence monitors and slices, not just
         // program: the outputs' submit is the frame's last, or else the
         // program's, when nothing was sent after it.
@@ -39535,7 +39553,7 @@ fn build_native_shader_pipeline(
             })],
         }),
         multiview_mask: None,
-        cache: None,
+        cache: pipeline_cache::for_device(device).as_ref(),
     });
     let error_future = error_scope.pop();
     let _ = device.poll(wgpu::PollType::Poll);
@@ -39580,7 +39598,7 @@ fn build_compute_pipeline(device: &wgpu::Device, cache_key: &str, source: &str, 
                 module: &shader,
                 entry_point: Some(compute_entry),
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
-                cache: None,
+                cache: pipeline_cache::for_device(device).as_ref(),
             });
         let error_future = error_scope.pop();
         let _ = device.poll(wgpu::PollType::Poll);
@@ -39659,7 +39677,7 @@ fn build_graph_render_pipeline(device: &wgpu::Device, render_plan: &NativeComput
                     targets: &color_targets,
                 }) },
                 multiview_mask: None,
-                cache: None,
+                cache: pipeline_cache::for_device(device).as_ref(),
             });
         let error_future = error_scope.pop();
         let _ = device.poll(wgpu::PollType::Poll);
@@ -39720,3 +39738,4 @@ mod audio_visual_source_tests {
         assert_eq!(pick(json!({})), master.seq);
     }
 }
+

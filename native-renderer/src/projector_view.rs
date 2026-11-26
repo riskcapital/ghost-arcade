@@ -521,7 +521,7 @@ impl ProjectorViewRenderer {
             multisample: wgpu::MultisampleState::default(),
             fragment: None,
             multiview_mask: None,
-            cache: None,
+            cache: crate::pipeline_cache::for_device(device).as_ref(),
         });
         let color_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("Map Sim projector view"),
@@ -552,7 +552,7 @@ impl ProjectorViewRenderer {
                 })],
             }),
             multiview_mask: None,
-            cache: None,
+            cache: crate::pipeline_cache::for_device(device).as_ref(),
         });
         let overlay_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("Map Sim projector calibration overlay"),
@@ -577,7 +577,7 @@ impl ProjectorViewRenderer {
                 })],
             }),
             multiview_mask: None,
-            cache: None,
+            cache: crate::pipeline_cache::for_device(device).as_ref(),
         });
         let uniform_size = std::mem::size_of::<ViewUniformsGpu>() as u64;
         let main_uniforms = device.create_buffer(&wgpu::BufferDescriptor {

@@ -872,7 +872,7 @@ impl GpuVideoConverter {
                 })],
             }),
             multiview_mask: None,
-            cache: None,
+            cache: crate::pipeline_cache::for_device(device).as_ref(),
         });
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("Windows Video Scaling Sampler"),

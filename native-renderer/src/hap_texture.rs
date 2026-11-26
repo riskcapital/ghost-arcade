@@ -99,7 +99,7 @@ impl HapTextureConverter {
             depth_stencil: None,
             multisample: Default::default(),
             multiview_mask: None,
-            cache: None,
+            cache: crate::pipeline_cache::for_device(device).as_ref(),
         });
         Self {
             pipeline,
