@@ -774,7 +774,7 @@ impl ProjectorViewRenderer {
             })
             .collect();
         if !objects.is_empty() {
-            queue.write_buffer(&self.objects, 0, bytemuck::cast_slice(&objects));
+            crate::churn_probe::write_buffer(queue, &self.objects, 0, bytemuck::cast_slice(&objects));
         }
 
         let mode = request.overlay.map(|overlay| overlay.mode).unwrap_or(ProjectorViewMode::Content);
@@ -808,12 +808,12 @@ impl ProjectorViewRenderer {
                 *slot = [uv[0], uv[1], if *selected { 1.0 } else { 0.0 }, 0.0];
             }
         }
-        queue.write_buffer(&self.main_uniforms, 0, bytemuck::bytes_of(&uniforms));
+        crate::churn_probe::write_buffer(queue, &self.main_uniforms, 0, bytemuck::bytes_of(&uniforms));
 
         if separate_mapping {
             let mut depth_uniforms = ViewUniformsGpu::zeroed();
             depth_uniforms.view_proj = to_f32_mat(&mapping.view_proj);
-            queue.write_buffer(&self.depth_uniforms, 0, bytemuck::bytes_of(&depth_uniforms));
+            crate::churn_probe::write_buffer(queue, &self.depth_uniforms, 0, bytemuck::bytes_of(&depth_uniforms));
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("Map Sim mapping lens depth"),
                 color_attachments: &[],

@@ -280,7 +280,7 @@ impl OutputPresenter {
             mwarp_tangents: stage.mwarp_tangents,
             ..Uniforms::zeroed()
         };
-        queue.write_buffer(&self.uniform, 0, bytemuck::bytes_of(&uniforms));
+        crate::churn_probe::write_buffer(queue, &self.uniform, 0, bytemuck::bytes_of(&uniforms));
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("Calibrated output"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {

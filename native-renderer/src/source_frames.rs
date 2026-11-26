@@ -293,7 +293,7 @@ impl SourceFrameStore {
                     wgpu::Extent3d { width: edge, height: edge, depth_or_array_layers: current as u32 },
                 );
             }
-            queue.submit(Some(encoder.finish()));
+            crate::churn_probe::submit(queue, Some(encoder.finish()));
             inner.shared = Some(new);
         }
         inner.slots.resize(next, None);

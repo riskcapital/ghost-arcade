@@ -24047,7 +24047,7 @@ impl RenderState {
                     &target.export.view,
                 );
             }
-            self.queue.submit(Some(encoder.finish()));
+            churn_probe::submit(&self.queue, Some(encoder.finish()));
         }
         #[cfg(any(target_os = "macos", target_os = "windows"))]
         if let Some(targets) = self.deck_monitor_targets.as_mut() {
@@ -24164,7 +24164,7 @@ impl RenderState {
             self.draw_fullscreen_to_view(&mut encoder, &target.render_view, "Ghost Record Target Pass", None);
             target.export.blitter.copy(&self.device, &mut encoder, &target.render_view, &target.export.view);
         }
-        self.queue.submit(Some(encoder.finish()));
+        churn_probe::submit(&self.queue, Some(encoder.finish()));
         if let Some(target) = self.record_target.as_mut() {
             target.export.frame = target.export.frame.saturating_add(1);
         }
@@ -24305,7 +24305,7 @@ impl RenderState {
                         &self.device, &self.wgpu_adapter, &mut self.linux_slice_windows, &spec.id, &mut encoder, &target.render_view);
                 }
             }
-            self.queue.submit(Some(encoder.finish()));
+            churn_probe::submit(&self.queue, Some(encoder.finish()));
             #[cfg(not(any(target_os = "macos", target_os = "windows")))]
             if let Some(frame) = presented.take() {
                 self.queue.present(frame);
@@ -24561,7 +24561,7 @@ impl RenderState {
                     &self.device, &self.wgpu_adapter, &mut self.linux_slice_windows, &spec.id, &mut encoder, &target.render_view);
             }
         }
-        self.queue.submit(Some(encoder.finish()));
+        churn_probe::submit(&self.queue, Some(encoder.finish()));
         #[cfg(not(any(target_os = "macos", target_os = "windows")))]
         if let Some(frame) = presented.take() {
             self.queue.present(frame);
@@ -24617,7 +24617,7 @@ impl RenderState {
                 height,
             },
         );
-        self.queue.submit(Some(encoder.finish()));
+        churn_probe::submit(&self.queue, Some(encoder.finish()));
         read_texture_to_frame(&self.device, &self.queue, &texture, format, width, height, "Map Sim projector view")
     }
 
@@ -24759,7 +24759,7 @@ impl RenderState {
         self.output_presenter.draw(&self.queue, encoder, &mirror.master_view, self.creative_frame_index,
             MIRROR_MASTER_SIZE, MIRROR_MASTER_SIZE, output_gate, master_stage, time);
         let aspect = width.max(1) as f32 / height.max(1) as f32;
-        self.queue.write_buffer(&mirror.uniform, 0, bytemuck::cast_slice(&[aspect, 0.0f32, 0.0, 0.0]));
+        churn_probe::write_buffer(&self.queue, &mirror.uniform, 0, bytemuck::cast_slice(&[aspect, 0.0f32, 0.0, 0.0]));
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("Mirror dome mesh"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -24888,7 +24888,7 @@ impl RenderState {
             #[cfg(any(target_os = "macos", target_os = "windows"))]
             target.export.blitter.copy(&self.device, &mut encoder, &target.render_view, &target.export.view);
         }
-        self.queue.submit(Some(encoder.finish()));
+        churn_probe::submit(&self.queue, Some(encoder.finish()));
         #[cfg(any(target_os = "macos", target_os = "windows"))]
         if let Some(target) = self.dome_view_target.as_mut() {
             target.export.frame = target.export.frame.saturating_add(1);
@@ -25012,13 +25012,13 @@ impl RenderState {
     }
 
     fn submit_frame(&mut self, encoder: wgpu::CommandEncoder) {
-        self.queue.submit(Some(encoder.finish()));
+        churn_probe::submit(&self.queue, Some(encoder.finish()));
     }
 
     fn finish_frame(&mut self, frame_started: Instant) {
         self.frame_uniform_pool.truncate(self.frame_uniform_cursor);
         // Fence after program, confidence monitors and slices, not just program.
-        let submission = self.queue.submit(std::iter::empty());
+        let submission = churn_probe::submit(&self.queue, std::iter::empty());
         self.gpu_frames_submitted = self.gpu_frames_submitted.saturating_add(1);
         let _ = self.gpu_completion_tx.send((submission, frame_started, Instant::now()));
     }
@@ -25518,7 +25518,7 @@ impl RenderState {
             pass.dispatch_workgroups(element_count.div_ceil(64), 1, 1);
         }
         encoder.copy_buffer_to_buffer(&storage_buffer, 0, &readback_buffer, 0, byte_length);
-        self.queue.submit(Some(encoder.finish()));
+        churn_probe::submit(&self.queue, Some(encoder.finish()));
 
         let slice = readback_buffer.slice(..);
         let (tx, rx) = mpsc::channel();
@@ -25697,7 +25697,7 @@ impl RenderState {
             readback_buffers.push((readback.clone(), readback_buffer, buffer.byte_length));
         }
 
-        self.queue.submit(Some(encoder.finish()));
+        churn_probe::submit(&self.queue, Some(encoder.finish()));
         self.mark_graph_frames_submitted(render_plans.iter().filter_map(|plan| match plan.target {
             NativeComputeGraphRenderTarget::SourceFrame { slot, .. } => Some(slot), _ => None,
         }));
@@ -26491,7 +26491,7 @@ impl RenderState {
         } else if self.frame_uniform_pool[index].byte_length != spec.byte_length {
             self.frame_uniform_pool[index] = self.create_native_compute_graph_buffer(spec);
         } else {
-            self.queue.write_buffer(&self.frame_uniform_pool[index].buffer, 0, &spec.initial_bytes);
+            churn_probe::write_buffer(&self.queue, &self.frame_uniform_pool[index].buffer, 0, &spec.initial_bytes);
         }
         self.frame_uniform_pool[index].clone()
     }
@@ -26569,8 +26569,7 @@ impl RenderState {
                     spec.id
                 ));
             };
-            self.queue
-                .write_buffer(&existing.buffer, 0, &spec.initial_bytes);
+            churn_probe::write_buffer(&self.queue, &existing.buffer, 0, &spec.initial_bytes);
         }
         Ok(())
     }
@@ -26792,7 +26791,7 @@ impl RenderState {
                 Some(index)
             }
             None => {
-                self.queue.write_buffer(&self.native_shader_uniform_buffer, 0, bytemuck::bytes_of(uniforms));
+                churn_probe::write_buffer(&self.queue, &self.native_shader_uniform_buffer, 0, bytemuck::bytes_of(uniforms));
                 None
             }
         };
@@ -26895,7 +26894,7 @@ impl RenderState {
             }
             None => {
                 if let Some(encoder) = own_encoder {
-                    self.queue.submit(Some(encoder.finish()));
+                    churn_probe::submit(&self.queue, Some(encoder.finish()));
                 }
                 self.mark_source_frame_slots_submitted([safe_slot]);
             }
@@ -26976,9 +26975,9 @@ impl RenderState {
             return;
         }
         if let Some(ring) = self.native_shader_ring.as_ref() {
-            self.queue.write_buffer(&ring.buffer, 0, &batch.uniforms);
+            churn_probe::write_buffer(&self.queue, &ring.buffer, 0, &batch.uniforms);
         }
-        self.queue.submit(Some(batch.encoder.finish()));
+        churn_probe::submit(&self.queue, Some(batch.encoder.finish()));
         self.mark_source_frame_slots_submitted(batch.slots);
     }
 
@@ -27311,7 +27310,7 @@ impl RenderState {
             uniforms.isf_pass = [pass_index as f32, pass_count as f32, base_w, base_h];
             uniforms.isf_pass_sizes = pass_sizes;
             uniforms.isf_audio = audio_info;
-            self.queue.write_buffer(&state.uniform_buffers[pass_index], 0, bytemuck::bytes_of(&uniforms));
+            churn_probe::write_buffer(&self.queue, &state.uniform_buffers[pass_index], 0, bytemuck::bytes_of(&uniforms));
 
             let mut entries = Vec::with_capacity(3 + NATIVE_ISF_EXTRA_TEXTURE_BINDINGS as usize);
             entries.push(wgpu::BindGroupEntry {
@@ -27433,7 +27432,7 @@ impl RenderState {
             self.source_frame_blitter.copy(&self.device, &mut encoder, scale_view, &slot_view);
         }
         self.generate_source_frame_mips(&mut encoder, safe_slot);
-        self.queue.submit(Some(encoder.finish()));
+        churn_probe::submit(&self.queue, Some(encoder.finish()));
         self.isf_pass_states.insert(state_key, state);
         self.mark_source_frame_slots_submitted([safe_slot]);
         self.last_frame_error = None;
@@ -27527,7 +27526,7 @@ impl RenderState {
                 wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
             );
         }
-        self.queue.submit(Some(encoder.finish()));
+        churn_probe::submit(&self.queue, Some(encoder.finish()));
         self.mark_source_frame_slots_submitted([output_slot]);
     }
 
@@ -27579,9 +27578,9 @@ impl RenderState {
                 label: Some("Ghost Render Core Source Frame Mip Encoder"),
             });
             self.generate_source_frame_mips(&mut encoder, safe_slot);
-            self.queue.submit(Some(encoder.finish()));
+            churn_probe::submit(&self.queue, Some(encoder.finish()));
         } else {
-            self.queue.submit(std::iter::empty());
+            churn_probe::submit(&self.queue, std::iter::empty());
         }
         self.mark_source_frame_slots_submitted([safe_slot]);
         Some(payload.len())
@@ -27628,7 +27627,7 @@ impl RenderState {
                 depth_or_array_layers: 1,
             },
         );
-        self.queue.submit(std::iter::empty());
+        churn_probe::submit(&self.queue, std::iter::empty());
         self.mark_source_frame_slots_submitted([safe_slot]);
         Some(payload.len())
     }
@@ -27643,7 +27642,7 @@ impl RenderState {
                 label: Some("Ghost Render Core Source Frame Mip Encoder"),
             });
         self.generate_source_frame_mips(&mut encoder, safe_slot);
-        self.queue.submit(Some(encoder.finish()));
+        churn_probe::submit(&self.queue, Some(encoder.finish()));
         self.mark_source_frame_slots_submitted([safe_slot]);
     }
 
@@ -27683,7 +27682,7 @@ impl RenderState {
                 multiview_mask: None,
             }));
         }
-        self.queue.submit(Some(encoder.finish()));
+        churn_probe::submit(&self.queue, Some(encoder.finish()));
     }
 
     /// Let go of the shared texture a slot kept open (the slot was released
@@ -27838,7 +27837,7 @@ impl RenderState {
         self.source_frame_blitter
             .copy(&self.device, &mut encoder, &source_view, &target_view);
         self.generate_source_frame_mips(&mut encoder, safe_slot);
-        self.queue.submit(Some(encoder.finish()));
+        churn_probe::submit(&self.queue, Some(encoder.finish()));
         self.mark_source_frame_slots_submitted([safe_slot]);
         Ok((target.width as usize)
             .saturating_mul(target.height as usize)
@@ -27980,7 +27979,7 @@ impl RenderState {
         self.source_frame_blitter
             .copy(&self.device, &mut encoder, &source_view, &target_view);
         self.generate_source_frame_mips(&mut encoder, safe_slot);
-        self.queue.submit(Some(encoder.finish()));
+        churn_probe::submit(&self.queue, Some(encoder.finish()));
         self.mark_source_frame_slots_submitted([safe_slot]);
         Ok((target.width as usize)
             .saturating_mul(target.height as usize)
@@ -28039,7 +28038,7 @@ impl RenderState {
             self.hap_converter.finish_uploads(&encoder);
         }
         drop(batch_guard);
-        self.queue.submit(Some(encoder.finish()));
+        churn_probe::submit(&self.queue, Some(encoder.finish()));
         self.mark_source_frame_slots_submitted([safe_slot]);
         // The decoder/bridge may recycle this surface only after rendering
         // has completed. Submission alone does not establish lifetime.
@@ -28052,7 +28051,7 @@ impl RenderState {
         let Some(batch) = self.hap_upload_batch.lock().unwrap().take() else { return; };
         let Some(encoder) = batch.encoder else { return; };
         self.hap_converter.finish_uploads(&encoder);
-        self.queue.submit(Some(encoder.finish()));
+        churn_probe::submit(&self.queue, Some(encoder.finish()));
         self.mark_source_frame_slots_submitted(batch.slots);
         self.queue.on_submitted_work_done(move || drop(batch.frames));
     }
@@ -28114,7 +28113,7 @@ impl RenderState {
                 label: Some("Ghost Snapshot Preview Blit"),
             });
             blitter.copy(&self.device, &mut encoder, &src_view, &dst_view);
-            self.queue.submit(Some(encoder.finish()));
+            churn_probe::submit(&self.queue, Some(encoder.finish()));
         }
         let (texture, _, w, h) = self.snapshot_preview.as_ref().expect("snapshot preview present");
         prepare_texture_readback(
@@ -28161,7 +28160,7 @@ impl RenderState {
             source.copy_info_at(0, x, y),
             raw.as_image_copy(), wgpu::Extent3d { width, height, depth_or_array_layers: 1 });
         blitter.copy(&self.device, &mut encoder, &raw.create_view(&Default::default()), &target.create_view(&Default::default()));
-        self.queue.submit(Some(encoder.finish()));
+        churn_probe::submit(&self.queue, Some(encoder.finish()));
         prepare_texture_readback(&self.device, &self.queue, target, wgpu::TextureFormat::Rgba8Unorm, w, h, "Crop preview")
     }
 
@@ -28337,8 +28336,7 @@ impl RenderState {
                 slots
             },
         };
-        self.queue
-            .write_buffer(&self.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
+        churn_probe::write_buffer(&self.queue, &self.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
 
         // Only the slots the compositor will actually read need to reach the
         // GPU: `heartbeat.wgsl` walks `for i in 0..64 { if f32(i) >= layer_count
@@ -28364,21 +28362,21 @@ impl RenderState {
         if self.layer_upload_last != layer_bytes {
             build_mesh_cell_bounds(&self.layer_upload_scratch[..filled], &mut self.mesh_cell_bounds_scratch);
             if self.mesh_cell_bounds_last != self.mesh_cell_bounds_scratch {
-                self.queue.write_buffer(
+                churn_probe::write_buffer(&self.queue, 
                     &self.layer_tile_buffer,
                     (MESH_CELL_BOUNDS_BASE * std::mem::size_of::<u32>()) as u64,
                     bytemuck::cast_slice(&self.mesh_cell_bounds_scratch),
                 );
                 std::mem::swap(&mut self.mesh_cell_bounds_last, &mut self.mesh_cell_bounds_scratch);
             }
-            self.queue.write_buffer(&self.layer_buffer, 0, layer_bytes);
+            churn_probe::write_buffer(&self.queue, &self.layer_buffer, 0, layer_bytes);
             self.layer_upload_last.clear();
             self.layer_upload_last.extend_from_slice(layer_bytes);
         }
         let culls = self.layer_upload_scratch[..filled].iter().map(|layer| layer.cull).collect::<Vec<_>>();
         build_layer_tiles(&culls, &mut self.layer_tile_scratch);
         if self.layer_tile_last != self.layer_tile_scratch {
-            self.queue.write_buffer(&self.layer_tile_buffer, 0, bytemuck::cast_slice(&self.layer_tile_scratch));
+            churn_probe::write_buffer(&self.queue, &self.layer_tile_buffer, 0, bytemuck::cast_slice(&self.layer_tile_scratch));
             std::mem::swap(&mut self.layer_tile_last, &mut self.layer_tile_scratch);
         }
 
@@ -28389,7 +28387,7 @@ impl RenderState {
             let preview_len = source_previews
                 .len()
                 .min(MAX_SOURCE_PREVIEWS * SOURCE_PREVIEW_PIXELS);
-            self.queue.write_buffer(
+            churn_probe::write_buffer(&self.queue, 
                 &self.source_preview_buffer,
                 0,
                 bytemuck::cast_slice(&source_previews[..preview_len]),
@@ -28551,7 +28549,7 @@ impl RenderState {
         if item_count == 0 {
             return;
         }
-        self.queue.write_buffer(
+        churn_probe::write_buffer(&self.queue, 
             &self.stage3d_overlay_uniform_buffer,
             0,
             bytemuck::bytes_of(&Stage3DOverlayUniforms {
@@ -28560,7 +28558,7 @@ impl RenderState {
                 time: time_seconds.unwrap_or_else(|| shader_clock_seconds(self.start_time.elapsed().as_secs_f64())),
             }),
         );
-        self.queue.write_buffer(
+        churn_probe::write_buffer(&self.queue, 
             &self.stage3d_overlay_item_buffer,
             0,
             bytemuck::cast_slice(&overlay_items[..item_count]),
@@ -28604,7 +28602,7 @@ impl RenderState {
             return;
         }
         let aspect = self.config.width.max(1) as f32 / self.config.height.max(1) as f32;
-        self.queue.write_buffer(
+        churn_probe::write_buffer(&self.queue, 
             &self.stage3d_mesh_uniform_buffer,
             0,
             bytemuck::bytes_of(&Stage3DMeshUniforms {
@@ -28633,7 +28631,7 @@ impl RenderState {
                 atmosphere: frame.atmosphere,
             }),
         );
-        self.queue.write_buffer(
+        churn_probe::write_buffer(&self.queue, 
             &self.stage3d_mesh_item_buffer,
             0,
             bytemuck::cast_slice(&frame.items[..item_count]),
@@ -28772,7 +28770,7 @@ impl RenderState {
                 gpu_timing.resolve_to_readback(&mut encoder);
             }
         }
-        self.queue.submit(Some(encoder.finish()));
+        churn_probe::submit(&self.queue, Some(encoder.finish()));
         self.begin_graph_readbacks();
         if should_record_timing {
             if let Some(gpu_timing) = self.gpu_timing.as_mut() {
@@ -35429,7 +35427,7 @@ fn prepare_texture_readback(
             depth_or_array_layers: 1,
         },
     );
-    queue.submit(Some(encoder.finish()));
+    churn_probe::submit(queue, Some(encoder.finish()));
 
     Ok(PendingFrameReadback { device: device.clone(), buffer, format, width, height, unpadded_bytes_per_row, padded_bytes_per_row })
 }

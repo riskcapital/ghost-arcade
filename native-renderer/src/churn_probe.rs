@@ -4,6 +4,10 @@
 //! then carries `gpu_object_churn` (running totals since start). Divide the
 //! change in a total by the change in `gpu_frames_submitted` for a per-frame
 //! figure. Off (the default) each note is one relaxed load of a flag set once.
+//!
+//! It also counts queue submissions and the bytes the renderer hands to
+//! `write_buffer`, so the same division gives submits and buffer bytes per
+//! frame. Those go through `submit` and `write_buffer` here.
 
 use serde::Serialize;
 use std::sync::{
@@ -15,6 +19,8 @@ static ENABLED: OnceLock<bool> = OnceLock::new();
 static ON: AtomicBool = AtomicBool::new(false);
 static BIND_GROUPS: AtomicU64 = AtomicU64::new(0);
 static TEXTURE_VIEWS: AtomicU64 = AtomicU64::new(0);
+static SUBMITS: AtomicU64 = AtomicU64::new(0);
+static BUFFER_BYTES: AtomicU64 = AtomicU64::new(0);
 
 /// Read the switch once, at start.
 pub fn init() {
@@ -36,10 +42,30 @@ pub fn texture_view() {
     }
 }
 
+/// `queue.submit`, counted.
+#[inline]
+pub fn submit<I: IntoIterator<Item = wgpu::CommandBuffer>>(queue: &wgpu::Queue, buffers: I) -> wgpu::SubmissionIndex {
+    if ON.load(Ordering::Relaxed) {
+        SUBMITS.fetch_add(1, Ordering::Relaxed);
+    }
+    queue.submit(buffers)
+}
+
+/// `queue.write_buffer`, counted.
+#[inline]
+pub fn write_buffer(queue: &wgpu::Queue, buffer: &wgpu::Buffer, offset: u64, data: &[u8]) {
+    if ON.load(Ordering::Relaxed) {
+        BUFFER_BYTES.fetch_add(data.len() as u64, Ordering::Relaxed);
+    }
+    queue.write_buffer(buffer, offset, data);
+}
+
 #[derive(Clone, Copy, Debug, Serialize)]
 pub struct ChurnCounts {
     pub bind_groups: u64,
     pub texture_views: u64,
+    pub submits: u64,
+    pub buffer_bytes: u64,
 }
 
 /// The running totals, or None while the probe is off.
@@ -47,5 +73,7 @@ pub fn counts() -> Option<ChurnCounts> {
     ON.load(Ordering::Relaxed).then(|| ChurnCounts {
         bind_groups: BIND_GROUPS.load(Ordering::Relaxed),
         texture_views: TEXTURE_VIEWS.load(Ordering::Relaxed),
+        submits: SUBMITS.load(Ordering::Relaxed),
+        buffer_bytes: BUFFER_BYTES.load(Ordering::Relaxed),
     })
 }
