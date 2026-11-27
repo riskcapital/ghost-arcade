@@ -198,6 +198,61 @@ jobs:
             && test "${{ steps.golden.outcome }}" = "success" && test "${{ steps.smoke.outcome }}" = "success" \
             && test "${{ steps.video.outcome }}" = "success"
 
+  # ── Raster compositor against the legacy one ────────────────────────────
+  # The compositor scene set drawn by both compositors on lavapipe, compared
+  # pixel for pixel (within one 8-bit step). Without float32 blending the
+  # raster compositor is not made and the trace says so.
+  raster-compare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install prerequisites
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends $APT_BUILD $APT_RUNTIME
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            native-renderer/target
+          key: linux-verify-picture-slots-${{ hashFiles('native-renderer/Cargo.lock') }}
+          restore-keys: linux-verify-picture-slots-
+      - name: Build native render core
+        run: node scripts/build-native-core.mjs --arch=host
+      - run: npm ci
+      - name: Device and raster compositor
+        run: |
+          xvfb-run -a vulkaninfo --summary 2>/dev/null | grep -iE 'deviceName|driverName|apiVersion' || true
+          xvfb-run -a vulkaninfo 2>/dev/null | grep -iA2 'R32G32B32A32_SFLOAT' | head -n 12 || true
+      - name: Scenes, raster against legacy
+        id: scenes
+        continue-on-error: true
+        env:
+          GA_CORE_COMPOSITOR_BENCH_TRACE: ${{ github.workspace }}/raster-scenes.txt
+        run: xvfb-run -a npx vitest run --config vitest.native.config.ts src/lib/renderer/compositorBench.runtime.native.test.ts -t "draws every scene the same with the raster compositor"
+      - name: Composite views, raster against legacy
+        id: views
+        continue-on-error: true
+        env:
+          GA_CORE_COMPOSITOR_BENCH_TRACE: ${{ github.workspace }}/raster-views.txt
+        run: xvfb-run -a npx vitest run --config vitest.native.config.ts src/lib/renderer/compositorBench.runtime.native.test.ts -t "draws the composite views the same with the raster compositor"
+      - name: Verdict
+        if: always()
+        run: |
+          {
+            echo "## Raster compositor against legacy (lavapipe)"
+            echo "scenes: ${{ steps.scenes.outcome }}, views: ${{ steps.views.outcome }}"
+            echo '```'; cat raster-scenes.txt 2>/dev/null || echo "no scene trace"; echo '```'
+            echo '```'; cat raster-views.txt 2>/dev/null || echo "no view trace"; echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          cat raster-scenes.txt raster-views.txt 2>/dev/null || true
+          test "${{ steps.scenes.outcome }}" = "success" && test "${{ steps.views.outcome }}" = "success"
+
   # ── Type check ──────────────────────────────────────────────────────────
   check:
     runs-on: ubuntu-latest

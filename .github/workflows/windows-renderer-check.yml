@@ -96,6 +96,55 @@ jobs:
         run: node scripts/native-core-start-check.mjs
       - name: Test the import check
         run: npx vitest run src/lib/renderer/windowsCoreImports.test.ts src/lib/renderer/nativeCoreExit.test.ts
+  raster-compare:
+    # The compositor scene set drawn by the raster and the legacy compositor,
+    # compared pixel for pixel (within one 8-bit step). The hosted runner has
+    # no GPU: the core falls back to the D3D12 software adapter (WARP,
+    # "Microsoft Basic Render Driver"). Without float32 blending the raster
+    # compositor is not made and the trace says so.
+    runs-on: windows-2022
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            native-renderer/target
+          key: windows-core-release-${{ hashFiles('native-renderer/Cargo.lock', '.cargo/config.toml') }}
+      - name: Build the render core as the release does
+        run: npm run native:build
+      - name: Scenes, raster against legacy
+        id: scenes
+        continue-on-error: true
+        env:
+          GA_CORE_COMPOSITOR_BENCH_TRACE: ${{ github.workspace }}/raster-scenes.txt
+        run: npx vitest run --config vitest.native.config.ts src/lib/renderer/compositorBench.runtime.native.test.ts -t "draws every scene the same with the raster compositor"
+      - name: Composite views, raster against legacy
+        id: views
+        continue-on-error: true
+        env:
+          GA_CORE_COMPOSITOR_BENCH_TRACE: ${{ github.workspace }}/raster-views.txt
+        run: npx vitest run --config vitest.native.config.ts src/lib/renderer/compositorBench.runtime.native.test.ts -t "draws the composite views the same with the raster compositor"
+      - name: Verdict
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "## Raster compositor against legacy (WARP)"
+            echo "scenes: ${{ steps.scenes.outcome }}, views: ${{ steps.views.outcome }}"
+            echo '```'; cat raster-scenes.txt 2>/dev/null || echo "no scene trace"; echo '```'
+            echo '```'; cat raster-views.txt 2>/dev/null || echo "no view trace"; echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          cat raster-scenes.txt raster-views.txt 2>/dev/null || true
+          test "${{ steps.scenes.outcome }}" = "success" && test "${{ steps.views.outcome }}" = "success"
   compile-and-unit-tests:
     runs-on: windows-2022
     steps:
