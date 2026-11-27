@@ -102,9 +102,10 @@ jobs:
     # no GPU: the core falls back to the D3D12 software adapter (WARP,
     # "Microsoft Basic Render Driver"), where so far not even the legacy
     # compositor's first frame retires (the first step reports it), so this
-    # job runs on ci/windows-** pushes only, not on pull requests. Without
-    # float32 blending the raster compositor is not made and the trace says so.
-    if: github.event_name != 'pull_request'
+    # job only runs when started by hand (for a runner with a real GPU).
+    # Without float32 blending the raster compositor is not made and the
+    # trace says so.
+    if: github.event_name == 'workflow_dispatch'
     runs-on: windows-2022
     timeout-minutes: 90
     env:
