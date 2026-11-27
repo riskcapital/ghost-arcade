@@ -229,11 +229,16 @@ jobs:
         run: |
           xvfb-run -a vulkaninfo --summary 2>/dev/null | grep -iE 'deviceName|driverName|apiVersion' || true
           xvfb-run -a vulkaninfo 2>/dev/null | grep -iA2 'R32G32B32A32_SFLOAT' | head -n 12 || true
-      - name: Scenes, raster against legacy
-        id: scenes
+      - name: Scenes, raster against legacy (every scene, measured)
         continue-on-error: true
         env:
+          GA_CORE_COMPOSITOR_BENCH_MEASURE: '1'
           GA_CORE_COMPOSITOR_BENCH_TRACE: ${{ github.workspace }}/raster-scenes.txt
+          GA_CORE_COMPOSITOR_BENCH_DUMP: ${{ github.workspace }}/raster-dump
+        run: xvfb-run -a npx vitest run --config vitest.native.config.ts src/lib/renderer/compositorBench.runtime.native.test.ts -t "draws every scene the same with the raster compositor"
+      - name: Scenes, raster against legacy (within tolerance)
+        id: scenes
+        continue-on-error: true
         run: xvfb-run -a npx vitest run --config vitest.native.config.ts src/lib/renderer/compositorBench.runtime.native.test.ts -t "draws every scene the same with the raster compositor"
       - name: Composite views, raster against legacy
         id: views
@@ -241,6 +246,15 @@ jobs:
         env:
           GA_CORE_COMPOSITOR_BENCH_TRACE: ${{ github.workspace }}/raster-views.txt
         run: xvfb-run -a npx vitest run --config vitest.native.config.ts src/lib/renderer/compositorBench.runtime.native.test.ts -t "draws the composite views the same with the raster compositor"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: raster-compare-${{ runner.os }}
+          path: |
+            raster-dump
+            raster-scenes.txt
+            raster-views.txt
+          retention-days: 7
       - name: Verdict
         if: always()
         run: |

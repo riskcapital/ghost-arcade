@@ -523,8 +523,8 @@ async function renderScene(env: Env, scene: Scene, width: number, height: number
     // Settle: pipelines built, every picture uploaded and drawn.
     await sleep(400);
     await rpc.send('submit_commands', { commands: [{ type: 'present' }] });
-    await rpc.send('frame_snapshot', {});
-    const frame = await rpc.send('frame_snapshot', { include_pixels: true });
+    await snapshot(rpc, 'frame_snapshot', {});
+    const frame = await snapshot(rpc, 'frame_snapshot', { include_pixels: true });
     const pixels = Buffer.from(frame.rgba_b64, 'base64');
     let gpuMs: number | null = null;
     let gpuP10: number | null = null;
@@ -713,11 +713,23 @@ type ViewRun = {
   cpuMs: number | null;
 };
 
+/** A read-back, asked again while the core's own wait for the GPU (a few
+ *  seconds) runs out: a software adapter can take longer over one frame. */
+async function snapshot(rpc: ReturnType<typeof core>, method: string, params: Command): Promise<any> {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await rpc.send(method, params);
+    } catch (error) {
+      if (attempt >= 3 * rpcDeadlineScale || !/GPU readback timed out/.test(String(error))) throw error;
+    }
+  }
+}
+
 async function readView(rpc: ReturnType<typeof core>, view: string): Promise<any> {
-  if (view === 'program') return rpc.send('frame_snapshot', { include_pixels: true });
-  if (view.startsWith('deck:')) return rpc.send('frame_snapshot', { deck_monitor: view.slice(5), include_pixels: true });
-  if (view === 'record') return rpc.send('output_shared_texture_snapshot', { include_pixels: true, capture_source: 'record_target' });
-  return rpc.send('output_shared_texture_snapshot', { include_pixels: true, capture_source: view });
+  if (view === 'program') return snapshot(rpc, 'frame_snapshot', { include_pixels: true });
+  if (view.startsWith('deck:')) return snapshot(rpc, 'frame_snapshot', { deck_monitor: view.slice(5), include_pixels: true });
+  if (view === 'record') return snapshot(rpc, 'output_shared_texture_snapshot', { include_pixels: true, capture_source: 'record_target' });
+  return snapshot(rpc, 'output_shared_texture_snapshot', { include_pixels: true, capture_source: view });
 }
 
 async function renderViews(env: Env, scene: ViewScene, width: number, height: number, timed: boolean): Promise<ViewRun> {
@@ -883,11 +895,12 @@ suite('Compositor scene set', () => {
   }, 420000 * rpcDeadlineScale);
 
   // Deck monitors, the record target and Screens drawn straight from the
-  // compositor, with the same tolerance.
+  // compositor, with the same tolerance. The record target is made on macOS
+  // and Windows only.
   it('draws the composite views the same with the raster compositor as with the legacy one', async () => {
     const width = 640;
     const height = 360;
-    for (const scene of VIEW_SCENES) {
+    for (const scene of VIEW_SCENES.filter(scene => process.platform !== 'linux' || !scene.views.includes('record'))) {
       const legacy = await renderViews({}, scene, width, height, false);
       const raster = await renderViews({ GA_CORE_COMPOSITOR: 'raster' }, scene, width, height, false);
       const base = process.env.GA_CORE_COMPOSITOR_BENCH_BASE

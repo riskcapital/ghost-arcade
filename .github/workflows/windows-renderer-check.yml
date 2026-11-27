@@ -104,6 +104,9 @@ jobs:
     # compositor is not made and the trace says so.
     runs-on: windows-2022
     timeout-minutes: 90
+    env:
+      # A software adapter: RPC and read-back deadlines stretched as on lavapipe.
+      GA_TEST_SOFTWARE_VULKAN: '1'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -121,11 +124,16 @@ jobs:
           key: windows-core-release-${{ hashFiles('native-renderer/Cargo.lock', '.cargo/config.toml') }}
       - name: Build the render core as the release does
         run: npm run native:build
-      - name: Scenes, raster against legacy
-        id: scenes
+      - name: Scenes, raster against legacy (every scene, measured)
         continue-on-error: true
         env:
+          GA_CORE_COMPOSITOR_BENCH_MEASURE: '1'
           GA_CORE_COMPOSITOR_BENCH_TRACE: ${{ github.workspace }}/raster-scenes.txt
+          GA_CORE_COMPOSITOR_BENCH_DUMP: ${{ github.workspace }}/raster-dump
+        run: npx vitest run --config vitest.native.config.ts src/lib/renderer/compositorBench.runtime.native.test.ts -t "draws every scene the same with the raster compositor"
+      - name: Scenes, raster against legacy (within tolerance)
+        id: scenes
+        continue-on-error: true
         run: npx vitest run --config vitest.native.config.ts src/lib/renderer/compositorBench.runtime.native.test.ts -t "draws every scene the same with the raster compositor"
       - name: Composite views, raster against legacy
         id: views
@@ -133,6 +141,15 @@ jobs:
         env:
           GA_CORE_COMPOSITOR_BENCH_TRACE: ${{ github.workspace }}/raster-views.txt
         run: npx vitest run --config vitest.native.config.ts src/lib/renderer/compositorBench.runtime.native.test.ts -t "draws the composite views the same with the raster compositor"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: raster-compare-${{ runner.os }}
+          path: |
+            raster-dump
+            raster-scenes.txt
+            raster-views.txt
+          retention-days: 7
       - name: Verdict
         if: always()
         shell: bash
