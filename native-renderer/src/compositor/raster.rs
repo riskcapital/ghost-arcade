@@ -798,6 +798,14 @@ mod tests {
 
     #[test]
     fn raster_plan_falls_back_for_what_it_does_not_draw() {
+        // Each layer record is tens of KB and this test builds dozens of
+        // them as temporaries, which overflows the 2 MB test thread in a
+        // debug build.
+        std::thread::Builder::new().stack_size(64 << 20)
+            .spawn(raster_plan_falls_back_body).unwrap().join().unwrap();
+    }
+
+    fn raster_plan_falls_back_body() {
         let mut bright = quad(0.0, 0.0, 1.0, 1.0, 0.0);
         bright.effect0 = [3.0, 2.0, 0.0, 1.0];
         let past = Err("screen or multiply over colour past 1.0");
