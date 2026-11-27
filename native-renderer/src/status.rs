@@ -292,6 +292,8 @@ pub(crate) struct CoreStatus {
     pub(crate) supports_waitable_object: bool,
     pub(crate) gpu_timing_supported: bool,
     pub(crate) avg_render_cpu_ms: f64,
+    /// The last frame's render call alone (avg_render_cpu_ms averages them).
+    pub(crate) last_render_cpu_ms: f64,
     pub(crate) last_render_gpu_ms: f64,
     pub(crate) avg_render_gpu_ms: f64,
     pub(crate) max_render_gpu_ms: f64,
@@ -1295,6 +1297,7 @@ impl App {
             supports_waitable_object: false,
             gpu_timing_supported,
             avg_render_cpu_ms: self.render_cpu_ema_ms,
+            last_render_cpu_ms: self.stats.last_render_cpu_ms,
             last_render_gpu_ms,
             avg_render_gpu_ms,
             max_render_gpu_ms,

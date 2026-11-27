@@ -19,7 +19,10 @@
 // settings the benchmark compares (default: source mips on and off).
 // The raster compositor (GA_CORE_COMPOSITOR=raster) is compared with the
 // legacy one on every scene too; the benchmark also prints the CPU time of
-// the frame's render call.
+// the frame's render call: the core's running average and the fast end
+// (p10) of single frames. On Apple silicon the average follows where the
+// scheduler put the core's main thread (an efficiency core takes about three
+// times as long over the same frame), so compare compositors by the p10.
 import { spawn } from 'node:child_process';
 import { appendFileSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -478,7 +481,7 @@ const SCENES: Scene[] = [
 
 type Run = {
   pixels: Buffer; width: number; height: number; bgra: boolean; gpuMs: number | null; gpuP10: number | null;
-  cpuMs: number | null; passes: string; layerBytesPerFrame: number | null;
+  cpuMs: number | null; cpuP10: number | null; passes: string; layerBytesPerFrame: number | null;
   /** GA_CORE_COMPOSITOR=raster: frames it drew and why it last did not. */
   raster: { frames: number; fallback_frames: number; last_fallback: string; last_passes?: number } | null;
 };
@@ -493,12 +496,12 @@ async function renderScene(env: Env, scene: Scene, width: number, height: number
     expect(started?.backend_ready).toBe(true);
     // The compositor build with source mips is made on a worker after start.
     if (env.GA_CORE_SOURCE_MIPS === '1' && !env.CORE_BINARY) {
-      const ready = Date.now() + 30000;
+      const ready = Date.now() + 30000 * rpcDeadlineScale;
       while (!(await rpc.send('capabilities'))?.features?.compositor_source_mips_ready && Date.now() < ready) await sleep(50);
     }
     // So is the raster compositor.
     if (env.GA_CORE_COMPOSITOR === 'raster' && !env.CORE_BINARY) {
-      const ready = Date.now() + 30000;
+      const ready = Date.now() + 30000 * rpcDeadlineScale;
       while (!(await rpc.send('capabilities'))?.features?.compositor_raster_ready && Date.now() < ready) await sleep(50);
     }
     await rpc.send('set_render_clock', { mode: 'manual', time: 1.25 });
@@ -526,6 +529,7 @@ async function renderScene(env: Env, scene: Scene, width: number, height: number
     let gpuMs: number | null = null;
     let gpuP10: number | null = null;
     let cpuMs: number | null = null;
+    let cpuP10: number | null = null;
     let passes = '';
     let layerBytesPerFrame: number | null = null;
     if (timed) {
@@ -534,6 +538,7 @@ async function renderScene(env: Env, scene: Scene, width: number, height: number
       // output composite pass), sampled while the scene stands still.
       const samples: number[] = [];
       const cpuSamples: number[] = [];
+      const frameCpuSamples: number[] = [];
       let lastSampled = 0;
       const timeEnd = performance.now() + seconds * 1000;
       while (performance.now() < timeEnd) {
@@ -546,7 +551,15 @@ async function renderScene(env: Env, scene: Scene, width: number, height: number
         // the core's running average.
         const cpu = Number(status.avg_render_cpu_ms ?? 0);
         if (cpu > 0) cpuSamples.push(cpu);
+        // One frame's own CPU time. On Apple silicon the scheduler moves the
+        // core's main thread between performance and efficiency cores, where
+        // the same frame takes about three times as long; the fast end of
+        // the spread is the frame's work on a performance core.
+        const frameCpu = Number(status.last_render_cpu_ms ?? 0);
+        if (frameCpu > 0) frameCpuSamples.push(frameCpu);
       }
+      frameCpuSamples.sort((a, b) => a - b);
+      cpuP10 = frameCpuSamples.length ? frameCpuSamples[Math.floor(frameCpuSamples.length * 0.1)] : null;
       cpuSamples.sort((a, b) => a - b);
       cpuMs = cpuSamples.length ? cpuSamples[Math.floor(cpuSamples.length / 2)] : null;
       samples.sort((a, b) => a - b);
@@ -571,7 +584,7 @@ async function renderScene(env: Env, scene: Scene, width: number, height: number
     }
     const raster = (await rpc.send('stats'))?.compositor_raster ?? null;
     return { pixels, width: Number(frame.width), height: Number(frame.height),
-      bgra: String(frame.format).toLowerCase().startsWith('bgra'), gpuMs, gpuP10, cpuMs, passes, layerBytesPerFrame, raster };
+      bgra: String(frame.format).toLowerCase().startsWith('bgra'), gpuMs, gpuP10, cpuMs, cpuP10, passes, layerBytesPerFrame, raster };
   } finally {
     await rpc.close();
   }
@@ -715,7 +728,7 @@ async function renderViews(env: Env, scene: ViewScene, width: number, height: nu
     } }, 30000);
     expect(started?.backend_ready).toBe(true);
     if (env.GA_CORE_COMPOSITOR === 'raster' && !env.CORE_BINARY) {
-      const ready = Date.now() + 30000;
+      const ready = Date.now() + 30000 * rpcDeadlineScale;
       while (!(await rpc.send('capabilities'))?.features?.compositor_raster_ready && Date.now() < ready) await sleep(50);
     }
     await rpc.send('set_render_clock', { mode: 'manual', time: 1.25 });
@@ -728,7 +741,7 @@ async function renderViews(env: Env, scene: ViewScene, width: number, height: nu
       const frame = await readView(rpc, view);
       if (!frame?.rgba_b64) throw new Error(`${scene.name}: no pixels for ${view}`);
       views.set(view, { pixels: Buffer.from(frame.rgba_b64, 'base64'), width: Number(frame.width), height: Number(frame.height),
-        bgra: String(frame.format ?? 'bgra').toLowerCase().startsWith('bgra'), gpuMs: null, gpuP10: null, cpuMs: null, passes: '',
+        bgra: String(frame.format ?? 'bgra').toLowerCase().startsWith('bgra'), gpuMs: null, gpuP10: null, cpuMs: null, cpuP10: null, passes: '',
         layerBytesPerFrame: null, raster: null });
     }
     const passMs: Record<string, number> = {};
@@ -861,13 +874,13 @@ suite('Compositor scene set', () => {
       dump(`${scene.name}${tag}-legacy`, legacy, legacy.bgra);
       dump(`${scene.name}${tag}-raster`, raster, raster.bgra);
       const diff = difference(legacy, raster);
-      trace(`scene ${scene.name}${tag}: max diff ${diff.max}, differing ${(diff.differing * 100).toFixed(4)}%${rasterNote(raster)}`);
+      trace(`scene ${scene.name}${tag}: max diff ${diff.max}, differing ${(diff.differing * 100).toFixed(4)}%${raster.raster ? rasterNote(raster) : ', no raster compositor on this device'}`);
       if (measureOnly) continue;
       expect(diff.max, `${scene.name}${tag}: max channel difference`).toBeLessThanOrEqual(1);
       expect(diff.differing, `${scene.name}${tag}: share of channels off by one`).toBeLessThan(0.001);
       expect(differenceOver(legacy, raster, 1)).toBe(0);
     }
-  }, 420000);
+  }, 420000 * rpcDeadlineScale);
 
   // Deck monitors, the record target and Screens drawn straight from the
   // compositor, with the same tolerance.
@@ -906,7 +919,7 @@ suite('Compositor scene set', () => {
         }
       }
     }
-  }, 420000);
+  }, 420000 * rpcDeadlineScale);
 
   // GA_CORE_COMPOSITOR_BENCH=1: GPU time of each view's composite pass
   // (GA_CORE_PASS_TIMING) and the CPU time of the frame, both settings
@@ -965,7 +978,7 @@ suite('Compositor scene set', () => {
       }
       for (const [name, run] of best) {
         runs.push([name, run]);
-        lines.push(`  ${scene.name.padEnd(20)} ${name.padEnd(12)} gpu median ${run.gpuMs?.toFixed(2) ?? 'n/a'} ms, p10 ${run.gpuP10?.toFixed(2) ?? 'n/a'} ms, cpu median ${run.cpuMs?.toFixed(2) ?? 'n/a'} ms, layer upload ${run.layerBytesPerFrame?.toFixed(0) ?? 'n/a'} B/frame${rasterNote(run)}`);
+        lines.push(`  ${scene.name.padEnd(20)} ${name.padEnd(12)} gpu median ${run.gpuMs?.toFixed(2) ?? 'n/a'} ms, p10 ${run.gpuP10?.toFixed(2) ?? 'n/a'} ms, cpu median ${run.cpuMs?.toFixed(2) ?? 'n/a'} ms (frame p10 ${run.cpuP10?.toFixed(2) ?? 'n/a'}), layer upload ${run.layerBytesPerFrame?.toFixed(0) ?? 'n/a'} B/frame${rasterNote(run)}`);
       }
       for (const [name, run] of runs.slice(1)) {
         const diff = difference(runs[0][1], run);
