@@ -124,6 +124,39 @@ jobs:
           key: windows-core-release-${{ hashFiles('native-renderer/Cargo.lock', '.cargo/config.toml') }}
       - name: Build the render core as the release does
         run: npm run native:build
+      - name: Frames on the software adapter
+        continue-on-error: true
+        shell: bash
+        run: |
+          for store in default shared; do
+          echo "== picture slots: $store"
+          GA_SOURCE_FRAMES=$([ $store = shared ] && echo shared || echo '') node --input-type=module <<'EOF'
+          import { spawn } from 'node:child_process';
+          const child = spawn('native-renderer/target/release/ghost-render-core.exe', [], { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
+          let out = '', err = '', id = 0;
+          const pending = new Map();
+          child.stderr.on('data', (d) => { err += d; });
+          child.stdout.on('data', (d) => { out += d; let i; while ((i = out.indexOf('\n')) >= 0) { const line = out.slice(0, i).trim(); out = out.slice(i + 1); if (!line.startsWith('{')) continue; try { const m = JSON.parse(line); pending.get(m.id)?.(m); pending.delete(m.id); } catch {} } });
+          const send = (method, params = {}, ms = 180000) => new Promise((resolve) => { const n = ++id; const t = setTimeout(() => resolve({ timeout: true }), ms); pending.set(n, (m) => { clearTimeout(t); resolve(m); }); child.stdin.write(`${JSON.stringify({ id: n, method, params })}\n`); });
+          const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+          const t0 = Date.now();
+          const started = await send('start', { config: { backend: 'd3d12', width: 640, height: 360, target_fps: 60, native_quality_policy: 'fixed' } });
+          console.log(`start after ${Date.now() - t0} ms: ok=${started.ok} ready=${started.result?.backend_ready}`);
+          await send('set_render_clock', { mode: 'manual', time: 1.25 });
+          await send('submit_commands', { commands: [{ type: 'present' }] });
+          for (let i = 0; i < 40; i++) {
+            const s = (await send('status')).result ?? {};
+            console.log(`${((Date.now() - t0) / 1000).toFixed(1)} s: submitted ${s.gpu_frames_submitted} completed ${s.gpu_frames_completed} cpu ${s.avg_render_cpu_ms?.toFixed?.(1)} ms error ${s.last_frame_error ?? '-'}`);
+            if (s.gpu_frames_completed > 0) break;
+            await sleep(3000);
+          }
+          const snap = await send('frame_snapshot', { include_pixels: false });
+          console.log(`snapshot: ok=${snap.ok} ${snap.error ?? ''} after ${Date.now() - t0} ms`);
+          console.log(err.split('\n').slice(-15).join('\n'));
+          child.kill();
+          process.exit(0);
+          EOF
+          done
       - name: Scenes, raster against legacy (every scene, measured)
         continue-on-error: true
         env:
