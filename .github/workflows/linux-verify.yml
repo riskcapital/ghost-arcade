@@ -69,6 +69,47 @@ jobs:
             core-ldd.txt
           retention-days: 7
 
+  # ── Phone remote server (phone-server/, Rust) ────────────────────────────
+  phone-server:
+    # Built on 22.04 like the release runner, so the packaged binary runs on
+    # Ubuntu 22.04. Its own tests, then the remote suites against it.
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            phone-server/target
+          key: linux-verify-phone-server-ubuntu22-${{ hashFiles('phone-server/Cargo.lock') }}
+      - name: Test the phone server
+        run: cargo test --manifest-path phone-server/Cargo.toml --locked
+      - name: Release build (as native:build does)
+        run: npm run phone-server:build
+      - name: Record what the phone server links against
+        run: |
+          file phone-server/target/release/ghost-phone-server
+          ldd phone-server/target/release/ghost-phone-server | tee phone-server-ldd.txt
+      - name: Remote server tests on the JS server
+        run: npx vitest run src/lib/remote
+      - name: Remote server tests on the Rust server
+        run: npm run test:remote:rust
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ghost-phone-server-linux-x64
+          path: |
+            phone-server/target/release/ghost-phone-server
+            phone-server-ldd.txt
+          retention-days: 7
+
   # ── Rust unit tests ─────────────────────────────────────────────────────
   core-tests:
     runs-on: ubuntu-latest
@@ -292,7 +333,7 @@ jobs:
 
   # ── AppImage + deb, and the packaged app under Xvfb ─────────────────────
   package:
-    needs: core
+    needs: [core, phone-server]
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
@@ -311,8 +352,12 @@ jobs:
         with:
           name: ghost-render-core-linux-x64
           path: .
+      - uses: actions/download-artifact@v4
+        with:
+          name: ghost-phone-server-linux-x64
+          path: .
       - name: Make the core executable
-        run: chmod +x native-renderer/target/release/ghost-render-core && mkdir -p linux-package-out
+        run: chmod +x native-renderer/target/release/ghost-render-core phone-server/target/release/ghost-phone-server && mkdir -p linux-package-out
       - name: Build frontend
         run: npm run build
       - name: Package (AppImage + deb)
