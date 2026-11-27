@@ -13,7 +13,7 @@
 //! dropped, which also releases what it holds. Main thread only, like the
 //! renderer that uses it.
 
-use std::{cell::RefCell, collections::HashMap, num::NonZeroU64};
+use std::{cell::RefCell, collections::HashMap, mem::ManuallyDrop, num::NonZeroU64};
 
 /// Frames an unused entry is kept. Two covers ping-pong targets that are
 /// read on alternate frames.
@@ -53,7 +53,11 @@ struct Cache {
 }
 
 thread_local! {
-    static CACHE: RefCell<Cache> = RefCell::new(Cache::default());
+    // Never dropped. When a thread ends, Windows runs its thread-local
+    // destructors under the loader lock, and releasing D3D12 objects there
+    // can deadlock with the driver's own threads (every GPU test hung at
+    // its end on Windows). The views and bind groups go with the process.
+    static CACHE: RefCell<ManuallyDrop<Cache>> = RefCell::new(ManuallyDrop::new(Cache::default()));
 }
 
 /// Start a frame: forget what the last frames did not use.
