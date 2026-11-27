@@ -52,7 +52,10 @@ describe('WLED links', () => {
     await wled.close();
   });
 
-  it('notices a controller drop off, and reconnects by itself when it comes back', async () => {
+  // Windows does not hand a "port unreachable" back to a UDP send, so there a
+  // controller that drops off keeps looking up (as one on another subnet does
+  // everywhere); frames keep going and reach it when it is back.
+  it.skipIf(process.platform === 'win32')('notices a controller drop off, and reconnects by itself when it comes back', async () => {
     const wled = await fakeWled();
     const port = wled.port;
     const changes: any[] = [];

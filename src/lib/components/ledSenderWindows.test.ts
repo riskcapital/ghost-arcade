@@ -17,10 +17,15 @@ describe('LED senders run in the editor window only', () => {
     expect(at).toBeGreaterThan(-1);
     const block = canvasSource.slice(at, canvasSource.indexOf('canvas.addEventListener(\'mousemove\'', at));
     expect(block).toMatch(/__OUTPUT_WINDOW_MODE__/);
-    expect(block).toMatch(/const wantsWled = ledSender && /);
+    expect(block).toMatch(/if \(ledSender\) nativeTeardownCallbacks\.push\(startWLEDNativeOutput\(\)\);/);
     expect(block).toMatch(/if \(ledSender\) nativeTeardownCallbacks\.push\(startPixelMapOutput\(\)\);/);
-    // The mirror for the senders is the senders' size, not a large feed.
-    expect(block).toMatch(/acquireNativeCompositeMirror\(\{ maxDim: 192, fps: 20,/);
+  });
+
+  it('samples WLED at the senders\' size when the app (not the core) feeds them', async () => {
+    const { CORE_WLED_MAX_DIM, CORE_WLED_FPS } = await import('../wled/corePlan');
+    expect([CORE_WLED_MAX_DIM, CORE_WLED_FPS]).toEqual([192, 20]);
+    const sender = readFileSync(join(process.cwd(), 'src', 'lib', 'wled', 'sender.ts'), 'utf8').replace(/\r\n/g, '\n');
+    expect(sender).toMatch(/acquireNativeCompositeMirror\(\{\s*maxDim: CORE_WLED_MAX_DIM,\s*fps: CORE_WLED_FPS,/);
   });
 
   it('never starts senders on the Stage Sim window\'s own canvas', () => {

@@ -54,7 +54,10 @@ function buildUpdate(version: string, files: Files, { shellId = SHELL, privateKe
     writeFileSync(join(src, rel), text);
   }
   const zip = join(tmp(), `ghost-arcade-code-${version}.zip`);
-  execFileSync('zip', ['-r', '-X', '-D', '-q', zip, '.'], { cwd: src });
+  // Windows has no zip command; its own tar (bsdtar, not Git's) writes a zip
+  // from the name. Files by name: a '.' would add a './' entry, which unpacking refuses.
+  if (process.platform === 'win32') execFileSync(join(process.env.SystemRoot ?? 'C:/Windows', 'System32', 'tar.exe'), ['-a', '-c', '-f', zip, ...Object.keys(files)], { cwd: src });
+  else execFileSync('zip', ['-r', '-X', '-D', '-q', zip, '.'], { cwd: src });
   const bytes = readFileSync(zip);
   const envelope = envelopeFor({
     version, shellId, created_at: new Date().toISOString(),

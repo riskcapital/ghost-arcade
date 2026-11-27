@@ -10,7 +10,7 @@ function harness(mac = false) {
   const addon = { createSender: vi.fn(), destroySender: vi.fn(), sendImage: vi.fn() };
   const preview = { readSharedTexturePixels: vi.fn(), readIOSurfacePixels: vi.fn(), releaseReadback: vi.fn() };
   const metadata = vi.fn().mockResolvedValue({ available: true, shared_name: 'Local\\test', handle: 42, width: 2, height: 1, frame: 7 });
-  const context: any = { process: { platform: mac ? 'darwin' : 'win32' }, isMac: mac, console: { log() {}, warn() {}, error() {} },
+  const context: any = { process: { platform: mac ? 'darwin' : 'win32', env: {} }, isMac: mac, isWin: !mac, console: { log() {}, warn() {}, error() {} },
     nativePreviewAddon: preview, loadNativePreviewAddon: () => preview, ndiAddon: addon, loadNdiAddon: () => addon,
     getNdiLoadStatus: () => ({}), ndiSenders: new Set(), OSR_PAINT_FPS: 60, getNativeOutputSharedTextureMetadata: metadata,
     setInterval: (fn: () => Promise<void>) => { ticks.push(fn); return ticks.length; }, clearInterval() {}, Date };
