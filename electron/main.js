@@ -5019,7 +5019,7 @@ function loadNdiAddon() {
   }
 }
 const ndiSenders = new Set();    // tracks live sender names so we can destroy on quit
-const ndiReceivers = new Set();  // tracks live receiver source names
+const ndiReceivers = new Map();  // live receiver source name -> how many users share it
 
 // ── NDI output pump (macOS/Windows, native composite) ────────────────────────
 // Streams the native renderer's composite output over NDI. Modeled on
@@ -6993,6 +6993,13 @@ function normalizeSharedTextureHandle(handle) {
   return null;
 }
 
+function integerHandleBuffer(value) {
+  if (typeof value !== 'string' || !/^\d+$/.test(value) || value === '0') return null;
+  const buffer = Buffer.alloc(8);
+  buffer.writeBigUInt64LE(BigInt(value));
+  return buffer;
+}
+
 function sharedTextureHandlePayload(handle) {
   if (!handle || handle.byteLength === 0) return null;
   if (isMac && handle.byteLength === 4) {
@@ -7803,12 +7810,22 @@ function registerIpcHandlers() {
     try { return a.findSources(); }
     catch (err) { console.error('[NDI] findSources:', err.message); return []; }
   });
+  // The addon keeps one receiver per source name, and creating one again
+  // replaces it. The Media Tray and the Canvas each open the source they
+  // show, so the receiver is shared: a second open joins it, and only the
+  // last close stops it. Otherwise the second open closed the first's
+  // shared texture and either one closing stopped the picture for both.
   ipcMain.handle('ndi_create_receiver', (_, { sourceName }) => {
     const a = loadNdiAddon();
     if (!a) return { ok: false, error: 'NDI not available' };
+    const users = ndiReceivers.get(sourceName) ?? 0;
+    if (users > 0) {
+      ndiReceivers.set(sourceName, users + 1);
+      return { ok: true };
+    }
     try {
       a.createReceiver({ sourceName });
-      ndiReceivers.add(sourceName);
+      ndiReceivers.set(sourceName, 1);
       return { ok: true };
     } catch (err) {
       return { ok: false, error: String(err.message || err) };
@@ -7817,6 +7834,11 @@ function registerIpcHandlers() {
   ipcMain.handle('ndi_destroy_receiver', (_, { sourceName }) => {
     const a = loadNdiAddon();
     if (!a) return { ok: false };
+    const users = ndiReceivers.get(sourceName) ?? 0;
+    if (users > 1) {
+      ndiReceivers.set(sourceName, users - 1);
+      return { ok: true };
+    }
     try {
       a.destroyReceiver({ sourceName });
       ndiReceivers.delete(sourceName);
@@ -7835,16 +7857,23 @@ function registerIpcHandlers() {
     try {
       const info = a.receiveTextureInfo({ sourceName });
       if (!info || !info.available) return null;
-      const handle = normalizeSharedTextureHandle(info.handle);
+      // macOS hands back the IOSurface id as bytes. Windows hands back the
+      // shared texture's HANDLE in this process as a decimal string, which
+      // becomes the same 8-byte buffer the camera addon gives, so it is
+      // duplicated into the render core like any other DXGI frame.
+      const handle = normalizeSharedTextureHandle(info.handle) ?? integerHandleBuffer(info.handle);
       const handlePayload = sharedTextureHandlePayload(handle);
       if (!handlePayload) return null;
+      const platform = String(info.platform || (isMac ? 'iosurface' : 'dxgi'));
+      const format = Number(info.format);
       return {
         available: true,
-        platform: 'iosurface',
+        platform,
         senderName: String(info.senderName || sourceName || ''),
         width: Number(info.width || 0),
         height: Number(info.height || 0),
-        format: Number(info.format || 80),
+        // DXGI_FORMAT_B8G8R8A8_UNORM is 87; the Windows addon names it instead.
+        format: Number.isFinite(format) && format > 0 ? format : (platform === 'dxgi' ? 87 : 80),
         frame: Number(info.frame || 0),
         updated: true,
         isNewFrame: true,
@@ -12220,7 +12249,7 @@ function destroyNdiSenders() {
 
 function destroyNdiReceivers() {
   if (!ndiAddon || ndiReceivers.size === 0) return;
-  for (const sourceName of Array.from(ndiReceivers)) {
+  for (const sourceName of Array.from(ndiReceivers.keys())) {
     runCleanupStep(`NDI receiver ${sourceName}`, () => ndiAddon.destroyReceiver({ sourceName }));
     ndiReceivers.delete(sourceName);
   }

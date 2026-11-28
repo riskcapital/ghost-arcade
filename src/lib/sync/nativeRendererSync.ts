@@ -12397,7 +12397,12 @@ export class NativeRendererSync {
             ? await getNdiBridge()?.receiveTextureInfo?.(identity)
             : await receiveSpoutTextureInfo();
         if ((info as any)?.unchanged) return;
-        if (!info?.available || !info.handle || !info.width || !info.height) return;
+        if (!info?.available || !info.handle || !info.width || !info.height) {
+          // A closed NDI receiver has freed its texture: resending the last
+          // handle only fails in the core, every poll, until it comes back.
+          if (liveSourceType === 'ndi') this.sharedTextureInfoCache.delete(key);
+          return;
+        }
         if (info.platform === 'core' && identity && Number(info.coreImports ?? 0) > 0) {
           noteLiveCaptureImported(identity);
         }
